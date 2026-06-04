@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primitive definitions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation helper for MLBGame records
+    function isValidGame(game) {
+      return game.id is string
+        && game.metadata is map
+        && game.teams is map
+        && game.pitchers is map
+        && game.bullpen is map
+        && game.offense is map
+        && game.trends is map
+        && game.betting_lines is map
+        && game.timestamp is string;
+    }
+
+    // Matches for games collection
+    match /games/{gameId} {
+      allow get: if isSignedIn() && isValidId(gameId);
+      allow list: if isSignedIn() && resource.data.timestamp is string;
+      
+      allow create: if isSignedIn() 
+        && isValidId(gameId) 
+        && isValidGame(incoming())
+        && incoming().id == gameId;
+        
+      allow update: if isSignedIn()
+        && isValidId(gameId)
+        && isValidGame(incoming())
+        && incoming().id == existing().id;
+        
+      allow delete: if isSignedIn() && isValidId(gameId);
+    }
+  }
+}

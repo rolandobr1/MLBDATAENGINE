@@ -1,0 +1,8 @@
+{
+  "name": "MLB Analytics Engine",
+  "description": "Automated MLB statistical collector, validator, and predictor utilizing Firestore, Sheets export, and Gemini API tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

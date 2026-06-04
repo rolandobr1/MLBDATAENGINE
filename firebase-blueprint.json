@@ -1,0 +1,110 @@
+{
+  "entities": {
+    "MLBGame": {
+      "title": "MLBGame",
+      "description": "MLB Game analytics containing metadata, rosters, pitching/bullpen statistics and predictions",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique game identifier"
+        },
+        "metadata": {
+          "type": "object",
+          "description": "General game description like date, venue, time"
+        },
+        "teams": {
+          "type": "object",
+          "description": "Home and away team names"
+        },
+        "pitchers": {
+          "type": "object",
+          "description": "Starting pitchers statistics and metadata"
+        },
+        "bullpen": {
+          "type": "object",
+          "description": "Bullpen status and recent workload"
+        },
+        "offense": {
+          "type": "object",
+          "description": "Offensive indicators for each team"
+        },
+        "trends": {
+          "type": "object",
+          "description": "Team records and recent trends"
+        },
+        "betting_lines": {
+          "type": "object",
+          "description": "Money lines, spread lines and betting flows"
+        },
+        "predictions": {
+          "type": "object",
+          "description": "AI-calculated victory metrics and value betting forecasts"
+        },
+        "injuries": {
+          "type": "array",
+          "description": "List of active players sidelined due to injuries"
+        },
+        "lineups": {
+          "type": "object",
+          "description": "Starting lineups with individual batting stats",
+          "properties": {
+            "home": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "position": { "type": "string" },
+                  "avg": { "type": "number" },
+                  "ops": { "type": "number" },
+                  "hr": { "type": "number" },
+                  "rbi": { "type": "number" }
+                },
+                "required": ["name", "position", "avg", "ops", "hr", "rbi"]
+              }
+            },
+            "away": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "position": { "type": "string" },
+                  "avg": { "type": "number" },
+                  "ops": { "type": "number" },
+                  "hr": { "type": "number" },
+                  "rbi": { "type": "number" }
+                },
+                "required": ["name", "position", "avg", "ops", "hr", "rbi"]
+              }
+            }
+          },
+          "required": ["home", "away"]
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "Temporal mark of generation"
+        }
+      },
+      "required": [
+        "id",
+        "metadata",
+        "teams",
+        "pitchers",
+        "bullpen",
+        "offense",
+        "trends",
+        "betting_lines",
+        "lineups",
+        "timestamp"
+      ]
+    }
+  },
+  "firestore": {
+    "/games/{gameId}": {
+      "schema": "MLBGame",
+      "description": "Individual game analysis record for prediction engines"
+    }
+  }
+}

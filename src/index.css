@@ -1,0 +1,17 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  
+  --color-baseball-red: #d50032;
+  --color-baseball-blue: #002d62;
+  --color-slate-900: #0f172a;
+}
+
+@keyframes shimmerBar {
+  0%   { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
