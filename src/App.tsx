@@ -93,6 +93,25 @@ export default function App() {
     fetchExtractedDates();
   }, [selectedDate, fetchLocalDB, fetchErrorsDB, fetchExtractedDates]);
 
+  // Hook de consulta periódica (polling) automático para juegos activos en progreso
+  React.useEffect(() => {
+    const hasLiveGames = games.some(game => {
+      const status = game.game_result?.gameStatus || "";
+      return status.includes("In Progress") || status.includes("Live") || status.includes("Delayed") || status.includes("Suspended");
+    });
+
+    if (!hasLiveGames) return;
+
+    // Ejecuta consulta cada 60 segundos si hay juegos en vivo en pantalla
+    const interval = setInterval(() => {
+      console.log("[Auto-Polling] Refrescando partidos en vivo de la fecha seleccionada...");
+      fetchLocalDB(selectedDate);
+      fetchErrorsDB();
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, [games, selectedDate, fetchLocalDB, fetchErrorsDB]);
+
   // Handle Extraction Trigger — reads real SSE progress from server
   const handleHarvest = async (date: string) => {
     setIsLoading(true);
@@ -168,6 +187,31 @@ export default function App() {
       }
     } catch (err) {
       console.error("Fallo al vaciar bitácora:", err);
+    }
+  };
+
+  const handleRefreshGame = async (gameId: string, date: string) => {
+    try {
+      const res = await fetch("/api/harvest-game", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ gameId, date }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.game) {
+          setGames(prevGames => prevGames.map(g => String(g.id) === String(gameId) ? data.game : g));
+          fetchErrorsDB();
+        } else {
+          alert("Error al actualizar juego: " + (data.error || "Desconocido"));
+        }
+      } else {
+        const errText = await res.text();
+        alert("Error al actualizar juego: " + errText);
+      }
+    } catch (err) {
+      console.error("Error actualizando juego:", err);
+      alert("Error de red al actualizar juego");
     }
   };
 
@@ -251,7 +295,11 @@ export default function App() {
             /* Match grid lists */
             <div className="space-y-6">
               {games.map((game) => (
-                <GameCard key={game.id} game={game} />
+                <GameCard 
+                  key={game.id} 
+                  game={game} 
+                  onRefresh={() => handleRefreshGame(game.id, game.metadata.date)} 
+                />
               ))}
             </div>
           )}

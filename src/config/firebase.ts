@@ -28,7 +28,10 @@ const app = hasFirebaseConfig
 export const db = app
   ? (() => {
       try {
-        return initializeFirestore(app, { ignoreUndefinedProperties: true });
+        return initializeFirestore(app, { 
+          ignoreUndefinedProperties: true, 
+          experimentalForceLongPolling: true 
+        });
       } catch (e) {
         return getFirestore(app);
       }

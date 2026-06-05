@@ -91,6 +91,7 @@ function validateGamePayload(game: any, errorsLog: any[]): any {
   const gameErrors: string[] = [];
 
   const checkRange = (val: any, min: number, max: number, name: string, severity: "low" | "medium" | "high") => {
+    if (val === "N/A") return;
     const num = Number(val);
     if (isNaN(num)) {
       gameErrors.push(`[${name}] Valor no numérico: '${val}'`);
@@ -760,7 +761,11 @@ async function fetchRealMLBGameData(
             name: p.person?.fullName || "Lanzador",
             position: "P",
             ip: s.inningsPitched || "0.0",
+            h: s.hits || 0,
+            r: s.runs || 0,
             er: s.earnedRuns || 0,
+            bb: s.baseOnBalls || 0,
+            k: s.strikeOuts || 0,
             pitches: s.numberOfPitches || 0
           });
         });
@@ -842,7 +847,7 @@ async function fetchRealMLBGameData(
     const fetchTeamBullpenERA = async (teamId: number) => {
       try {
         const r = await fetchWithTimeout(
-          `https://statsapi.mlb.com/api/v1/teams/${teamId}/stats?stats=season&season=${season}&group=pitching`
+          `https://statsapi.mlb.com/api/v1/teams/${teamId}/stats?group=pitching&stats=statSplits&sitCodes=rp&season=${season}`
         );
         const d = await r.json();
         const s = d.stats?.[0]?.splits?.[0]?.stat || {};
@@ -864,7 +869,12 @@ async function fetchRealMLBGameData(
             away: { runs: i.away?.runs || 0, hits: i.away?.hits || 0, errors: i.away?.errors || 0 }
           })),
           homeTotals: { runs: d.teams?.home?.runs || 0, hits: d.teams?.home?.hits || 0, errors: d.teams?.home?.errors || 0 },
-          awayTotals: { runs: d.teams?.away?.runs || 0, hits: d.teams?.away?.hits || 0, errors: d.teams?.away?.errors || 0 }
+          awayTotals: { runs: d.teams?.away?.runs || 0, hits: d.teams?.away?.hits || 0, errors: d.teams?.away?.errors || 0 },
+          currentInning: d.currentInning,
+          currentInningOrdinal: d.currentInningOrdinal,
+          inningState: d.inningState,
+          inningHalf: d.inningHalf,
+          isTopInning: d.isTopInning
         };
       } catch { return null; }
     };
@@ -874,12 +884,15 @@ async function fetchRealMLBGameData(
         const r = await fetchWithTimeout(`https://statsapi.mlb.com/api/v1/game/${gamePk}/playByPlay`);
         const d = await r.json();
         const allPlays = d.allPlays || [];
-        const scoring = allPlays.filter((p: any) => p.about?.isScoringPlay).map((p: any) => ({
+        
+        const mappedAllPlays = allPlays.map((p: any) => ({
           description: p.result?.description || "",
           inning: `${p.about?.halfInning === 'top' ? 'Top' : 'Bot'} ${p.about?.inning || 1}`,
           score: `${p.result?.awayScore || 0} - ${p.result?.homeScore || 0}`,
-          isScoringPlay: true
+          isScoringPlay: p.about?.isScoringPlay || false
         }));
+
+        const scoring = mappedAllPlays.filter((p: any) => p.isScoringPlay);
         
         let currentPlay = null;
         const cp = d.currentPlay;
@@ -891,7 +904,7 @@ async function fetchRealMLBGameData(
               isScoringPlay: cp.about?.isScoringPlay || false
            };
         }
-        return { scoringPlays: scoring, currentPlay };
+        return { scoringPlays: scoring, currentPlay, allPlays: mappedAllPlays };
       } catch { return null; }
     };
 
@@ -1060,20 +1073,12 @@ async function fetchOffensiveSplits(teamId: number, season: string): Promise<any
 
 async function fetchAdvancedPitching(pitcherId: number, season: string): Promise<AdvancedPitchingStats> {
   const defaults: AdvancedPitchingStats = {
-    xEra: 4.20, fip: 4.20, xFip: 4.20, siera: 4.20,
-    hardHitPct: 38.0, barrelPct: 8.0, groundBallPct: 43.0, flyBallPct: 37.0,
-    strikeoutRate: 22.0, walkRate: 8.0, swingingStrikePct: 11.0
+    xEra: null, fip: null, xFip: null, siera: null,
+    hardHitPct: null, barrelPct: null, groundBallPct: null, flyBallPct: null,
+    strikeoutRate: null, walkRate: null, swingingStrikePct: null
   };
   if (!pitcherId) return defaults;
   try {
-    const advUrl = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=seasonAdvanced&season=${season}&group=pitching`;
-    const advRes = await fetchWithTimeout(advUrl, 5000);
-    let advStat: any = {};
-    if (advRes.ok) {
-      const advData = await advRes.json();
-      advStat = advData.stats?.[0]?.splits?.[0]?.stat || {};
-    }
-
     const stdUrl = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=season&season=${season}&group=pitching`;
     const stdRes = await fetchWithTimeout(stdUrl, 5000);
     let stdStat: any = {};
@@ -1082,38 +1087,41 @@ async function fetchAdvancedPitching(pitcherId: number, season: string): Promise
       stdStat = stdData.stats?.[0]?.splits?.[0]?.stat || {};
     }
 
-    let fip = safeFloat(advStat.fip) || safeFloat(stdStat.fip);
-    if (!fip && stdStat.inningsPitched) {
-      const hr = parseInt(stdStat.homeRuns) || 0;
-      const bb = parseInt(stdStat.baseOnBalls) || 0;
-      const hbp = parseInt(stdStat.hitByPitch) || 0;
-      const so = parseInt(stdStat.strikeOuts) || 0;
-      const ip = safeFloat(stdStat.inningsPitched) || 1.0;
-      fip = ip > 0 ? Math.round(((13 * hr + 3 * (bb + hbp) - 2 * so) / ip + 3.2) * 100) / 100 : 4.20;
+    if (!stdStat.inningsPitched) {
+      return defaults;
     }
 
-    const bf = parseInt(stdStat.battersFaced) || 1;
-    const strikeoutRate = stdStat.strikeOuts ? Math.round((parseInt(stdStat.strikeOuts) / bf) * 1000) / 10 : (safeFloat(advStat.strikeoutRate) ?? defaults.strikeoutRate);
-    const walkRate = stdStat.baseOnBalls ? Math.round((parseInt(stdStat.baseOnBalls) / bf) * 1000) / 10 : (safeFloat(advStat.walkRate) ?? defaults.walkRate);
+    const hr = parseInt(stdStat.homeRuns) || 0;
+    const bb = parseInt(stdStat.baseOnBalls) || 0;
+    const hbp = parseInt(stdStat.hitByPitch) || 0;
+    const so = parseInt(stdStat.strikeOuts) || 0;
+    const ip = safeFloat(stdStat.inningsPitched) || 0;
+    
+    // FIP Formula: ((13*HR + 3*(BB+HBP) - 2*SO)/IP) + 3.2
+    const fip = ip > 0 ? Math.round(((13 * hr + 3 * (bb + hbp) - 2 * so) / ip + 3.2) * 100) / 100 : null;
+
+    const bf = parseInt(stdStat.battersFaced) || 0;
+    const strikeoutRate = bf > 0 && stdStat.strikeOuts ? Math.round((parseInt(stdStat.strikeOuts) / bf) * 1000) / 10 : null;
+    const walkRate = bf > 0 && stdStat.baseOnBalls ? Math.round((parseInt(stdStat.baseOnBalls) / bf) * 1000) / 10 : null;
 
     const go = parseInt(stdStat.groundOuts) || 0;
     const ao = parseInt(stdStat.airOuts) || 0;
-    const totalOuts = go + ao || 1;
-    const groundBallPct = go ? Math.round((go / totalOuts) * 1000) / 10 : defaults.groundBallPct;
-    const flyBallPct = ao ? Math.round((ao / totalOuts) * 1000) / 10 : defaults.flyBallPct;
+    const totalOuts = go + ao;
+    const groundBallPct = totalOuts > 0 ? Math.round((go / totalOuts) * 1000) / 10 : null;
+    const flyBallPct = totalOuts > 0 ? Math.round((ao / totalOuts) * 1000) / 10 : null;
 
     return {
-      xEra: safeFloat(advStat.xera) || safeFloat(advStat.xERA) || safeFloat(stdStat.era) || defaults.xEra,
-      fip: fip || defaults.fip,
-      xFip: safeFloat(advStat.xfip) || safeFloat(advStat.xFIP) || fip || defaults.xFip,
-      siera: safeFloat(advStat.siera) || safeFloat(advStat.SIERA) || fip || defaults.siera,
-      hardHitPct: safeFloat(advStat.hardHitSpeed) || safeFloat(advStat.hardHitPct) || defaults.hardHitPct,
-      barrelPct: safeFloat(advStat.barrelSpeed) || safeFloat(advStat.barrelPct) || defaults.barrelPct,
+      xEra: null,
+      fip: fip,
+      xFip: null,
+      siera: null,
+      hardHitPct: null,
+      barrelPct: null,
       groundBallPct,
       flyBallPct,
       strikeoutRate,
       walkRate,
-      swingingStrikePct: safeFloat(advStat.swingingStrikesPct) || safeFloat(advStat.swingingStrikePct) || defaults.swingingStrikePct
+      swingingStrikePct: null
     };
   } catch (err) {
     console.error(`Error fetching advanced pitching for ${pitcherId}:`, err);
@@ -1123,18 +1131,10 @@ async function fetchAdvancedPitching(pitcherId: number, season: string): Promise
 
 async function fetchAdvancedOffense(teamId: number, season: string): Promise<AdvancedOffenseStats> {
   const defaults: AdvancedOffenseStats = {
-    wOba: 0.320, xwOba: 0.320, wrcPlus: 100, iso: 0.160, babip: 0.295,
-    hardHitPct: 38.0, barrelPct: 8.0, contactPct: 76.0, chasePct: 28.0
+    wOba: null, xwOba: null, wrcPlus: null, iso: null, babip: null,
+    hardHitPct: null, barrelPct: null, contactPct: null, chasePct: null
   };
   try {
-    const advUrl = `https://statsapi.mlb.com/api/v1/teams/${teamId}/stats?stats=seasonAdvanced&season=${season}&group=hitting`;
-    const advRes = await fetchWithTimeout(advUrl, 5000);
-    let advStat: any = {};
-    if (advRes.ok) {
-      const advData = await advRes.json();
-      advStat = advData.stats?.[0]?.splits?.[0]?.stat || {};
-    }
-
     const stdUrl = `https://statsapi.mlb.com/api/v1/teams/${teamId}/stats?stats=season&season=${season}&group=hitting`;
     const stdRes = await fetchWithTimeout(stdUrl, 5000);
     let stdStat: any = {};
@@ -1143,9 +1143,13 @@ async function fetchAdvancedOffense(teamId: number, season: string): Promise<Adv
       stdStat = stdData.stats?.[0]?.splits?.[0]?.stat || {};
     }
 
-    const avg = safeFloat(stdStat.avg) ?? 0.250;
-    const slg = safeFloat(stdStat.slg) ?? 0.410;
-    const iso = slg - avg > 0 ? Math.round((slg - avg) * 1000) / 1000 : defaults.iso;
+    if (!stdStat.atBats) {
+      return defaults;
+    }
+
+    const avg = safeFloat(stdStat.avg) ?? 0;
+    const slg = safeFloat(stdStat.slg) ?? 0;
+    const iso = slg > 0 && avg > 0 ? Math.round((slg - avg) * 1000) / 1000 : null;
 
     const h = parseInt(stdStat.hits) || 0;
     const hr = parseInt(stdStat.homeRuns) || 0;
@@ -1153,18 +1157,31 @@ async function fetchAdvancedOffense(teamId: number, season: string): Promise<Adv
     const so = parseInt(stdStat.strikeOuts) || 0;
     const sf = parseInt(stdStat.sacrificeFlies) || 0;
     const denom = ab - so - hr + sf;
-    const babip = denom > 0 ? Math.round(((h - hr) / denom) * 1000) / 1000 : defaults.babip;
+    const babip = denom > 0 ? Math.round(((h - hr) / denom) * 1000) / 1000 : null;
+
+    const bb = parseInt(stdStat.baseOnBalls) || 0;
+    const hbp = parseInt(stdStat.hitByPitch) || 0;
+    const ibb = parseInt(stdStat.intentionalWalks) || 0;
+    const dbl = parseInt(stdStat.doubles) || 0;
+    const tpl = parseInt(stdStat.triples) || 0;
+    const single = h - dbl - tpl - hr;
+
+    // wOBA Formula (using 2024 approximate weights)
+    const wobaDenom = ab + bb - ibb + sf + hbp;
+    const woba = wobaDenom > 0 
+      ? Math.round(((0.69 * (bb - ibb) + 0.72 * hbp + 0.88 * single + 1.25 * dbl + 1.58 * tpl + 2.05 * hr) / wobaDenom) * 1000) / 1000 
+      : null;
 
     return {
-      wOba: safeFloat(advStat.woba) || safeFloat(advStat.wOba) || (safeFloat(stdStat.ops) ? Math.round((safeFloat(stdStat.ops) ?? 0.730) * 0.44 * 1000) / 1000 : defaults.wOba),
-      xwOba: safeFloat(advStat.xwoba) || safeFloat(advStat.xwOba) || defaults.xwOba,
-      wrcPlus: parseInt(advStat.wrcPlus) || parseInt(advStat.wRCPlus) || defaults.wrcPlus,
-      iso: safeFloat(advStat.iso) || iso,
-      babip: safeFloat(advStat.babip) || babip,
-      hardHitPct: safeFloat(advStat.hardHitSpeed) || safeFloat(advStat.hardHitPct) || defaults.hardHitPct,
-      barrelPct: safeFloat(advStat.barrelSpeed) || safeFloat(advStat.barrelPct) || defaults.barrelPct,
-      contactPct: safeFloat(advStat.contactPct) || defaults.contactPct,
-      chasePct: safeFloat(advStat.chasePct) || defaults.chasePct
+      wOba: woba,
+      xwOba: null,
+      wrcPlus: null,
+      iso,
+      babip,
+      hardHitPct: null,
+      barrelPct: null,
+      contactPct: null,
+      chasePct: null
     };
   } catch (err) {
     console.error(`Error fetching advanced offense for team ${teamId}:`, err);
@@ -1216,11 +1233,11 @@ async function fetchStarterFatigue(pitcherId: number, date: string, season: stri
 
 async function fetchBullpenFatigue(teamId: number, date: string, season: string) {
   const defaults = {
-    ipLast3Days: 10.0,
-    ipLast7Days: 25.0,
-    relieversUsedYesterday: 3,
-    relieversUsedLast2Days: 6,
-    availableCount: 5
+    ipLast3Days: "N/A",
+    ipLast7Days: "N/A",
+    relieversUsedYesterday: "N/A",
+    relieversUsedLast2Days: "N/A",
+    availableCount: "N/A"
   };
   try {
     const today = new Date(date);
@@ -1232,7 +1249,7 @@ async function fetchBullpenFatigue(teamId: number, date: string, season: string)
     const schedUrl = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId=${teamId}&startDate=${startDateStr}&endDate=${endDateStr}`;
     const resSched = await fetchWithTimeout(schedUrl, 5000);
     if (!resSched.ok) return defaults;
-    const schedData = await resSched.ok ? await resSched.json() : {};
+    const schedData = await resSched.json();
     
     const gamePks: string[] = [];
     for (const d of schedData.dates || []) {
@@ -1242,6 +1259,23 @@ async function fetchBullpenFatigue(teamId: number, date: string, season: string)
     }
     
     if (gamePks.length === 0) return defaults;
+    
+    // Obtener Roster Activo para la fecha objetivo para filtrar lesionados/inactivos y jugadores de posición lanzando
+    const rosterUrl = `https://statsapi.mlb.com/api/v1/teams/${teamId}/roster?rosterType=active&date=${date}`;
+    const resRoster = await fetchWithTimeout(rosterUrl, 5000);
+    const activePitcherIds = new Set<number>();
+    let hasActiveRoster = false;
+    if (resRoster.ok) {
+      const rosterData = await resRoster.json();
+      if (Array.isArray(rosterData.roster)) {
+        hasActiveRoster = true;
+        for (const item of rosterData.roster) {
+          if (item.position?.code === '1' && item.person?.id) {
+            activePitcherIds.add(item.person.id);
+          }
+        }
+      }
+    }
     
     const boxscores = await Promise.all(
       gamePks.map(async (pk) => {
@@ -1254,8 +1288,8 @@ async function fetchBullpenFatigue(teamId: number, date: string, season: string)
       })
     );
     
-    let ip3d = 0;
-    let ip7d = 0;
+    let outs3d = 0;
+    let outs7d = 0;
     let usedYesterday = 0;
     let used2Days = 0;
     
@@ -1279,7 +1313,7 @@ async function fetchBullpenFatigue(teamId: number, date: string, season: string)
       for (const d of schedData.dates || []) {
         const matchingGame = d.games?.find((g: any) => String(g.gamePk) === gamePks[i]);
         if (matchingGame) {
-          gameDateStr = matchingGame.gameDate ? matchingGame.gameDate.split('T')[0] : "";
+          gameDateStr = d.date || "";
           break;
         }
       }
@@ -1289,18 +1323,21 @@ async function fetchBullpenFatigue(teamId: number, date: string, season: string)
       const pitchers = teamData.pitchers || [];
       const bullpenPitchers = pitchers.slice(1);
       
-      let bullpenIP = 0;
-      let relieversCount = bullpenPitchers.length;
+      let bullpenOuts = 0;
+      let relieversCount = 0;
       
       for (const pid of bullpenPitchers) {
+        if (hasActiveRoster && !activePitcherIds.has(pid)) {
+          continue; // Excluir jugadores inactivos o de posición lanzando
+        }
+        relieversCount++;
         const p = teamData.players?.[`ID${pid}`];
         const ipStr = p?.stats?.pitching?.inningsPitched;
         if (ipStr) {
-          const ipVal = parseFloat(ipStr) || 0.0;
-          const whole = Math.floor(ipVal);
-          const frac = ipVal - whole;
-          const decimalIP = whole + (frac * 3.333);
-          bullpenIP += decimalIP;
+          const parts = String(ipStr).split('.');
+          const w = parseInt(parts[0]) || 0;
+          const f = parseInt(parts[1]) || 0;
+          bullpenOuts += (w * 3) + f;
         }
       }
       
@@ -1308,10 +1345,10 @@ async function fetchBullpenFatigue(teamId: number, date: string, season: string)
       const diffDays = (today.getTime() - gameTime) / (1000 * 60 * 60 * 24);
       
       if (diffDays <= 3) {
-        ip3d += bullpenIP;
+        outs3d += bullpenOuts;
       }
       if (diffDays <= 7) {
-        ip7d += bullpenIP;
+        outs7d += bullpenOuts;
       }
       
       if (gameDateStr === yesterdayStr) {
@@ -1322,9 +1359,15 @@ async function fetchBullpenFatigue(teamId: number, date: string, season: string)
       }
     }
     
+    const formatIP = (outs: number) => {
+      const w = Math.floor(outs / 3);
+      const f = outs % 3;
+      return w + (f / 10);
+    };
+    
     return {
-      ipLast3Days: Math.round(ip3d * 10) / 10,
-      ipLast7Days: Math.round(ip7d * 10) / 10,
+      ipLast3Days: formatIP(outs3d),
+      ipLast7Days: formatIP(outs7d),
       relieversUsedYesterday: usedYesterday,
       relieversUsedLast2Days: used2Days,
       availableCount: Math.max(8 - usedYesterday, 2)
@@ -1563,51 +1606,51 @@ function buildDirectGameData(
     pitchers: {
       home: {
         name: realMLBData?.pitchers?.home?.name || "Por definir",
-        era: safeFloat(realMLBData?.pitchers?.home?.era) || 4.00,
-        whip: safeFloat(realMLBData?.pitchers?.home?.whip) || 1.30,
-        kPct: safeFloat(realMLBData?.pitchers?.home?.kPct) || 20.0,
-        bbPct: safeFloat(realMLBData?.pitchers?.home?.bbPct) || 8.0,
-        wins: parseInt(realMLBData?.pitchers?.home?.wins) || 0,
-        losses: parseInt(realMLBData?.pitchers?.home?.losses) || 0,
-        ip: realMLBData?.pitchers?.home?.ip || "0.0"
+        era: safeFloat(realMLBData?.pitchers?.home?.era) ?? "N/A",
+        whip: safeFloat(realMLBData?.pitchers?.home?.whip) ?? "N/A",
+        kPct: safeFloat(realMLBData?.pitchers?.home?.kPct) ?? "N/A",
+        bbPct: safeFloat(realMLBData?.pitchers?.home?.bbPct) ?? "N/A",
+        wins: parseInt(realMLBData?.pitchers?.home?.wins) || "N/A",
+        losses: parseInt(realMLBData?.pitchers?.home?.losses) || "N/A",
+        ip: realMLBData?.pitchers?.home?.ip || "N/A"
       },
       away: {
         name: realMLBData?.pitchers?.away?.name || "Por definir",
-        era: safeFloat(realMLBData?.pitchers?.away?.era) || 4.00,
-        whip: safeFloat(realMLBData?.pitchers?.away?.whip) || 1.30,
-        kPct: safeFloat(realMLBData?.pitchers?.away?.kPct) || 20.0,
-        bbPct: safeFloat(realMLBData?.pitchers?.away?.bbPct) || 8.0,
-        wins: parseInt(realMLBData?.pitchers?.away?.wins) || 0,
-        losses: parseInt(realMLBData?.pitchers?.away?.losses) || 0,
-        ip: realMLBData?.pitchers?.away?.ip || "0.0"
+        era: safeFloat(realMLBData?.pitchers?.away?.era) ?? "N/A",
+        whip: safeFloat(realMLBData?.pitchers?.away?.whip) ?? "N/A",
+        kPct: safeFloat(realMLBData?.pitchers?.away?.kPct) ?? "N/A",
+        bbPct: safeFloat(realMLBData?.pitchers?.away?.bbPct) ?? "N/A",
+        wins: parseInt(realMLBData?.pitchers?.away?.wins) || "N/A",
+        losses: parseInt(realMLBData?.pitchers?.away?.losses) || "N/A",
+        ip: realMLBData?.pitchers?.away?.ip || "N/A"
       }
     },
     bullpen: {
       home: {
-        era: safeFloat(realMLBData?.bullpenERA?.home) || 4.00,
-        usageLast3Days: "Moderada",
-        availableRelievers: ["Roster activo (Directo)"],
-        ipLast7Days: 15.0
+        era: safeFloat(realMLBData?.bullpenERA?.home) ?? "N/A",
+        usageLast3Days: "N/A",
+        availableRelievers: ["N/A"],
+        ipLast7Days: "N/A"
       },
       away: {
-        era: safeFloat(realMLBData?.bullpenERA?.away) || 4.00,
-        usageLast3Days: "Moderada",
-        availableRelievers: ["Roster activo (Directo)"],
-        ipLast7Days: 15.0
+        era: safeFloat(realMLBData?.bullpenERA?.away) ?? "N/A",
+        usageLast3Days: "N/A",
+        availableRelievers: ["N/A"],
+        ipLast7Days: "N/A"
       }
     },
     offense: {
       home: {
-        runsPerGame: safeFloat(realMLBData?.teamOffense?.home?.runsPerGame) || 4.5,
-        ops: safeFloat(realMLBData?.teamOffense?.home?.ops) || 0.730,
-        obp: safeFloat(realMLBData?.teamOffense?.home?.obp) || 0.320,
-        slg: safeFloat(realMLBData?.teamOffense?.home?.slg) || 0.410
+        runsPerGame: safeFloat(realMLBData?.teamOffense?.home?.runsPerGame) ?? "N/A",
+        ops: safeFloat(realMLBData?.teamOffense?.home?.ops) ?? "N/A",
+        obp: safeFloat(realMLBData?.teamOffense?.home?.obp) ?? "N/A",
+        slg: safeFloat(realMLBData?.teamOffense?.home?.slg) ?? "N/A"
       },
       away: {
-        runsPerGame: safeFloat(realMLBData?.teamOffense?.away?.runsPerGame) || 4.5,
-        ops: safeFloat(realMLBData?.teamOffense?.away?.ops) || 0.730,
-        obp: safeFloat(realMLBData?.teamOffense?.away?.obp) || 0.320,
-        slg: safeFloat(realMLBData?.teamOffense?.away?.slg) || 0.410
+        runsPerGame: safeFloat(realMLBData?.teamOffense?.away?.runsPerGame) ?? "N/A",
+        ops: safeFloat(realMLBData?.teamOffense?.away?.ops) ?? "N/A",
+        obp: safeFloat(realMLBData?.teamOffense?.away?.obp) ?? "N/A",
+        slg: safeFloat(realMLBData?.teamOffense?.away?.slg) ?? "N/A"
       }
     },
     trends: {
@@ -1787,6 +1830,22 @@ app.post("/api/harvest", async (req, res) => {
       };
       gameDataParsed.fatigue_metrics = fatigue;
 
+      // Actualizar el resumen principal del bullpen con los datos reales calculados
+      if (fatigue?.bullpen) {
+        gameDataParsed.bullpen.home.ipLast7Days = fatigue.bullpen.home.ipLast7Days;
+        gameDataParsed.bullpen.away.ipLast7Days = fatigue.bullpen.away.ipLast7Days;
+        
+        const getUsage = (ip3d: any) => {
+          if (typeof ip3d !== 'number') return "N/A";
+          if (ip3d >= 8) return "Alta";
+          if (ip3d >= 3) return "Moderada";
+          return "Baja";
+        };
+        
+        gameDataParsed.bullpen.home.usageLast3Days = getUsage(fatigue.bullpen.home.ipLast3Days);
+        gameDataParsed.bullpen.away.usageLast3Days = getUsage(fatigue.bullpen.away.ipLast3Days);
+      }
+
       // Handle Line Movements timeline
       const currentDB = readGamesDB();
       const existingGamesForDate = currentDB[date] || [];
@@ -1882,6 +1941,214 @@ app.post("/api/harvest", async (req, res) => {
   }
 });
 
+// Reusable helper to update data for a single game and persist it
+async function updateSingleGameData(gameId: string, date: string): Promise<any> {
+  console.log(`Actualizando juego individual ${gameId} para la fecha ${date}...`);
+  
+  // 1. Fetch MLB Schedule for the date to find the match details
+  const mlbRes = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${date}`);
+  const mlbData = await mlbRes.json();
+  let match: any = null;
+  if (mlbData.dates && mlbData.dates[0] && mlbData.dates[0].games) {
+    match = mlbData.dates[0].games.find((g: any) => String(g.gamePk) === String(gameId));
+  }
+
+  if (!match) {
+    throw new Error(`Juego ${gameId} no encontrado en el calendario de la fecha ${date}`);
+  }
+
+  const homeName = match.teams.home.team.name;
+  const awayName = match.teams.away.team.name;
+  const homeTeamId: number = match.teams.home.team.id;
+  const awayTeamId: number = match.teams.away.team.id;
+  const venueName = match.venue?.name || "MLB Stadium";
+  const matchTime = match.gameDate ? new Date(match.gameDate).toLocaleTimeString("es-MX", { hour: "numeric", minute: "2-digit" }) : "19:00 PM";
+
+  // 2. Fetch real odds
+  const realOddsData = await fetchRealBettingLines(date);
+
+  // 3. Fetch real MLB game data
+  const realMLBData = await fetchRealMLBGameData(gameId, homeTeamId, awayTeamId, date);
+
+  // 4. Build game data
+  const gameDataParsed: any = buildDirectGameData(gameId, homeName, awayName, venueName, date, matchTime, realMLBData, realOddsData);
+
+  // 5. Fetch advanced stats
+  const season = date.substring(0, 4);
+  const homePitcherId = realMLBData.pitcherIds?.home || 0;
+  const awayPitcherId = realMLBData.pitcherIds?.away || 0;
+
+  const [
+    weather,
+    homeSplits,
+    awaySplits,
+    homeAdvPitching,
+    awayAdvPitching,
+    homeAdvOffense,
+    awayAdvOffense,
+    fatigue
+  ] = await Promise.all([
+    fetchWeatherData(venueName, date, match.gameDate || new Date().toISOString()),
+    fetchOffensiveSplits(homeTeamId, season),
+    fetchOffensiveSplits(awayTeamId, season),
+    fetchAdvancedPitching(homePitcherId, season),
+    fetchAdvancedPitching(awayPitcherId, season),
+    fetchAdvancedOffense(homeTeamId, season),
+    fetchAdvancedOffense(awayTeamId, season),
+    fetchFatigueMetrics(homePitcherId, awayPitcherId, homeTeamId, awayTeamId, date)
+  ]);
+
+  // Populate advanced fields
+  gameDataParsed.weather = weather;
+  gameDataParsed.offensive_splits = { home: homeSplits, away: awaySplits };
+  gameDataParsed.advanced_pitching = { home: homeAdvPitching, away: awayAdvPitching };
+  gameDataParsed.advanced_offense = { home: homeAdvOffense, away: awayAdvOffense };
+  gameDataParsed.fatigue_metrics = fatigue;
+
+  if (fatigue?.bullpen) {
+    gameDataParsed.bullpen.home.ipLast7Days = fatigue.bullpen.home.ipLast7Days;
+    gameDataParsed.bullpen.away.ipLast7Days = fatigue.bullpen.away.ipLast7Days;
+    
+    const getUsage = (ip3d: any) => {
+      if (typeof ip3d !== 'number') return "N/A";
+      if (ip3d >= 8) return "Alta";
+      if (ip3d >= 3) return "Moderada";
+      return "Baja";
+    };
+    
+    gameDataParsed.bullpen.home.usageLast3Days = getUsage(fatigue.bullpen.home.ipLast3Days);
+    gameDataParsed.bullpen.away.usageLast3Days = getUsage(fatigue.bullpen.away.ipLast3Days);
+  }
+
+  // Line Movements
+  const currentDB = readGamesDB();
+  const existingGamesForDate = currentDB[date] || [];
+  const existingGame = existingGamesForDate.find((g: any) => String(g.id) === String(gameId));
+  const lineMovements: LineMovement[] = existingGame?.line_movements || [];
+
+  const currentOdds = gameDataParsed.betting_lines;
+  const newMovement: LineMovement = {
+    timestamp: new Date().toISOString(),
+    openingMoneylineHome: currentOdds.openingMoneylineHome,
+    openingMoneylineAway: currentOdds.openingMoneylineAway,
+    currentMoneylineHome: currentOdds.currentMoneylineHome,
+    currentMoneylineAway: currentOdds.currentMoneylineAway,
+    runLineHome: currentOdds.runLineHome,
+    runLineHomeOdds: currentOdds.runLineHomeOdds,
+    runLineAway: currentOdds.runLineAway,
+    runLineAwayOdds: currentOdds.runLineAwayOdds,
+    totalRuns: currentOdds.totalRuns,
+    overOdds: currentOdds.overOdds,
+    underOdds: currentOdds.underOdds
+  };
+  lineMovements.push(newMovement);
+  gameDataParsed.line_movements = lineMovements;
+
+  gameDataParsed.model_features = calculateModelFeatures(gameDataParsed);
+
+  const gameResult = await fetchGameResult(gameId, currentOdds);
+  if (gameResult) {
+    gameDataParsed.game_result = gameResult;
+  }
+
+  const errorsCollection = readErrorsDB();
+  const validationResult = validateGamePayload(gameDataParsed, errorsCollection);
+  
+  gameDataParsed.validation = {
+    isValid: validationResult.isValid,
+    errors: validationResult.errors,
+    checkedAt: new Date().toISOString()
+  };
+  gameDataParsed.timestamp = new Date().toISOString();
+
+  // Firestore sync
+  saveGameData(gameId, gameDataParsed).catch((fsErr) => {
+    console.error(`Error saving to Firestore for game ${gameId}:`, fsErr);
+  });
+
+  // Update local database
+  const updatedGames = existingGamesForDate.map((g: any) => 
+    String(g.id) === String(gameId) ? gameDataParsed : g
+  );
+  if (!existingGamesForDate.some((g: any) => String(g.id) === String(gameId))) {
+    updatedGames.push(gameDataParsed);
+  }
+
+  currentDB[date] = updatedGames;
+  writeGamesDB(currentDB);
+  writeErrorsDB(errorsCollection);
+
+  return gameDataParsed;
+}
+
+// Harvester endpoint for individual game updates
+app.post("/api/harvest-game", async (req, res) => {
+  const { gameId, date } = req.body;
+  if (!gameId || !date || typeof gameId !== "string" || typeof date !== "string") {
+    res.status(400).json({ error: "gameId y date son requeridos" });
+    return;
+  }
+
+  try {
+    const updatedGame = await updateSingleGameData(gameId, date);
+    res.json({ success: true, game: updatedGame });
+  } catch (err) {
+    console.error(`Error al actualizar juego individual ${gameId}:`, err);
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// Auto-updater for live/in-progress games in background (every 15 minutes)
+function startLiveGamesAutoupdater() {
+  const INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+  console.log(`[Auto-Updater] Iniciando programador de actualización cada 15 minutos...`);
+
+  setInterval(async () => {
+    try {
+      console.log(`[Auto-Updater] Ejecutando verificación de juegos en progreso para actualización automática...`);
+      const db = readGamesDB();
+      const liveGamesToUpdate: { gameId: string; date: string; label: string }[] = [];
+
+      // Find all live games across all dates in local DB
+      for (const date of Object.keys(db)) {
+        const games = db[date] || [];
+        for (const game of games) {
+          const status = game.game_result?.gameStatus || "";
+          const isLive = status.includes("In Progress") || status.includes("Live") || status.includes("Delayed") || status.includes("Suspended");
+          
+          if (isLive) {
+            liveGamesToUpdate.push({
+              gameId: String(game.id),
+              date: game.metadata?.date || date,
+              label: `${game.metadata?.awayTeam} vs ${game.metadata?.homeTeam}`
+            });
+          }
+        }
+      }
+
+      if (liveGamesToUpdate.length === 0) {
+        console.log(`[Auto-Updater] No se encontraron juegos en progreso para actualizar.`);
+        return;
+      }
+
+      console.log(`[Auto-Updater] Detectados ${liveGamesToUpdate.length} juego(s) en progreso. Iniciando actualización secuencial...`);
+
+      for (const item of liveGamesToUpdate) {
+        try {
+          console.log(`[Auto-Updater] Actualizando juego ${item.label} (ID: ${item.gameId}, Fecha: ${item.date})...`);
+          await updateSingleGameData(item.gameId, item.date);
+          console.log(`[Auto-Updater] ✓ Juego ${item.label} actualizado exitosamente.`);
+        } catch (err) {
+          console.error(`[Auto-Updater] ✗ Error al actualizar juego ${item.label}:`, err);
+        }
+      }
+      console.log(`[Auto-Updater] Ciclo de actualización completado.`);
+    } catch (err) {
+      console.error(`[Auto-Updater] Error en el ciclo del programador:`, err);
+    }
+  }, INTERVAL_MS);
+}
+
 // Serve static assets in production or connect Vite in development
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
@@ -1900,6 +2167,7 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
+    startLiveGamesAutoupdater();
   });
 }
 

@@ -16,27 +16,27 @@ export interface GameMetadata {
 
 export interface PitcherStats {
   name: string;
-  era: number;
-  whip: number;
-  kPct: number; // K%
-  bbPct: number; // BB%
-  wins: number;
-  losses: number;
+  era: number | string;
+  whip: number | string;
+  kPct: number | string; // K%
+  bbPct: number | string; // BB%
+  wins: number | string;
+  losses: number | string;
   ip: string;
 }
 
 export interface BullpenStats {
-  era: number;
+  era: number | string;
   usageLast3Days: string; // e.g. "Alta", "Moderada", "Baja"
   availableRelievers: string[]; // List of names
-  ipLast7Days: number; // Innings pitched last 7 days
+  ipLast7Days: number | string; // Innings pitched last 7 days
 }
 
 export interface OffenseStats {
-  runsPerGame: number;
-  ops: number;
-  obp: number;
-  slg: number;
+  runsPerGame: number | string;
+  ops: number | string;
+  obp: number | string;
+  slg: number | string;
 }
 
 export interface TeamTrend {
@@ -124,34 +124,34 @@ export interface FatigueMetrics {
   };
   bullpen: {
     home: {
-      ipLast3Days: number;
-      ipLast7Days: number;
-      relieversUsedYesterday: number;
-      relieversUsedLast2Days: number;
-      availableCount: number;
+      ipLast3Days: number | string;
+      ipLast7Days: number | string;
+      relieversUsedYesterday: number | string;
+      relieversUsedLast2Days: number | string;
+      availableCount: number | string;
     };
     away: {
-      ipLast3Days: number;
-      ipLast7Days: number;
-      relieversUsedYesterday: number;
-      relieversUsedLast2Days: number;
-      availableCount: number;
+      ipLast3Days: number | string;
+      ipLast7Days: number | string;
+      relieversUsedYesterday: number | string;
+      relieversUsedLast2Days: number | string;
+      availableCount: number | string;
     };
   };
 }
 
 export interface AdvancedPitchingStats {
-  xEra: number;
-  fip: number;
-  xFip: number;
-  siera: number;
-  hardHitPct: number;
-  barrelPct: number;
-  groundBallPct: number;
-  flyBallPct: number;
-  strikeoutRate: number;
-  walkRate: number;
-  swingingStrikePct: number;
+  xEra?: number | null;
+  fip: number | null;
+  xFip?: number | null;
+  siera?: number | null;
+  hardHitPct?: number | null;
+  barrelPct?: number | null;
+  groundBallPct: number | null;
+  flyBallPct: number | null;
+  strikeoutRate: number | null;
+  walkRate: number | null;
+  swingingStrikePct?: number | null;
 }
 
 export interface AdvancedPitching {
@@ -160,15 +160,15 @@ export interface AdvancedPitching {
 }
 
 export interface AdvancedOffenseStats {
-  wOba: number;
-  xwOba: number;
-  wrcPlus: number;
-  iso: number;
-  babip: number;
-  hardHitPct: number;
-  barrelPct: number;
-  contactPct: number;
-  chasePct: number;
+  wOba: number | null;
+  xwOba?: number | null;
+  wrcPlus?: number | null;
+  iso: number | null;
+  babip: number | null;
+  hardHitPct?: number | null;
+  barrelPct?: number | null;
+  contactPct?: number | null;
+  chasePct?: number | null;
 }
 
 export interface AdvancedOffense {
@@ -228,6 +228,11 @@ export interface Linescore {
   innings: InningScore[];
   homeTotals: { runs: number; hits: number; errors: number };
   awayTotals: { runs: number; hits: number; errors: number };
+  currentInning?: number;
+  currentInningOrdinal?: string;
+  inningState?: string;
+  inningHalf?: string;
+  isTopInning?: boolean;
 }
 
 export interface LivePlayerStats {
@@ -267,6 +272,7 @@ export interface PlayByPlayEvent {
 export interface PlayByPlay {
   scoringPlays: PlayByPlayEvent[];
   currentPlay?: PlayByPlayEvent;
+  allPlays?: PlayByPlayEvent[];
 }
 
 export interface MLBGame {
