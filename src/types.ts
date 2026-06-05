@@ -29,7 +29,7 @@ export interface BullpenStats {
   era: number | string;
   usageLast3Days: string; // e.g. "Alta", "Moderada", "Baja"
   availableRelievers: string[]; // List of names
-  ipLast7Days: number | string; // Innings pitched last 7 days
+  ipLast3Days: number | string; // Innings pitched last 3 days
 }
 
 export interface OffenseStats {
@@ -152,11 +152,20 @@ export interface AdvancedPitchingStats {
   strikeoutRate: number | null;
   walkRate: number | null;
   swingingStrikePct?: number | null;
+  era?: string | number | null;
+  whip?: string | number | null;
+  ip?: string | null;
+  wins?: number | null;
+  losses?: number | null;
 }
 
 export interface AdvancedPitching {
   home: AdvancedPitchingStats;
   away: AdvancedPitchingStats;
+  homeLast7?: AdvancedPitchingStats;
+  awayLast7?: AdvancedPitchingStats;
+  homeVsOpp?: AdvancedPitchingStats;
+  awayVsOpp?: AdvancedPitchingStats;
 }
 
 export interface AdvancedOffenseStats {

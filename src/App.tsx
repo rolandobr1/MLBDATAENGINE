@@ -18,16 +18,17 @@ import {
   Sparkles, 
   Activity, 
   CheckCircle,
-  FileCode
+  FileCode,
+  Search
 } from "lucide-react";
 
 export default function App() {
   const [selectedDate, setSelectedDate] = React.useState<string>(() => {
-    const saved = typeof window !== "undefined" ? localStorage.getItem("mlb_selected_date") : null;
-    if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved)) {
-      return saved;
-    }
-    return "2026-06-03";
+    // Siempre mostrar la fecha actual por defecto al abrir la aplicación.
+    // Esto evita la confusión de cargar un día anterior donde "parece que no se extrajo nada".
+    const localDate = new Date();
+    const tzOffset = localDate.getTimezoneOffset() * 60000;
+    return new Date(localDate.getTime() - tzOffset).toISOString().split("T")[0];
   });
   const [games, setGames] = React.useState<MLBGame[]>([]);
   const [errors, setErrors] = React.useState<LoggedError[]>([]);
@@ -42,6 +43,8 @@ export default function App() {
     phase?: string;
   }>({ pct: 0, step: "" });
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = React.useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = React.useState<string>("");
+  const [pinnedGames, setPinnedGames] = React.useState<string[]>([]);
 
   React.useEffect(() => {
     localStorage.setItem("mlb_selected_date", selectedDate);
@@ -219,6 +222,26 @@ export default function App() {
     sheetsRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  const togglePin = (gameId: string) => {
+    setPinnedGames(prev => {
+      if (prev.includes(gameId)) {
+        return prev.filter(id => id !== gameId);
+      } else {
+        return [...prev, gameId];
+      }
+    });
+  };
+
+  const sortedGames = [...games].sort((a, b) => {
+    const indexA = pinnedGames.indexOf(String(a.id));
+    const indexB = pinnedGames.indexOf(String(b.id));
+
+    if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+    if (indexA !== -1) return -1;
+    if (indexB !== -1) return 1;
+    return 0;
+  });
+
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans select-none">
       
@@ -271,8 +294,24 @@ export default function App() {
               </p>
             </div>
 
-            <div className="bg-white border border-slate-200 rounded px-2.5 py-1 text-xs font-mono font-medium text-slate-600 shadow-sm">
-              Extracción: <strong className="text-slate-800 uppercase">{games.length > 0 ? "Completado" : "Pendiente"}</strong>
+            <div className="flex items-center gap-3">
+              {games.length > 0 && (
+                <div className="relative hidden sm:block">
+                  <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
+                    <Search size={14} className="text-slate-400" />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Buscar equipo..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-8 pr-3 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 w-48 transition-colors"
+                  />
+                </div>
+              )}
+              <div className="bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs font-mono font-medium text-slate-600 shadow-sm">
+                Extracción: <strong className="text-slate-800 uppercase">{games.length > 0 ? "Completado" : "Pendiente"}</strong>
+              </div>
             </div>
           </div>
 
@@ -294,13 +333,35 @@ export default function App() {
           ) : (
             /* Match grid lists */
             <div className="space-y-6">
-              {games.map((game) => (
+              {sortedGames.filter(g => {
+                if (!searchQuery) return true;
+                const searchLower = searchQuery.toLowerCase();
+                return (
+                  g.metadata.homeTeam.toLowerCase().includes(searchLower) ||
+                  g.metadata.awayTeam.toLowerCase().includes(searchLower)
+                );
+              }).map((game) => (
                 <GameCard 
                   key={game.id} 
                   game={game} 
                   onRefresh={() => handleRefreshGame(game.id, game.metadata.date)} 
+                  isPinned={pinnedGames.includes(String(game.id))}
+                  onTogglePin={() => togglePin(String(game.id))}
                 />
               ))}
+
+              {sortedGames.filter(g => {
+                if (!searchQuery) return true;
+                const searchLower = searchQuery.toLowerCase();
+                return (
+                  g.metadata.homeTeam.toLowerCase().includes(searchLower) ||
+                  g.metadata.awayTeam.toLowerCase().includes(searchLower)
+                );
+              }).length === 0 && (
+                <div className="text-center py-8 text-slate-500 text-sm italic border border-dashed border-slate-300 rounded-lg bg-slate-50">
+                  No se encontraron partidos que coincidan con "{searchQuery}".
+                </div>
+              )}
             </div>
           )}
         </section>
