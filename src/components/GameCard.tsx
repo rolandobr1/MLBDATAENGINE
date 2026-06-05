@@ -42,10 +42,18 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
   };
 
 
+  const calcKMinusBb = (k: any, bb: any) => {
+    if (!k || !bb || k === "-" || bb === "-") return "-";
+    const kNum = parseFloat(String(k).replace("%", ""));
+    const bbNum = parseFloat(String(bb).replace("%", ""));
+    if (isNaN(kNum) || isNaN(bbNum)) return "-";
+    return (kNum - bbNum).toFixed(1) + "%";
+  };
+
   const getPitcherDisplayStats = (pitcherTeam: 'away' | 'home') => {
     const season = game.pitchers[pitcherTeam];
     const adv = game.advanced_pitching;
-    if (!adv) return { era: typeof season.era === 'number' ? season.era.toFixed(2) : season.era, whip: typeof season.whip === 'number' ? season.whip.toFixed(2) : season.whip, kPct: season.kPct + "%", bbPct: season.bbPct + "%", record: `${season.wins}-${season.losses}`, ip: season.ip, fip: "-", gbPct: "-" };
+    if (!adv) return { era: typeof season.era === 'number' ? season.era.toFixed(2) : season.era, whip: typeof season.whip === 'number' ? season.whip.toFixed(2) : season.whip, kPct: season.kPct + "%", bbPct: season.bbPct + "%", kMinusBb: calcKMinusBb(season.kPct, season.bbPct), swStrPct: "-", record: `${season.wins}-${season.losses}`, ip: season.ip, fip: "-", gbPct: "-" };
 
     const advSeason = pitcherTeam === 'away' ? adv.away : adv.home;
     const last7 = pitcherTeam === 'away' ? adv.awayLast7 : adv.homeLast7;
@@ -57,6 +65,8 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
         whip: typeof season.whip === 'number' ? season.whip.toFixed(2) : season.whip,
         kPct: season.kPct + "%",
         bbPct: season.bbPct + "%",
+        kMinusBb: calcKMinusBb(season.kPct, season.bbPct),
+        swStrPct: advSeason?.swingingStrikePct ? advSeason.swingingStrikePct.toFixed(1) + "%" : "-",
         record: `${season.wins}-${season.losses}`,
         ip: season.ip,
         fip: advSeason?.fip ? advSeason.fip.toFixed(2) : "-",
@@ -68,6 +78,8 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
         whip: last7?.whip || "-",
         kPct: last7?.strikeoutRate ? last7.strikeoutRate + "%" : "-",
         bbPct: last7?.walkRate ? last7.walkRate + "%" : "-",
+        kMinusBb: calcKMinusBb(last7?.strikeoutRate, last7?.walkRate),
+        swStrPct: last7?.swingingStrikePct ? last7.swingingStrikePct.toFixed(1) + "%" : "-",
         record: `${last7?.wins || 0}-${last7?.losses || 0}`,
         ip: last7?.ip || "-",
         fip: last7?.fip ? last7.fip.toFixed(2) : "-",
@@ -79,6 +91,8 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
         whip: vsOpp?.whip || "-",
         kPct: vsOpp?.strikeoutRate ? vsOpp.strikeoutRate + "%" : "-",
         bbPct: vsOpp?.walkRate ? vsOpp.walkRate + "%" : "-",
+        kMinusBb: calcKMinusBb(vsOpp?.strikeoutRate, vsOpp?.walkRate),
+        swStrPct: vsOpp?.swingingStrikePct ? vsOpp.swingingStrikePct.toFixed(1) + "%" : "-",
         record: `${vsOpp?.wins || 0}-${vsOpp?.losses || 0}`,
         ip: vsOpp?.ip || "-",
         fip: vsOpp?.fip ? vsOpp.fip.toFixed(2) : "-",
@@ -172,7 +186,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
         <div>
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-mono tracking-widest text-slate-400 uppercase">
-              Stadium: {game.metadata.venue}
+              Estadio: {game.metadata.venue}
             </span>
             <span className="text-slate-500">•</span>
             <span className="text-[10px] font-mono text-blue-400">ID: {game.id}</span>
@@ -200,9 +214,9 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
             <div className="hidden lg:flex bg-slate-800 border border-slate-700/60 rounded px-2.5 py-1 text-slate-300 text-[10px] items-center gap-2">
               <span className="font-bold text-slate-100">{game.weather.temp}°C</span>
               <span className="text-slate-600">|</span>
-              <span>Hum: {game.weather.humidity}%</span>
+              <span>Humedad: {game.weather.humidity}%</span>
               <span className="text-slate-600">|</span>
-              <span>Wind: {game.weather.windSpeed} km/h</span>
+              <span>Viento: {game.weather.windSpeed} km/h</span>
               <span className="text-slate-600">|</span>
               <span className="text-blue-400 font-medium">{game.weather.skyStatus}</span>
             </div>
@@ -296,7 +310,17 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                 <div className="flex justify-between"><span title="FIP (Fielding Independent Pitching): Estima la efectividad basada sólo en ponches, boletos, HBP y HR." className="cursor-help border-b border-dotted border-slate-400">FIP:</span> <strong className="text-slate-800">{awayStats.fip}</strong></div>
                 <div className="flex justify-between"><span title="WHIP: Bases por bolas + Hits permitidos por entrada lanzada. Menor es mejor." className="cursor-help border-b border-dotted border-slate-400">WHIP:</span> <strong className="text-slate-800">{awayStats.whip}</strong></div>
                 <div className="flex justify-between"><span title="Porcentaje de Ponches: Frecuencia con la que el lanzador poncha al bateador." className="cursor-help border-b border-dotted border-slate-400">K%:</span> <strong className="text-slate-800">{awayStats.kPct}</strong></div>
+                {game.pitchers.away.strikeoutProp != null && (
+                  <div className="flex justify-between items-center text-indigo-900 bg-indigo-50/50 -mx-1 px-1 rounded"><span title="Línea de Ponches de Las Vegas." className="cursor-help font-bold">Línea Ks:</span> 
+                    <div className="text-right leading-tight">
+                       <strong>{game.pitchers.away.strikeoutProp}</strong>
+                       <div className="text-[8px] text-indigo-600 font-mono -mt-0.5">O:{game.pitchers.away.strikeoutPropOverOdds} U:{game.pitchers.away.strikeoutPropUnderOdds}</div>
+                    </div>
+                  </div>
+                )}
                 <div className="flex justify-between"><span title="Porcentaje de Boletos: Frecuencia con la que el lanzador otorga bases por bolas." className="cursor-help border-b border-dotted border-slate-400">BB%:</span> <strong className="text-slate-800">{awayStats.bbPct}</strong></div>
+                <div className="flex justify-between"><span title="Ponches menos Boletos: Un indicador superior del dominio del lanzador." className="cursor-help border-b border-dotted border-slate-400">K-BB%:</span> <strong className="text-slate-800">{awayStats.kMinusBb}</strong></div>
+                <div className="flex justify-between"><span title="Porcentaje de Strikes Abanicados (Swinging Strike %)." className="cursor-help border-b border-dotted border-slate-400">SwStr%:</span> <strong className="text-slate-800">{awayStats.swStrPct}</strong></div>
                 <div className="flex justify-between"><span>GB%:</span> <strong className="text-slate-800">{awayStats.gbPct}</strong></div>
                 <div className="flex justify-between"><span>Récord:</span> <strong className="text-slate-800">{awayStats.record}</strong></div>
                 <div className="flex justify-between"><span title="Entradas Lanzadas (Innings Pitched)." className="cursor-help border-b border-dotted border-slate-400">IP:</span> <strong className="text-slate-800">{awayStats.ip}</strong></div>
@@ -317,7 +341,17 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                 <div className="flex justify-between"><span title="FIP (Fielding Independent Pitching): Estima la efectividad basada sólo en ponches, boletos, HBP y HR." className="cursor-help border-b border-dotted border-slate-400">FIP:</span> <strong className="text-slate-800">{homeStats.fip}</strong></div>
                 <div className="flex justify-between"><span title="WHIP: Bases por bolas + Hits permitidos por entrada lanzada. Menor es mejor." className="cursor-help border-b border-dotted border-slate-400">WHIP:</span> <strong className="text-slate-800">{homeStats.whip}</strong></div>
                 <div className="flex justify-between"><span title="Porcentaje de Ponches: Frecuencia con la que el lanzador poncha al bateador." className="cursor-help border-b border-dotted border-slate-400">K%:</span> <strong className="text-slate-800">{homeStats.kPct}</strong></div>
+                {game.pitchers.home.strikeoutProp != null && (
+                  <div className="flex justify-between items-center text-indigo-900 bg-indigo-50/50 -mx-1 px-1 rounded"><span title="Línea de Ponches de Las Vegas." className="cursor-help font-bold">Línea Ks:</span> 
+                    <div className="text-right leading-tight">
+                       <strong>{game.pitchers.home.strikeoutProp}</strong>
+                       <div className="text-[8px] text-indigo-600 font-mono -mt-0.5">O:{game.pitchers.home.strikeoutPropOverOdds} U:{game.pitchers.home.strikeoutPropUnderOdds}</div>
+                    </div>
+                  </div>
+                )}
                 <div className="flex justify-between"><span title="Porcentaje de Boletos: Frecuencia con la que el lanzador otorga bases por bolas." className="cursor-help border-b border-dotted border-slate-400">BB%:</span> <strong className="text-slate-800">{homeStats.bbPct}</strong></div>
+                <div className="flex justify-between"><span title="Ponches menos Boletos: Un indicador superior del dominio del lanzador." className="cursor-help border-b border-dotted border-slate-400">K-BB%:</span> <strong className="text-slate-800">{homeStats.kMinusBb}</strong></div>
+                <div className="flex justify-between"><span title="Porcentaje de Strikes Abanicados (Swinging Strike %)." className="cursor-help border-b border-dotted border-slate-400">SwStr%:</span> <strong className="text-slate-800">{homeStats.swStrPct}</strong></div>
                 <div className="flex justify-between"><span>GB%:</span> <strong className="text-slate-800">{homeStats.gbPct}</strong></div>
                 <div className="flex justify-between"><span>Récord:</span> <strong className="text-slate-800">{homeStats.record}</strong></div>
                 <div className="flex justify-between"><span title="Entradas Lanzadas (Innings Pitched)." className="cursor-help border-b border-dotted border-slate-400">IP:</span> <strong className="text-slate-800">{homeStats.ip}</strong></div>
@@ -477,7 +511,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       <span className="w-10 cursor-help border-b border-dotted border-slate-400" title="Promedio de Bateo (Batting Average).">AVG</span>
                       <span className="w-10 cursor-help border-b border-dotted border-slate-400" title="OPS (On-base Plus Slugging): Suma del porcentaje de embasado y el slugging.">OPS</span>
                       <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="Cuadrangulares (Home Runs).">HR</span>
-                      <span className="w-11 cursor-help border-b border-dotted border-slate-400" title="Carreras Impulsadas (Runs Batted In).">RBI</span>
+                      <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="Porcentaje de Ponches (Strikeout %).">K%</span>
                     </div>
                   </div>
                   <div className="divide-y divide-slate-100 font-mono text-[11px]">
@@ -491,11 +525,20 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                         <div className="flex gap-2 text-right shrink-0">
                           <span className="text-slate-800 font-bold w-10">{player.avg.toFixed(3).substring(1)}</span>
                           <span className="text-blue-600 w-10">{player.ops.toFixed(3)}</span>
-                          <span className="text-slate-500 w-9">{player.hr} HR</span>
-                          <span className="text-slate-500 w-11">{player.rbi} RBI</span>
+                          <span className="text-slate-500 w-9">{player.hr}</span>
+                          <span className="text-slate-500 w-9">{player.kPct !== undefined ? player.kPct + "%" : "-"}</span>
                         </div>
                       </div>
                     ))}
+                  </div>
+                  <div className="bg-slate-50 px-4 py-2 flex justify-between items-center border-t border-slate-200/60 font-mono text-[11px] text-slate-700">
+                    <span className="font-bold">Promedio Proyectado</span>
+                    <div className="flex gap-2 text-right shrink-0 font-bold">
+                      <span className="w-10 text-slate-800">{(game.lineups.away.reduce((sum, p) => sum + (p.avg || 0), 0) / game.lineups.away.length).toFixed(3).substring(1)}</span>
+                      <span className="w-10 text-blue-600">{(game.lineups.away.reduce((sum, p) => sum + (p.ops || 0), 0) / game.lineups.away.length).toFixed(3)}</span>
+                      <span className="w-9">-</span>
+                      <span className="w-9">{(game.lineups.away.reduce((sum, p) => sum + (p.kPct || 0), 0) / game.lineups.away.filter(p => p.kPct !== undefined).length || 0).toFixed(1)}%</span>
+                    </div>
                   </div>
                 </div>
 
@@ -507,7 +550,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       <span className="w-10 cursor-help border-b border-dotted border-slate-400" title="Promedio de Bateo (Batting Average).">AVG</span>
                       <span className="w-10 cursor-help border-b border-dotted border-slate-400" title="OPS (On-base Plus Slugging): Suma del porcentaje de embasado y el slugging.">OPS</span>
                       <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="Cuadrangulares (Home Runs).">HR</span>
-                      <span className="w-11 cursor-help border-b border-dotted border-slate-400" title="Carreras Impulsadas (Runs Batted In).">RBI</span>
+                      <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="Porcentaje de Ponches (Strikeout %).">K%</span>
                     </div>
                   </div>
                   <div className="divide-y divide-slate-100 font-mono text-[11px]">
@@ -521,11 +564,20 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                         <div className="flex gap-2 text-right shrink-0">
                           <span className="text-slate-800 font-bold w-10">{player.avg.toFixed(3).substring(1)}</span>
                           <span className="text-red-600 w-10">{player.ops.toFixed(3)}</span>
-                          <span className="text-slate-500 w-9">{player.hr} HR</span>
-                          <span className="text-slate-500 w-11">{player.rbi} RBI</span>
+                          <span className="text-slate-500 w-9">{player.hr}</span>
+                          <span className="text-slate-500 w-9">{player.kPct !== undefined ? player.kPct + "%" : "-"}</span>
                         </div>
                       </div>
                     ))}
+                  </div>
+                  <div className="bg-slate-50 px-4 py-2 flex justify-between items-center border-t border-slate-200/60 font-mono text-[11px] text-slate-700">
+                    <span className="font-bold">Promedio Proyectado</span>
+                    <div className="flex gap-2 text-right shrink-0 font-bold">
+                      <span className="w-10 text-slate-800">{(game.lineups.home.reduce((sum, p) => sum + (p.avg || 0), 0) / game.lineups.home.length).toFixed(3).substring(1)}</span>
+                      <span className="w-10 text-red-600">{(game.lineups.home.reduce((sum, p) => sum + (p.ops || 0), 0) / game.lineups.home.length).toFixed(3)}</span>
+                      <span className="w-9">-</span>
+                      <span className="w-9">{(game.lineups.home.reduce((sum, p) => sum + (p.kPct || 0), 0) / game.lineups.home.filter(p => p.kPct !== undefined).length || 0).toFixed(1)}%</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -538,7 +590,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                 {game.linescore && (
                   <div className="bg-white rounded-lg border border-slate-200/60 overflow-hidden shadow-sm">
                     <div className="bg-slate-800 text-white px-4 py-2 font-display font-bold text-xs uppercase tracking-wider">
-                      Linescore
+                      Pizarra (Linescore)
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs font-mono text-center">

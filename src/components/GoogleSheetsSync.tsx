@@ -1,6 +1,7 @@
 import React from "react";
 import { Link, FileSpreadsheet, PlusCircle, CheckCircle, HelpCircle, Loader2, Play, Copy, Database } from "lucide-react";
-import { downloadCSV, generateMLBDataCSV, generateMLDatasetCSV } from "../utils";
+import { downloadCSV, generateMLDatasetCSV } from "../utils";
+import { generateMLBCsvString } from "../utils/csvExport";
 import { MLBGame } from "../types";
 
 interface GoogleSheetsSyncProps {
@@ -15,14 +16,14 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({ games }) => 
   const [isCopied, setIsCopied] = React.useState<boolean>(false);
 
   const handleCopyCSV = () => {
-    const csv = generateMLBDataCSV(games);
+    const csv = generateMLBCsvString(games);
     navigator.clipboard.writeText(csv);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
   };
 
   const handleDownloadCSV = () => {
-    const csv = generateMLBDataCSV(games);
+    const csv = generateMLBCsvString(games);
     downloadCSV(csv, "MLB_MASTER_DATA.csv");
   };
 

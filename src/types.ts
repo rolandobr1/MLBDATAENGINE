@@ -23,6 +23,9 @@ export interface PitcherStats {
   wins: number | string;
   losses: number | string;
   ip: string;
+  strikeoutProp?: number | null; // e.g. 5.5
+  strikeoutPropOverOdds?: number | null; // e.g. -110
+  strikeoutPropUnderOdds?: number | null; // e.g. -120
 }
 
 export interface BullpenStats {
@@ -225,6 +228,7 @@ export interface BatterStats {
   ops: number;
   hr: number;
   rbi: number;
+  kPct?: number;
 }
 
 export interface InningScore {

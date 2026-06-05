@@ -604,6 +604,19 @@ async function retryGeminiCall(
 
 /** Fetch real betting lines for the given date from The Odds API */
 async function fetchRealBettingLines(date: string) {
+  const cacheFile = path.join(process.cwd(), `odds_cache_${date}.json`);
+  
+  // Check Cache first
+  if (fs.existsSync(cacheFile)) {
+    try {
+      console.log(`Leyendo cuotas desde el caché local: odds_cache_${date}.json`);
+      const cached = fs.readFileSync(cacheFile, 'utf-8');
+      return JSON.parse(cached);
+    } catch (e) {
+      console.warn("Error leyendo el caché de cuotas, se ignorará y se descargará nuevamente.", e);
+    }
+  }
+
   const apiKey = process.env.ODDS_API_KEY;
   if (!apiKey) {
     console.warn("ODDS_API_KEY no configurada. No se obtendrán líneas de apuesta reales.");
@@ -619,7 +632,42 @@ async function fetchRealBettingLines(date: string) {
       return null;
     }
     const data = await res.json();
-    return data;
+    
+    // Fetch pitcher strikeouts for each event to support K Props
+    // We do this concurrently to speed up the process
+    const eventsWithProps = await Promise.all(data.map(async (event: any) => {
+      try {
+        const propsUrl = `https://api.the-odds-api.com/v4/sports/baseball_mlb/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=pitcher_strikeouts&oddsFormat=american`;
+        const propsRes = await fetchWithTimeout(propsUrl, 10000);
+        if (propsRes.ok) {
+          const propsData = await propsRes.json();
+          // Merge bookmakers
+          if (propsData && propsData.bookmakers) {
+             for (const pb of propsData.bookmakers) {
+                const existingB = event.bookmakers.find((b: any) => b.key === pb.key);
+                if (existingB) {
+                   existingB.markets.push(...pb.markets);
+                } else {
+                   event.bookmakers.push(pb);
+                }
+             }
+          }
+        }
+      } catch (e) {
+        console.warn(`Failed to fetch K props for event ${event.id}`);
+      }
+      return event;
+    }));
+
+    // Save to Cache
+    try {
+      fs.writeFileSync(cacheFile, JSON.stringify(eventsWithProps, null, 2));
+      console.log(`Cuotas guardadas en caché: odds_cache_${date}.json`);
+    } catch (e) {
+      console.warn("No se pudo guardar el caché de cuotas.", e);
+    }
+
+    return eventsWithProps;
   } catch (err) {
     console.error("Error al obtener líneas de apuestas reales:", err);
     return null;
@@ -713,6 +761,9 @@ async function fetchRealMLBGameData(
           const p = players[`ID${id}`];
           if (!p?.person?.fullName) return null;
           const s = p.seasonStats?.batting || {};
+          const strikeOuts = parseInt(s.strikeOuts) || 0;
+          const plateAppearances = parseInt(s.plateAppearances) || 0;
+          const kPct = plateAppearances > 0 ? Math.round((strikeOuts / plateAppearances) * 1000) / 10 : 0;
           return {
             name: p.person.fullName,
             position: p.position?.abbreviation || "DH",
@@ -720,6 +771,7 @@ async function fetchRealMLBGameData(
             ops: safeFloat(s.ops) ?? 0,
             hr: parseInt(s.homeRuns) || 0,
             rbi: parseInt(s.rbi) || 0,
+            kPct: kPct || undefined,
           };
         })
         .filter(Boolean);
@@ -802,6 +854,9 @@ async function fetchRealMLBGameData(
           .slice(0, 9)
           .map((p: any) => {
             const s = p.person?.stats?.[0]?.splits?.[0]?.stat || {};
+            const strikeOuts = parseInt(s.strikeOuts) || 0;
+            const plateAppearances = parseInt(s.plateAppearances) || 0;
+            const kPct = plateAppearances > 0 ? Math.round((strikeOuts / plateAppearances) * 1000) / 10 : 0;
             return {
               name: p.person.fullName,
               position: p.position?.abbreviation || "DH",
@@ -809,6 +864,7 @@ async function fetchRealMLBGameData(
               ops: safeFloat(s.ops) ?? 0,
               hr: parseInt(s.homeRuns || "0") || 0,
               rbi: parseInt(s.rbi || "0") || 0,
+              kPct: kPct || undefined,
             };
           });
       } catch {
@@ -1097,12 +1153,16 @@ async function fetchAdvancedPitching(pitcherId: number, season: string): Promise
   };
   if (!pitcherId) return defaults;
   try {
-    const stdUrl = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=season&season=${season}&group=pitching`;
+    const stdUrl = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=season,seasonAdvanced&season=${season}&group=pitching`;
     const stdRes = await fetchWithTimeout(stdUrl, 5000);
     let stdStat: any = {};
+    let advStat: any = {};
     if (stdRes.ok) {
       const stdData = await stdRes.json();
-      stdStat = stdData.stats?.[0]?.splits?.[0]?.stat || {};
+      const seasonStats = stdData.stats?.find((s: any) => s.type.displayName === "season");
+      const advancedStats = stdData.stats?.find((s: any) => s.type.displayName === "seasonAdvanced");
+      stdStat = seasonStats?.splits?.[0]?.stat || {};
+      advStat = advancedStats?.splits?.[0]?.stat || {};
     }
 
     if (!stdStat.inningsPitched) {
@@ -1128,6 +1188,9 @@ async function fetchAdvancedPitching(pitcherId: number, season: string): Promise
     const groundBallPct = totalOuts > 0 ? Math.round((go / totalOuts) * 1000) / 10 : null;
     const flyBallPct = totalOuts > 0 ? Math.round((ao / totalOuts) * 1000) / 10 : null;
 
+    const pitches = stdStat.numberOfPitches ? parseInt(stdStat.numberOfPitches) : (bf && advStat.pitchesPerPlateAppearance ? Math.round(bf * parseFloat(advStat.pitchesPerPlateAppearance)) : 0);
+    const swingingStrikePct = pitches > 0 && advStat.swingAndMisses ? Math.round((parseInt(advStat.swingAndMisses) / pitches) * 1000) / 10 : null;
+
     return {
       xEra: null,
       fip: fip,
@@ -1139,7 +1202,7 @@ async function fetchAdvancedPitching(pitcherId: number, season: string): Promise
       flyBallPct,
       strikeoutRate,
       walkRate,
-      swingingStrikePct: null
+      swingingStrikePct
     };
   } catch (err) {
     console.error(`Error fetching advanced pitching for ${pitcherId}:`, err);
@@ -1725,6 +1788,9 @@ function buildDirectGameData(
 ) {
   // Try to match odds if provided
   let odds: any = null;
+  let homeKPropData: any = null;
+  let awayKPropData: any = null;
+
   if (realOddsData && Array.isArray(realOddsData)) {
     const matchOdds = realOddsData.find((o: any) =>
       (o.home_team.includes(homeName) || homeName.includes(o.home_team)) &&
@@ -1735,6 +1801,33 @@ function buildDirectGameData(
       const h2h = bookie.markets.find((m: any) => m.key === 'h2h');
       const spreads = bookie.markets.find((m: any) => m.key === 'spreads');
       const totals = bookie.markets.find((m: any) => m.key === 'totals');
+      
+      let pitcherStrikeoutsOutcomes: any[] = [];
+      for (const b of matchOdds.bookmakers) {
+         const m = b.markets.find((mk: any) => mk.key === 'pitcher_strikeouts');
+         if (m && m.outcomes) {
+            pitcherStrikeoutsOutcomes.push(...m.outcomes);
+         }
+      }
+
+      if (pitcherStrikeoutsOutcomes.length > 0) {
+        const matchProp = (pitcherName: string) => {
+           if (!pitcherName || pitcherName === "Por definir" || pitcherName === "TBD") return null;
+           const parts = pitcherName.split(' ');
+           const lastName = parts[parts.length - 1];
+           const outcomes = pitcherStrikeoutsOutcomes.filter((o: any) => 
+               o.description && (o.description.includes(pitcherName) || o.description.includes(lastName))
+           );
+           if (outcomes.length > 0) {
+              const over = outcomes.find((o:any) => o.name === 'Over');
+              const under = outcomes.find((o:any) => o.name === 'Under');
+              return { point: over?.point || under?.point || null, overOdds: over?.price || null, underOdds: under?.price || null };
+           }
+           return null;
+        };
+        homeKPropData = matchProp(realMLBData?.pitchers?.home?.name);
+        awayKPropData = matchProp(realMLBData?.pitchers?.away?.name);
+      }
 
       odds = {
         openingMoneylineHome: h2h?.outcomes.find((o: any) => o.name === matchOdds.home_team)?.price || -110,
@@ -1777,7 +1870,10 @@ function buildDirectGameData(
         bbPct: safeFloat(realMLBData?.pitchers?.home?.bbPct) ?? "N/A",
         wins: parseInt(realMLBData?.pitchers?.home?.wins) || "N/A",
         losses: parseInt(realMLBData?.pitchers?.home?.losses) || "N/A",
-        ip: realMLBData?.pitchers?.home?.ip || "N/A"
+        ip: realMLBData?.pitchers?.home?.ip || "N/A",
+        strikeoutProp: homeKPropData?.point ?? null,
+        strikeoutPropOverOdds: homeKPropData?.overOdds ?? null,
+        strikeoutPropUnderOdds: homeKPropData?.underOdds ?? null
       },
       away: {
         name: realMLBData?.pitchers?.away?.name || "Por definir",
@@ -1787,7 +1883,10 @@ function buildDirectGameData(
         bbPct: safeFloat(realMLBData?.pitchers?.away?.bbPct) ?? "N/A",
         wins: parseInt(realMLBData?.pitchers?.away?.wins) || "N/A",
         losses: parseInt(realMLBData?.pitchers?.away?.losses) || "N/A",
-        ip: realMLBData?.pitchers?.away?.ip || "N/A"
+        ip: realMLBData?.pitchers?.away?.ip || "N/A",
+        strikeoutProp: awayKPropData?.point ?? null,
+        strikeoutPropOverOdds: awayKPropData?.overOdds ?? null,
+        strikeoutPropUnderOdds: awayKPropData?.underOdds ?? null
       }
     },
     bullpen: {
