@@ -1,5 +1,5 @@
 import { db } from '../config/firebase';
-import { doc, collection, setDoc } from 'firebase/firestore';
+import { doc, collection, setDoc, getDocs } from 'firebase/firestore';
 
 export const saveGameData = async (gameId: string, gameData: any) => {
   try {
@@ -61,6 +61,30 @@ export const saveGameData = async (gameId: string, gameData: any) => {
   } catch (error) {
     console.error(`Error saving game ${gameId} to Firestore:`, error);
     throw error;
+  }
+};
+
+export const loadAllGamesFromFirestore = async (): Promise<any[]> => {
+  try {
+    if (!db) {
+      console.warn("Firestore db is not initialized. Skipping Firestore load.");
+      return [];
+    }
+
+    console.log("Cargando juegos desde Firestore...");
+    const gamesColl = collection(db, 'games');
+    const snapshot = await getDocs(gamesColl);
+    
+    const games: any[] = [];
+    snapshot.forEach((doc) => {
+      games.push(doc.data());
+    });
+
+    console.log(`Se cargaron exitosamente ${games.length} juegos desde Firestore.`);
+    return games;
+  } catch (error) {
+    console.error("Error al cargar juegos de Firestore:", error);
+    return [];
   }
 };
 

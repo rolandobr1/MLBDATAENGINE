@@ -26,6 +26,11 @@ export interface PitcherStats {
   strikeoutProp?: number | null; // e.g. 5.5
   strikeoutPropOverOdds?: number | null; // e.g. -110
   strikeoutPropUnderOdds?: number | null; // e.g. -120
+  pitchHand?: string; // "L" or "R"
+  pitcher_allowed_avg_vs_lhb?: number;
+  pitcher_allowed_avg_vs_rhb?: number;
+  pitcher_allowed_slg_vs_lhb?: number;
+  pitcher_allowed_slg_vs_rhb?: number;
 }
 
 export interface BullpenStats {
@@ -33,6 +38,7 @@ export interface BullpenStats {
   usageLast3Days: string; // e.g. "Alta", "Moderada", "Baja"
   availableRelievers: string[]; // List of names
   ipLast3Days: number | string; // Innings pitched last 3 days
+  ipLast7Days?: number | string; // Innings pitched last 7 days
 }
 
 export interface OffenseStats {
@@ -229,6 +235,37 @@ export interface BatterStats {
   hr: number;
   rbi: number;
   kPct?: number;
+
+  // Temporada
+  player_name?: string;
+  team?: string;
+  bat_side?: string;
+  obp?: number;
+  slg?: number;
+  woba?: number | null;
+  iso?: number | null;
+  pa?: number;
+  hits?: number;
+  doubles?: number;
+  triples?: number;
+  home_runs?: number;
+  strikeout_pct?: number;
+  walk_pct?: number;
+
+  // Últimos 7 días
+  last7_avg?: number;
+  last7_ops?: number;
+  last7_slg?: number;
+  last7_total_bases?: number;
+  last7_hits?: number;
+  last7_xbh?: number;
+
+  // Nuevos campos
+  batting_order?: number;
+  ops_vs_rhp?: number;
+  ops_vs_lhp?: number;
+  slg_vs_rhp?: number;
+  slg_vs_lhp?: number;
 }
 
 export interface InningScore {

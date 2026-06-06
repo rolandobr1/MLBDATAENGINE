@@ -342,3 +342,330 @@ export function downloadCSV(content: string, filename: string) {
   document.body.removeChild(link);
 }
 
+export function generateBattersCSV(games: MLBGame[]): string {
+  const headers = [
+    // --- Batter Info & Stats (36 columns) ---
+    "game_id",
+    "date",
+    "player_name",
+    "team",
+    "batting_order",
+    "bat_side",
+    "position",
+    "avg",
+    "obp",
+    "slg",
+    "ops",
+    "woba",
+    "iso",
+    "pa",
+    "hits",
+    "doubles",
+    "triples",
+    "home_runs",
+    "strikeout_pct",
+    "walk_pct",
+    "last7_avg",
+    "last7_ops",
+    "last7_slg",
+    "last7_total_bases",
+    "last7_hits",
+    "last7_xbh",
+    "ops_vs_rhp",
+    "ops_vs_lhp",
+    "slg_vs_rhp",
+    "slg_vs_lhp",
+    "opposing_pitcher",
+    "opposing_pitcher_hand",
+    "pitcher_allowed_avg_vs_lhb",
+    "pitcher_allowed_avg_vs_rhb",
+    "pitcher_allowed_slg_vs_lhb",
+    "pitcher_allowed_slg_vs_rhb",
+
+    // --- Game Context & Team Stats (72 columns) ---
+    "hora", "equipo_local", "equipo_visitante", "estadio",
+    // Pitchers standard
+    "local_pitcher", "local_pitcher_era", "local_pitcher_whip", "local_pitcher_kPct", "local_pitcher_bbPct", "local_pitcher_wins", "local_pitcher_losses", "local_pitcher_ip",
+    "away_pitcher", "away_pitcher_era", "away_pitcher_whip", "away_pitcher_kPct", "away_pitcher_bbPct", "away_pitcher_wins", "away_pitcher_losses", "away_pitcher_ip",
+    // Bullpen standard
+    "bullpen_era_local", "bullpen_usage_local", "bullpen_ip_7d_local",
+    "bullpen_era_away", "bullpen_usage_away", "bullpen_ip_7d_away",
+    // Offense standard
+    "ofensa_run_g_local", "ofensa_ops_local", "ofensa_obp_local", "ofensa_slg_local",
+    "ofensa_run_g_away", "ofensa_ops_away", "ofensa_obp_away", "ofensa_slg_away",
+    // Betting lines
+    "linea_moneyline_open_local", "linea_moneyline_open_away", "linea_moneyline_curr_local", "linea_moneyline_curr_away",
+    "linea_runline_local", "linea_runline_odds_local", "linea_runline_away", "linea_runline_odds_away",
+    "linea_total_carreras", "linea_over_odds", "linea_under_odds",
+    // Weather
+    "weather_temp", "weather_humidity", "weather_wind_speed", "weather_wind_dir", "weather_pressure", "weather_rain_prob", "weather_sky", "weather_apparent_temp",
+    // Home splits
+    "home_splits_vs_rhp_avg", "home_splits_vs_rhp_ops", "home_splits_vs_rhp_obp", "home_splits_vs_rhp_slg", "home_splits_vs_rhp_rpg", "home_splits_vs_rhp_hr",
+    "home_splits_vs_lhp_avg", "home_splits_vs_lhp_ops", "home_splits_vs_lhp_obp", "home_splits_vs_lhp_slg", "home_splits_vs_lhp_rpg", "home_splits_vs_lhp_hr",
+    // Away splits
+    "away_splits_vs_rhp_avg", "away_splits_vs_rhp_ops", "away_splits_vs_rhp_obp", "away_splits_vs_rhp_slg", "away_splits_vs_rhp_rpg", "away_splits_vs_rhp_hr",
+    "away_splits_vs_lhp_avg", "away_splits_vs_lhp_ops", "away_splits_vs_lhp_obp", "away_splits_vs_lhp_slg", "away_splits_vs_lhp_rpg", "away_splits_vs_lhp_hr",
+    // Fatigue
+    "home_pitcher_rest", "home_pitcher_pitches_last", "home_pitcher_pitches_last_3",
+    "away_pitcher_rest", "away_pitcher_pitches_last", "away_pitcher_pitches_last_3",
+    "home_bullpen_ip_3d", "home_bullpen_ip_7d_recent", "home_bullpen_relievers_yesterday", "home_bullpen_relievers_2d", "home_bullpen_available",
+    "away_bullpen_ip_3d", "away_bullpen_ip_7d_recent", "away_bullpen_relievers_yesterday", "away_bullpen_relievers_2d", "away_bullpen_available",
+    // Advanced Pitching
+    "home_pitcher_xera", "home_pitcher_fip", "home_pitcher_xfip", "home_pitcher_siera", "home_pitcher_hardhit_pct", "home_pitcher_barrel_pct", "home_pitcher_gb_pct", "home_pitcher_fb_pct", "home_pitcher_so_rate", "home_pitcher_bb_rate", "home_pitcher_swstr_pct",
+    "away_pitcher_xera", "away_pitcher_fip", "away_pitcher_xfip", "away_pitcher_siera", "away_pitcher_hardhit_pct", "away_pitcher_barrel_pct", "away_pitcher_gb_pct", "away_pitcher_fb_pct", "away_pitcher_so_rate", "away_pitcher_bb_rate", "away_pitcher_swstr_pct",
+    // Advanced Offense
+    "home_offense_woba", "home_offense_xwoba", "home_offense_wrcplus", "home_offense_iso", "home_offense_babip", "home_offense_hardhit_pct", "home_offense_barrel_pct", "home_offense_contact_pct", "home_offense_chase_pct",
+    "away_offense_woba", "away_offense_xwoba", "away_offense_wrcplus", "away_offense_iso", "away_offense_babip", "away_offense_hardhit_pct", "away_offense_barrel_pct", "away_offense_contact_pct", "away_offense_chase_pct",
+    // Model Features
+    "diff_era", "diff_xera", "diff_fip", "diff_ops", "diff_wrcplus", "diff_bullpen_era", "diff_runs_per_game", "diff_record_last10", "diff_record_home_away", "diff_starter_rest", "diff_bullpen_fatigue", "var_moneyline", "var_runline", "var_totalruns",
+    // Game Results / ML Target Labels
+    "resultado_carreras_local", "resultado_carreras_visitante", "resultado_ganador", "resultado_runline_cubierto", "resultado_overunder", "resultado_estado"
+  ];
+
+  const escapeStr = (val: any) => {
+    if (val === undefined || val === null) return "";
+    return `"${String(val).replace(/"/g, '""')}"`;
+  };
+
+  const rows: any[][] = [];
+
+  for (const game of games) {
+    const hSplitRhp = game.offensive_splits?.home?.vsRhp;
+    const hSplitLhp = game.offensive_splits?.home?.vsLhp;
+    const aSplitRhp = game.offensive_splits?.away?.vsRhp;
+    const aSplitLhp = game.offensive_splits?.away?.vsLhp;
+
+    const fPitchers = game.fatigue_metrics?.pitchers;
+    const fBullpen = game.fatigue_metrics?.bullpen;
+
+    const gameContextRow = [
+      escapeStr(game.metadata.time),
+      escapeStr(game.metadata.homeTeam),
+      escapeStr(game.metadata.awayTeam),
+      escapeStr(game.metadata.venue),
+      // Pitchers standard
+      escapeStr(game.pitchers.home.name),
+      game.pitchers.home.era ?? "",
+      game.pitchers.home.whip ?? "",
+      game.pitchers.home.kPct ?? "",
+      game.pitchers.home.bbPct ?? "",
+      game.pitchers.home.wins ?? "",
+      game.pitchers.home.losses ?? "",
+      escapeStr(game.pitchers.home.ip),
+      escapeStr(game.pitchers.away.name),
+      game.pitchers.away.era ?? "",
+      game.pitchers.away.whip ?? "",
+      game.pitchers.away.kPct ?? "",
+      game.pitchers.away.bbPct ?? "",
+      game.pitchers.away.wins ?? "",
+      game.pitchers.away.losses ?? "",
+      escapeStr(game.pitchers.away.ip),
+      // Bullpen standard
+      game.bullpen.home.era ?? "",
+      escapeStr(game.bullpen.home.usageLast3Days),
+      game.bullpen.home.ipLast7Days ?? "",
+      game.bullpen.away.era ?? "",
+      escapeStr(game.bullpen.away.usageLast3Days),
+      game.bullpen.away.ipLast7Days ?? "",
+      // Offense standard
+      game.offense.home.runsPerGame ?? "",
+      game.offense.home.ops ?? "",
+      game.offense.home.obp ?? "",
+      game.offense.home.slg ?? "",
+      game.offense.away.runsPerGame ?? "",
+      game.offense.away.ops ?? "",
+      game.offense.away.obp ?? "",
+      game.offense.away.slg ?? "",
+      // Betting lines
+      game.betting_lines.openingMoneylineHome ?? "",
+      game.betting_lines.openingMoneylineAway ?? "",
+      game.betting_lines.currentMoneylineHome ?? "",
+      game.betting_lines.currentMoneylineAway ?? "",
+      game.betting_lines.runLineHome ?? "",
+      game.betting_lines.runLineHomeOdds ?? "",
+      game.betting_lines.runLineAway ?? "",
+      game.betting_lines.runLineAwayOdds ?? "",
+      game.betting_lines.totalRuns ?? "",
+      game.betting_lines.overOdds ?? "",
+      game.betting_lines.underOdds ?? "",
+      // Weather
+      game.weather?.temp ?? "",
+      game.weather?.humidity ?? "",
+      game.weather?.windSpeed ?? "",
+      game.weather?.windDirection ?? "",
+      game.weather?.pressure ?? "",
+      game.weather?.rainProbability ?? "",
+      escapeStr(game.weather?.skyStatus),
+      game.weather?.apparentTemp ?? "",
+      // Home splits vs Rhp
+      hSplitRhp?.avg ?? "",
+      hSplitRhp?.ops ?? "",
+      hSplitRhp?.obp ?? "",
+      hSplitRhp?.slg ?? "",
+      hSplitRhp?.runsPerGame ?? "",
+      hSplitRhp?.hr ?? "",
+      // Home splits vs Lhp
+      hSplitLhp?.avg ?? "",
+      hSplitLhp?.ops ?? "",
+      hSplitLhp?.obp ?? "",
+      hSplitLhp?.slg ?? "",
+      hSplitLhp?.runsPerGame ?? "",
+      hSplitLhp?.hr ?? "",
+      // Away splits vs Rhp
+      aSplitRhp?.avg ?? "",
+      aSplitRhp?.ops ?? "",
+      aSplitRhp?.obp ?? "",
+      aSplitRhp?.slg ?? "",
+      aSplitRhp?.runsPerGame ?? "",
+      aSplitRhp?.hr ?? "",
+      // Away splits vs Lhp
+      aSplitLhp?.avg ?? "",
+      aSplitLhp?.ops ?? "",
+      aSplitLhp?.obp ?? "",
+      aSplitLhp?.slg ?? "",
+      aSplitLhp?.runsPerGame ?? "",
+      aSplitLhp?.hr ?? "",
+      // Fatigue
+      fPitchers?.home?.daysSinceLastStart ?? "",
+      fPitchers?.home?.pitchesLastStart ?? "",
+      fPitchers?.home?.pitchesLast3Starts ?? "",
+      fPitchers?.away?.daysSinceLastStart ?? "",
+      fPitchers?.away?.pitchesLastStart ?? "",
+      fPitchers?.away?.pitchesLast3Starts ?? "",
+      fBullpen?.home?.ipLast3Days ?? "",
+      fBullpen?.home?.ipLast7Days ?? "",
+      fBullpen?.home?.relieversUsedYesterday ?? "",
+      fBullpen?.home?.relieversUsedLast2Days ?? "",
+      fBullpen?.home?.availableCount ?? "",
+      fBullpen?.away?.ipLast3Days ?? "",
+      fBullpen?.away?.ipLast7Days ?? "",
+      fBullpen?.away?.relieversUsedYesterday ?? "",
+      fBullpen?.away?.relieversUsedLast2Days ?? "",
+      fBullpen?.away?.availableCount ?? "",
+      // Advanced Pitching
+      game.advanced_pitching?.home?.xEra ?? "",
+      game.advanced_pitching?.home?.fip ?? "",
+      game.advanced_pitching?.home?.xFip ?? "",
+      game.advanced_pitching?.home?.siera ?? "",
+      game.advanced_pitching?.home?.hardHitPct ?? "",
+      game.advanced_pitching?.home?.barrelPct ?? "",
+      game.advanced_pitching?.home?.groundBallPct ?? "",
+      game.advanced_pitching?.home?.flyBallPct ?? "",
+      game.advanced_pitching?.home?.strikeoutRate ?? "",
+      game.advanced_pitching?.home?.walkRate ?? "",
+      game.advanced_pitching?.home?.swingingStrikePct ?? "",
+      game.advanced_pitching?.away?.xEra ?? "",
+      game.advanced_pitching?.away?.fip ?? "",
+      game.advanced_pitching?.away?.xFip ?? "",
+      game.advanced_pitching?.away?.siera ?? "",
+      game.advanced_pitching?.away?.hardHitPct ?? "",
+      game.advanced_pitching?.away?.barrelPct ?? "",
+      game.advanced_pitching?.away?.groundBallPct ?? "",
+      game.advanced_pitching?.away?.flyBallPct ?? "",
+      game.advanced_pitching?.away?.strikeoutRate ?? "",
+      game.advanced_pitching?.away?.walkRate ?? "",
+      game.advanced_pitching?.away?.swingingStrikePct ?? "",
+      // Advanced Offense
+      game.advanced_offense?.home?.wOba ?? "",
+      game.advanced_offense?.home?.xwOba ?? "",
+      game.advanced_offense?.home?.wrcPlus ?? "",
+      game.advanced_offense?.home?.iso ?? "",
+      game.advanced_offense?.home?.babip ?? "",
+      game.advanced_offense?.home?.hardHitPct ?? "",
+      game.advanced_offense?.home?.barrelPct ?? "",
+      game.advanced_offense?.home?.contactPct ?? "",
+      game.advanced_offense?.home?.chasePct ?? "",
+      game.advanced_offense?.away?.wOba ?? "",
+      game.advanced_offense?.away?.xwOba ?? "",
+      game.advanced_offense?.away?.wrcPlus ?? "",
+      game.advanced_offense?.away?.iso ?? "",
+      game.advanced_offense?.away?.babip ?? "",
+      game.advanced_offense?.away?.hardHitPct ?? "",
+      game.advanced_offense?.away?.barrelPct ?? "",
+      game.advanced_offense?.away?.contactPct ?? "",
+      game.advanced_offense?.away?.chasePct ?? "",
+      // Model Features
+      game.model_features?.diffEra ?? "",
+      game.model_features?.diffXera ?? "",
+      game.model_features?.diffFip ?? "",
+      game.model_features?.diffOps ?? "",
+      game.model_features?.diffWrcPlus ?? "",
+      game.model_features?.diffBullpenEra ?? "",
+      game.model_features?.diffRunsPerGame ?? "",
+      game.model_features?.diffRecordLast10 ?? "",
+      game.model_features?.diffRecordHomeAway ?? "",
+      game.model_features?.diffStarterRest ?? "",
+      game.model_features?.diffBullpenFatigue ?? "",
+      game.model_features?.varMoneyline ?? "",
+      game.model_features?.varRunLine ?? "",
+      game.model_features?.varTotalRuns ?? "",
+      // Results
+      game.game_result?.homeScore ?? "",
+      game.game_result?.awayScore ?? "",
+      escapeStr(game.game_result?.winner),
+      escapeStr(game.game_result?.runLineCovered),
+      escapeStr(game.game_result?.overUnderResult),
+      escapeStr(game.game_result?.gameStatus ?? "Scheduled")
+    ];
+
+    const processTeamLineup = (lineup: any[], teamName: string, isHomeTeam: boolean) => {
+      if (!lineup || !Array.isArray(lineup)) return;
+
+      const oppPitcher = isHomeTeam ? game.pitchers.away : game.pitchers.home;
+      const oppPitcherName = oppPitcher?.name || "";
+      const oppPitcherHand = oppPitcher?.pitchHand || "";
+      const pitcherAllowedAvgLhb = oppPitcher?.pitcher_allowed_avg_vs_lhb ?? "";
+      const pitcherAllowedAvgRhb = oppPitcher?.pitcher_allowed_avg_vs_rhb ?? "";
+      const pitcherAllowedSlgLhb = oppPitcher?.pitcher_allowed_slg_vs_lhb ?? "";
+      const pitcherAllowedSlgRhb = oppPitcher?.pitcher_allowed_slg_vs_rhb ?? "";
+
+      for (const p of lineup) {
+        const batterStatsRow = [
+          escapeStr(game.id),
+          escapeStr(game.metadata.date),
+          escapeStr(p.player_name || p.name || ""),
+          escapeStr(p.team || teamName),
+          p.batting_order ?? "",
+          escapeStr(p.bat_side || "R"),
+          escapeStr(p.position || "DH"),
+          p.avg ?? "",
+          p.obp ?? "",
+          p.slg ?? "",
+          p.ops ?? "",
+          p.woba ?? "",
+          p.iso ?? "",
+          p.pa ?? "",
+          p.hits ?? "",
+          p.doubles ?? "",
+          p.triples ?? "",
+          p.home_runs ?? p.hr ?? "",
+          p.strikeout_pct ?? p.kPct ?? "",
+          p.walk_pct ?? "",
+          p.last7_avg ?? "",
+          p.last7_ops ?? "",
+          p.last7_slg ?? "",
+          p.last7_total_bases ?? "",
+          p.last7_hits ?? "",
+          p.last7_xbh ?? "",
+          p.ops_vs_rhp ?? "",
+          p.ops_vs_lhp ?? "",
+          p.slg_vs_rhp ?? "",
+          p.slg_vs_lhp ?? "",
+          escapeStr(oppPitcherName),
+          escapeStr(oppPitcherHand),
+          pitcherAllowedAvgLhb,
+          pitcherAllowedAvgRhb,
+          pitcherAllowedSlgLhb,
+          pitcherAllowedSlgRhb
+        ];
+        rows.push([...batterStatsRow, ...gameContextRow]);
+      }
+    };
+
+    processTeamLineup(game.lineups?.home, game.metadata.homeTeam, true);
+    processTeamLineup(game.lineups?.away, game.metadata.awayTeam, false);
+  }
+
+  return [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+}
+

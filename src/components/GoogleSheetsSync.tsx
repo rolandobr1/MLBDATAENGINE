@@ -1,7 +1,6 @@
 import React from "react";
-import { Link, FileSpreadsheet, PlusCircle, CheckCircle, HelpCircle, Loader2, Play, Copy, Database } from "lucide-react";
-import { downloadCSV, generateMLDatasetCSV } from "../utils";
-import { generateMLBCsvString } from "../utils/csvExport";
+import { Link, FileSpreadsheet, CheckCircle, HelpCircle, Loader2, Play, Copy, Database } from "lucide-react";
+import { downloadCSV, generateBattersCSV } from "../utils";
 import { MLBGame } from "../types";
 
 interface GoogleSheetsSyncProps {
@@ -13,23 +12,18 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({ games }) => 
   const [targetSheet, setTargetSheet] = React.useState<string>("MLB_MASTER_DATA");
   const [isSyncing, setIsSyncing] = React.useState<boolean>(false);
   const [message, setMessage] = React.useState<{ text: string; type: "success" | "error" | "info" | null }>({ text: "", type: null });
-  const [isCopied, setIsCopied] = React.useState<boolean>(false);
+  const [isBattersCopied, setIsBattersCopied] = React.useState<boolean>(false);
 
-  const handleCopyCSV = () => {
-    const csv = generateMLBCsvString(games);
+  const handleCopyBattersCSV = () => {
+    const csv = generateBattersCSV(games);
     navigator.clipboard.writeText(csv);
-    setIsCopied(true);
-    setTimeout(() => setIsCopied(false), 2000);
+    setIsBattersCopied(true);
+    setTimeout(() => setIsBattersCopied(false), 2000);
   };
 
-  const handleDownloadCSV = () => {
-    const csv = generateMLBCsvString(games);
-    downloadCSV(csv, "MLB_MASTER_DATA.csv");
-  };
-
-  const handleDownloadMLCSV = () => {
-    const csv = generateMLDatasetCSV(games);
-    downloadCSV(csv, "MLB_ML_DATASET.csv");
+  const handleDownloadBattersCSV = () => {
+    const csv = generateBattersCSV(games);
+    downloadCSV(csv, "MLB_BATTERS_DATASET.csv");
   };
 
   const handleSheetSync = async () => {
@@ -130,39 +124,36 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({ games }) => 
               </span>
             </h4>
             <p className="text-slate-500 text-xs mt-2 leading-relaxed">
-              Descarga conjuntos de datos listos para importar. El dataset de <strong>Machine Learning (ML)</strong> incluye las variables climáticas, sabermetría avanzada, splits y fatiga calculada para tus scripts de modelado predictivo (Pandas, Scikit-Learn).
+              Descarga o copia los conjuntos de datos en formato CSV (Dataset Unificado de Bateadores y Partidos) listos para importar.
             </p>
           </div>
 
-          <div className="space-y-2.5">
-            <div className="flex flex-col sm:flex-row gap-2">
-              <button
-                onClick={handleCopyCSV}
-                disabled={games.length === 0}
-                className="flex-1 py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-              >
-                <Copy size={14} />
-                <span>{isCopied ? "¡Copiado!" : "Copiar CSV Estándar"}</span>
-              </button>
+          <div className="space-y-4">
+            {/* Dataset Unificado (Bateadores y Partidos) */}
+            <div className="space-y-1.5">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                Dataset Unificado (Bateadores y Partidos)
+              </span>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                  onClick={handleCopyBattersCSV}
+                  disabled={games.length === 0}
+                  className="flex-1 py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                >
+                  <Copy size={14} />
+                  <span>{isBattersCopied ? "¡Copiado!" : "Copiar Dataset Unificado"}</span>
+                </button>
 
-              <button
-                onClick={handleDownloadCSV}
-                disabled={games.length === 0}
-                className="flex-1 py-2 px-3 bg-slate-900 hover:bg-slate-850 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-              >
-                <PlusCircle size={14} />
-                <span>Descargar CSV Estándar</span>
-              </button>
+                <button
+                  onClick={handleDownloadBattersCSV}
+                  disabled={games.length === 0}
+                  className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                >
+                  <Database size={14} />
+                  <span>Descargar Dataset Unificado</span>
+                </button>
+              </div>
             </div>
-
-            <button
-              onClick={handleDownloadMLCSV}
-              disabled={games.length === 0}
-              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-            >
-              <Database size={14} />
-              <span>Descargar Dataset de Machine Learning (ML)</span>
-            </button>
           </div>
         </div>
       </div>
