@@ -26,6 +26,7 @@ export const Header: React.FC<HeaderProps> = ({
       const now = new Date();
       setTime(
         now.toLocaleTimeString("es-MX", {
+          timeZone: "America/Santo_Domingo",
           hour: "2-digit",
           minute: "2-digit",
           second: "2-digit",
@@ -61,10 +62,10 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Realtime stats bar */}
         <div className="flex flex-wrap items-center gap-4 text-xs font-mono">
-          {/* UTC Clock */}
+          {/* Dominican Republic clock */}
           <div className="bg-slate-950 px-3 py-1.5 rounded-md border border-slate-800 flex items-center gap-2 text-slate-300">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>Reloj: {time || "..."}</span>
+            <span>Reloj RD: {time || "..."}</span>
           </div>
 
           {/* Database state indicator */}

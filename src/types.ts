@@ -275,6 +275,12 @@ export interface BatterStats {
   last7_total_bases?: number;
   last7_hits?: number;
   last7_xbh?: number;
+  totalBasesProp?: number | null;
+  totalBasesPropOverOdds?: number | null;
+  totalBasesPropUnderOdds?: number | null;
+  totalBasesPropBook?: string | null;
+  totalBasesPropHitRate?: number | null;
+  totalBasesPropHitRateDisplay?: string | null;
 
   // Nuevos campos
   batting_order?: number;

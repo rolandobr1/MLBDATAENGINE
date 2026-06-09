@@ -195,7 +195,7 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
   ];
 
   const escapeStr = (val: any) => {
-    if (val === undefined || val === null) return "";
+    if (val === undefined || val === null || val === "") return "";
     return `"${String(val).replace(/"/g, '""')}"`;
   };
 
@@ -462,6 +462,12 @@ export function generateBattersCSV(games: MLBGame[]): string {
     "last7_ops",
     "last7_slg",
     "last7_total_bases",
+    "total_bases_prop",
+    "total_bases_prop_over_odds",
+    "total_bases_prop_under_odds",
+    "total_bases_prop_book",
+    "total_bases_prop_hit_rate",
+    "total_bases_prop_hit_rate_display",
     "last7_hits",
     "last7_xbh",
     "ops_vs_rhp",
@@ -520,7 +526,7 @@ export function generateBattersCSV(games: MLBGame[]): string {
   ];
 
   const escapeStr = (val: any) => {
-    if (val === undefined || val === null) return "";
+    if (val === undefined || val === null || val === "") return "";
     return `"${String(val).replace(/"/g, '""')}"`;
   };
 
@@ -778,6 +784,12 @@ export function generateBattersCSV(games: MLBGame[]): string {
           p.last7_ops ?? "",
           p.last7_slg ?? "",
           p.last7_total_bases ?? "",
+          p.totalBasesProp ?? "",
+          p.totalBasesPropOverOdds ?? "",
+          p.totalBasesPropUnderOdds ?? "",
+          escapeStr(p.totalBasesPropBook ?? ""),
+          p.totalBasesPropHitRate ?? "",
+          escapeStr(p.totalBasesPropHitRateDisplay ?? ""),
           p.last7_hits ?? "",
           p.last7_xbh ?? "",
           p.ops_vs_rhp ?? "",

@@ -11,6 +11,8 @@ export interface PitcherSavantData {
 export interface BatterSavantData {
   playerId: string;
   xwOBA: number | null;
+  hardHitPct: number | null;
+  barrelPct: number | null;
 }
 
 export class SavantCache {
@@ -25,14 +27,15 @@ export class SavantCache {
     console.log(`[Savant] Descargando datos de Baseball Savant para el año ${year}...`);
 
     try {
-      const [pitcherExpected, pitcherStatcast, batterExpected] = await Promise.all([
+      const [pitcherExpected, pitcherStatcast, batterExpected, batterStatcast] = await Promise.all([
         this.fetchCSV(`https://baseballsavant.mlb.com/leaderboard/expected_statistics?type=pitcher&year=${year}&position=&team=&min=1&csv=true`),
         this.fetchCSV(`https://baseballsavant.mlb.com/leaderboard/statcast?type=pitcher&year=${year}&position=&team=&min=1&csv=true`),
         this.fetchCSV(`https://baseballsavant.mlb.com/leaderboard/expected_statistics?type=batter&year=${year}&position=&team=&min=1&csv=true`),
+        this.fetchCSV(`https://baseballsavant.mlb.com/leaderboard/statcast?type=batter&year=${year}&position=&team=&min=1&csv=true`),
       ]);
 
       this.processPitcherData(pitcherExpected, pitcherStatcast);
-      this.processBatterData(batterExpected);
+      this.processBatterData(batterExpected, batterStatcast);
 
       this.isLoaded = true;
       this.currentYear = year;
@@ -57,6 +60,11 @@ export class SavantCache {
     return records;
   }
 
+  private parseNumber(value: any): number | null {
+    const parsed = parseFloat(String(value));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
   private processPitcherData(expectedData: any[], statcastData: any[]) {
     this.pitcherStats.clear();
     
@@ -65,8 +73,8 @@ export class SavantCache {
       const playerId = String(row.player_id);
       this.pitcherStats.set(playerId, {
         playerId,
-        xERA: row.xera ? parseFloat(row.xera) : null,
-        xwOBA: row.est_woba ? parseFloat(row.est_woba) : null,
+        xERA: this.parseNumber(row.xera),
+        xwOBA: this.parseNumber(row.est_woba),
         hardHitPct: null,
         barrelPct: null
       });
@@ -83,22 +91,39 @@ export class SavantCache {
         barrelPct: null
       };
 
-      existing.hardHitPct = row.ev95percent ? parseFloat(row.ev95percent) : null;
-      existing.barrelPct = row.brl_percent ? parseFloat(row.brl_percent) : null;
+      existing.hardHitPct = this.parseNumber(row.ev95percent);
+      existing.barrelPct = this.parseNumber(row.brl_percent);
       
       this.pitcherStats.set(playerId, existing);
     }
   }
 
-  private processBatterData(expectedData: any[]) {
+  private processBatterData(expectedData: any[], statcastData: any[]) {
     this.batterStats.clear();
     
     for (const row of expectedData) {
       const playerId = String(row.player_id);
       this.batterStats.set(playerId, {
         playerId,
-        xwOBA: row.est_woba ? parseFloat(row.est_woba) : null,
+        xwOBA: this.parseNumber(row.est_woba),
+        hardHitPct: null,
+        barrelPct: null,
       });
+    }
+
+    for (const row of statcastData) {
+      const playerId = String(row.player_id);
+      const existing = this.batterStats.get(playerId) || {
+        playerId,
+        xwOBA: null,
+        hardHitPct: null,
+        barrelPct: null,
+      };
+
+      existing.hardHitPct = this.parseNumber(row.ev95percent);
+      existing.barrelPct = this.parseNumber(row.brl_percent);
+
+      this.batterStats.set(playerId, existing);
     }
   }
 

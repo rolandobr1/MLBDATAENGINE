@@ -170,7 +170,12 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
     if (!game.timestamp) return "";
     try {
       const date = new Date(game.timestamp);
-      return date.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      return `${date.toLocaleTimeString("es-MX", {
+        timeZone: "America/Santo_Domingo",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      })} RD`;
     } catch {
       return "";
     }
