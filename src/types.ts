@@ -43,6 +43,7 @@ export interface BullpenStats {
 
 export interface OffenseStats {
   runsPerGame: number | string;
+  strikeoutsPerGame?: number | string | null;
   ops: number | string;
   obp: number | string;
   slg: number | string;
@@ -55,17 +56,17 @@ export interface TeamTrend {
 }
 
 export interface BettingLines {
-  openingMoneylineHome: number;
-  openingMoneylineAway: number;
-  currentMoneylineHome: number;
-  currentMoneylineAway: number;
-  runLineHome: number; // e.g., -1.5
-  runLineHomeOdds: number; // e.g. +110
-  runLineAway: number; // e.g., +1.5
-  runLineAwayOdds: number; // e.g. -130
-  totalRuns: number; // Over/Under limit, e.g. 8.5
-  overOdds: number;
-  underOdds: number;
+  openingMoneylineHome: number | null;
+  openingMoneylineAway: number | null;
+  currentMoneylineHome: number | null;
+  currentMoneylineAway: number | null;
+  runLineHome: number | null; // e.g., -1.5
+  runLineHomeOdds: number | null; // e.g. +110
+  runLineAway: number | null; // e.g., +1.5
+  runLineAwayOdds: number | null; // e.g. -130
+  totalRuns: number | null; // Over/Under limit, e.g. 8.5
+  overOdds: number | null;
+  underOdds: number | null;
   lineMovementSummary: string; // e.g., "Uptrend on Home"
 }
 
@@ -85,17 +86,17 @@ export interface WeatherData {
 
 export interface LineMovement {
   timestamp: string;
-  openingMoneylineHome: number;
-  openingMoneylineAway: number;
-  currentMoneylineHome: number;
-  currentMoneylineAway: number;
-  runLineHome: number;
-  runLineHomeOdds: number;
-  runLineAway: number;
-  runLineAwayOdds: number;
-  totalRuns: number;
-  overOdds: number;
-  underOdds: number;
+  openingMoneylineHome: number | null;
+  openingMoneylineAway: number | null;
+  currentMoneylineHome: number | null;
+  currentMoneylineAway: number | null;
+  runLineHome: number | null;
+  runLineHomeOdds: number | null;
+  runLineAway: number | null;
+  runLineAwayOdds: number | null;
+  totalRuns: number | null;
+  overOdds: number | null;
+  underOdds: number | null;
 }
 
 export interface SplitsStats {
@@ -161,6 +162,18 @@ export interface AdvancedPitchingStats {
   strikeoutRate: number | null;
   walkRate: number | null;
   swingingStrikePct?: number | null;
+  cswPct?: number | null;
+  projectedPitchCount?: number | null;
+  battersFacedPerStart?: number | null;
+  actualStrikeouts?: number | null;
+  last5KsAvg?: number | null;
+  last5KsStd?: number | null;
+  last5IpAvg?: number | null;
+  last5BfAvg?: number | null;
+  last5PitchCountAvg?: number | null;
+  careerKPctVsTeam?: number | null;
+  last3VsTeamKsAvg?: number | null;
+  last3VsTeamBfAvg?: number | null;
   era?: string | number | null;
   whip?: string | number | null;
   ip?: string | null;
@@ -187,6 +200,9 @@ export interface AdvancedOffenseStats {
   barrelPct?: number | null;
   contactPct?: number | null;
   chasePct?: number | null;
+  kPctVsPitchHand?: number | null;
+  projectedLineupKPct?: number | null;
+  projectedLineupContactPctVsHand?: number | null;
 }
 
 export interface AdvancedOffense {
@@ -199,7 +215,7 @@ export interface ModelFeatures {
   diffXera: number;
   diffFip: number;
   diffOps: number;
-  diffWrcPlus: number;
+  diffXwoba: number;     // Reemplaza diffWrcPlus — usa xwOBA de Baseball Savant
   diffBullpenEra: number;
   diffRunsPerGame: number;
   diffRecordLast10: number;
@@ -266,6 +282,10 @@ export interface BatterStats {
   ops_vs_lhp?: number;
   slg_vs_rhp?: number;
   slg_vs_lhp?: number;
+  k_pct_vs_rhp?: number;
+  k_pct_vs_lhp?: number;
+  contact_pct_vs_rhp?: number | null;
+  contact_pct_vs_lhp?: number | null;
 }
 
 export interface InningScore {

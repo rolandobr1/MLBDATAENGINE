@@ -24,8 +24,11 @@ import {
 
 export default function App() {
   const [selectedDate, setSelectedDate] = React.useState<string>(() => {
-    // Siempre mostrar la fecha actual por defecto al abrir la aplicación.
-    // Esto evita la confusión de cargar un día anterior donde "parece que no se extrajo nada".
+    // Intentar cargar la última fecha consultada guardada en localStorage
+    const savedDate = localStorage.getItem("mlb_selected_date");
+    if (savedDate) return savedDate;
+
+    // Si no hay fecha guardada, usar la fecha actual local como fallback inicial
     const localDate = new Date();
     const tzOffset = localDate.getTimezoneOffset() * 60000;
     return new Date(localDate.getTime() - tzOffset).toISOString().split("T")[0];
@@ -50,8 +53,14 @@ export default function App() {
     localStorage.setItem("mlb_selected_date", selectedDate);
   }, [selectedDate]);
 
-  // References for scrolling
-  const sheetsRef = React.useRef<HTMLDivElement>(null);
+  // Track whether the user has manually selected a date (prevent auto-redirect on harvest)
+  const userHasSelectedDate = React.useRef(false);
+
+  // Wrapper for setSelectedDate that prevents auto-redirect from overriding manual selection
+  const handleSetSelectedDate = React.useCallback((date: string) => {
+    userHasSelectedDate.current = true;
+    setSelectedDate(date);
+  }, []);
 
   // Fetch games and diagnostics logs on mount & date change
   const fetchLocalDB = React.useCallback(async (dateToFetch: string) => {
@@ -78,12 +87,29 @@ export default function App() {
     }
   }, []);
 
-  const fetchExtractedDates = React.useCallback(async () => {
+  // References for scrolling
+  const sheetsRef = React.useRef<HTMLDivElement>(null);
+
+  const fetchExtractedDates = React.useCallback(async (skipAutoRedirect = false) => {
     try {
       const res = await fetch(`/api/extracted-dates?_=${Date.now()}`);
       if (res.ok) {
         const data = await res.json();
-        setExtractedDates(data.dates || []);
+        const dates = data.dates || [];
+        setExtractedDates(dates);
+
+        // Solo auto-redirigir en carga inicial si el usuario no ha seleccionado manualmente
+        // y la fecha seleccionada no tiene datos en la BD
+        if (!skipAutoRedirect && !userHasSelectedDate.current && dates.length > 0) {
+          setSelectedDate(prev => {
+            const hasDataForCurrentDate = dates.includes(prev);
+            if (!hasDataForCurrentDate) {
+              // La fecha seleccionada no tiene datos → cambiar a la más reciente con datos
+              return dates[0];
+            }
+            return prev;
+          });
+        }
       }
     } catch (err) {
       console.error("Fallo al conectar con el servidor local para fechas extraídas:", err);
@@ -93,7 +119,8 @@ export default function App() {
   React.useEffect(() => {
     fetchLocalDB(selectedDate);
     fetchErrorsDB();
-    fetchExtractedDates();
+    // Only auto-redirect on first load
+    fetchExtractedDates(userHasSelectedDate.current);
   }, [selectedDate, fetchLocalDB, fetchErrorsDB, fetchExtractedDates]);
 
   // Hook de consulta periódica (polling) automático para juegos activos en progreso
@@ -117,6 +144,8 @@ export default function App() {
 
   // Handle Extraction Trigger — reads real SSE progress from server
   const handleHarvest = async (date: string) => {
+    // Mark that user has explicitly selected this date — prevent auto-redirect
+    userHasSelectedDate.current = true;
     setIsLoading(true);
     setHarvestProgress({ pct: 2, step: "Iniciando conexión con MLB Stats API..." });
 
@@ -172,8 +201,11 @@ export default function App() {
         }
       }
 
+      // Refrescar la BD local para asegurar que se muestran los juegos recién extraídos
+      await fetchLocalDB(date);
       await fetchErrorsDB();
-      await fetchExtractedDates();
+      // skipAutoRedirect=true para que no cambie la fecha después del harvest
+      await fetchExtractedDates(true);
     } catch (err) {
       alert("Error en la recolección: " + (err instanceof Error ? err.message : String(err)));
     } finally {
@@ -274,7 +306,7 @@ export default function App() {
               onHarvest={handleHarvest}
               isLoading={isLoading}
               selectedDate={selectedDate}
-              setSelectedDate={setSelectedDate}
+              setSelectedDate={handleSetSelectedDate}
               harvestProgress={harvestProgress}
               extractedDates={extractedDates}
             />
@@ -368,7 +400,7 @@ export default function App() {
 
         {/* Row 3: Google Sheets Hub Section (Requisito 7) */}
         <section ref={sheetsRef} className="pt-2">
-          <GoogleSheetsSync games={games} />
+          <GoogleSheetsSync games={games} selectedDate={selectedDate} />
         </section>
  
         {/* Row 4: Machine learning ML Guidelines Card (Requisito 8) */}

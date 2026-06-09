@@ -18,6 +18,9 @@ export const generateMLBCsvString = (games: MLBGame[]): string => {
     "home_pitcher_k_pct", "away_pitcher_k_pct",
     "home_pitcher_bb_pct", "away_pitcher_bb_pct",
     "home_pitcher_swstr_pct", "away_pitcher_swstr_pct",
+    "home_pitcher_csw_pct", "away_pitcher_csw_pct",
+    "home_pitcher_projected_pitches", "away_pitcher_projected_pitches",
+    "home_pitcher_bf_per_start", "away_pitcher_bf_per_start",
     // Starter Pitchers Last 7
     "home_pitcher_last7_era", "away_pitcher_last7_era",
     "home_pitcher_last7_ip", "away_pitcher_last7_ip",
@@ -41,8 +44,10 @@ export const generateMLBCsvString = (games: MLBGame[]): string => {
     "home_iso", "away_iso",
     "home_babip", "away_babip",
     "home_lineup_avg_k_pct", "away_lineup_avg_k_pct",
+    "home_offense_k_pct_vs_pitch_hand", "away_offense_k_pct_vs_pitch_hand",
+    "home_offense_projected_lineup_k_pct", "away_offense_projected_lineup_k_pct",
     // Differentials
-    "diff_era", "diff_fip", "diff_ops", "diff_bullpen_era", "diff_starter_rest", "diff_bullpen_fatigue",
+    "diff_era", "diff_xera", "diff_fip", "diff_ops", "diff_xwoba", "diff_bullpen_era", "diff_starter_rest", "diff_bullpen_fatigue",
     // Betting
     "moneyline_home_open", "moneyline_away_open",
     "moneyline_home_current", "moneyline_away_current",
@@ -83,6 +88,9 @@ export const generateMLBCsvString = (games: MLBGame[]): string => {
       safeVal(game.pitchers?.home?.kPct), safeVal(game.pitchers?.away?.kPct),
       safeVal(game.pitchers?.home?.bbPct), safeVal(game.pitchers?.away?.bbPct),
       safeVal(advHome?.swingingStrikePct), safeVal(advAway?.swingingStrikePct),
+      safeVal(advHome?.cswPct), safeVal(advAway?.cswPct),
+      safeVal(advHome?.projectedPitchCount), safeVal(advAway?.projectedPitchCount),
+      safeVal(advHome?.battersFacedPerStart), safeVal(advAway?.battersFacedPerStart),
 
       // Starter Pitchers Last 7
       safeVal(last7Home?.era), safeVal(last7Away?.era),
@@ -111,10 +119,12 @@ export const generateMLBCsvString = (games: MLBGame[]): string => {
       safeVal(game.advanced_offense?.home?.iso), safeVal(game.advanced_offense?.away?.iso),
       safeVal(game.advanced_offense?.home?.babip), safeVal(game.advanced_offense?.away?.babip),
       safeVal(homeLineupKPct ? homeLineupKPct.toFixed(2) : ""), safeVal(awayLineupKPct ? awayLineupKPct.toFixed(2) : ""),
+      safeVal(game.advanced_offense?.home?.kPctVsPitchHand), safeVal(game.advanced_offense?.away?.kPctVsPitchHand),
+      safeVal(game.advanced_offense?.home?.projectedLineupKPct), safeVal(game.advanced_offense?.away?.projectedLineupKPct),
 
       // Differentials
-      safeVal(game.model_features?.diffEra), safeVal(game.model_features?.diffFip), 
-      safeVal(game.model_features?.diffOps), safeVal(game.model_features?.diffBullpenEra), 
+      safeVal(game.model_features?.diffEra), safeVal(game.model_features?.diffXera), safeVal(game.model_features?.diffFip), 
+      safeVal(game.model_features?.diffOps), safeVal(game.model_features?.diffXwoba), safeVal(game.model_features?.diffBullpenEra), 
       safeVal(game.model_features?.diffStarterRest), safeVal(game.model_features?.diffBullpenFatigue),
 
       // Betting

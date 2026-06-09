@@ -412,17 +412,19 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
               <div className="space-y-0.5">
                 <div className="font-sans font-semibold text-blue-900 truncate">Ofensiva Visitante</div>
                 <div>Carreras/G: <strong className="text-slate-800">{game.offense.away.runsPerGame}</strong></div>
-                <div>OPS: <strong className="text-slate-800">{typeof game.offense.away.ops === 'number' ? game.offense.away.ops.toFixed(3) : game.offense.away.ops}</strong></div>
-                <div>OBP: <strong className="text-slate-800">{typeof game.offense.away.obp === 'number' ? game.offense.away.obp.toFixed(3) : game.offense.away.obp}</strong></div>
+                <div>Ponches/G: <strong className="text-slate-800">{game.offense.away.strikeoutsPerGame ?? "N/D"}</strong></div>
+                <div className="pt-1">OBP: <strong className="text-slate-800">{typeof game.offense.away.obp === 'number' ? game.offense.away.obp.toFixed(3) : game.offense.away.obp}</strong></div>
                 <div>SLG: <strong className="text-slate-800">{typeof game.offense.away.slg === 'number' ? game.offense.away.slg.toFixed(3) : game.offense.away.slg}</strong></div>
+                <div>OPS: <strong className="text-slate-800">{typeof game.offense.away.ops === 'number' ? game.offense.away.ops.toFixed(3) : game.offense.away.ops}</strong></div>
               </div>
 
               <div className="space-y-0.5">
                 <div className="font-sans font-semibold text-red-900 truncate">Ofensiva Local</div>
                 <div>Carreras/G: <strong className="text-slate-800">{game.offense.home.runsPerGame}</strong></div>
-                <div>OPS: <strong className="text-slate-800">{typeof game.offense.home.ops === 'number' ? game.offense.home.ops.toFixed(3) : game.offense.home.ops}</strong></div>
-                <div>OBP: <strong className="text-slate-800">{typeof game.offense.home.obp === 'number' ? game.offense.home.obp.toFixed(3) : game.offense.home.obp}</strong></div>
+                <div>Ponches/G: <strong className="text-slate-800">{game.offense.home.strikeoutsPerGame ?? "N/D"}</strong></div>
+                <div className="pt-1">OBP: <strong className="text-slate-800">{typeof game.offense.home.obp === 'number' ? game.offense.home.obp.toFixed(3) : game.offense.home.obp}</strong></div>
                 <div>SLG: <strong className="text-slate-800">{typeof game.offense.home.slg === 'number' ? game.offense.home.slg.toFixed(3) : game.offense.home.slg}</strong></div>
+                <div>OPS: <strong className="text-slate-800">{typeof game.offense.home.ops === 'number' ? game.offense.home.ops.toFixed(3) : game.offense.home.ops}</strong></div>
               </div>
             </div>
           </div>
@@ -518,6 +520,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       <span className="w-10 cursor-help border-b border-dotted border-slate-400" title="OPS (On-base Plus Slugging): Suma del porcentaje de embasado y el slugging.">OPS</span>
                       <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="Cuadrangulares (Home Runs).">HR</span>
                       <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="wOBA (Weighted On-Base Average): Métrica ponderada de embasado.">wOBA</span>
+                      <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="K% (Strikeout Percentage) del bateador.">K%</span>
                     </div>
                   </div>
                   <div className="divide-y divide-slate-100 font-mono text-[11px]">
@@ -537,6 +540,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                             <span className="text-blue-600 w-10">{player.ops.toFixed(3)}</span>
                             <span className="text-slate-500 w-9">{player.hr}</span>
                             <span className="text-slate-500 w-9">{player.woba != null ? player.woba.toFixed(3).substring(1) : "-"}</span>
+                            <span className="text-red-650 w-9 font-bold">{player.strikeout_pct != null ? `${player.strikeout_pct.toFixed(0)}%` : (player.kPct != null ? `${Number(player.kPct).toFixed(0)}%` : "-")}</span>
                           </div>
                         </div>
                         {expandedPlayer === `away-${idx}` && (
@@ -574,6 +578,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       <span className="w-10 text-blue-600">{(game.lineups.away.reduce((sum, p) => sum + (p.ops || 0), 0) / game.lineups.away.length).toFixed(3)}</span>
                       <span className="w-9">-</span>
                       <span className="w-9">{(game.lineups.away.reduce((sum, p) => sum + (p.woba || 0), 0) / game.lineups.away.length).toFixed(3).substring(1)}</span>
+                      <span className="w-9 text-red-700">{(game.lineups.away.reduce((sum, p) => sum + (p.strikeout_pct ?? p.kPct ?? 0), 0) / game.lineups.away.length).toFixed(1)}%</span>
                     </div>
                   </div>
                 </div>
@@ -587,6 +592,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       <span className="w-10 cursor-help border-b border-dotted border-slate-400" title="OPS (On-base Plus Slugging): Suma del porcentaje de embasado y el slugging.">OPS</span>
                       <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="Cuadrangulares (Home Runs).">HR</span>
                       <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="wOBA (Weighted On-Base Average): Métrica ponderada de embasado.">wOBA</span>
+                      <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="K% (Strikeout Percentage) del bateador.">K%</span>
                     </div>
                   </div>
                   <div className="divide-y divide-slate-100 font-mono text-[11px]">
@@ -606,6 +612,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                             <span className="text-red-600 w-10">{player.ops.toFixed(3)}</span>
                             <span className="text-slate-500 w-9">{player.hr}</span>
                             <span className="text-slate-500 w-9">{player.woba != null ? player.woba.toFixed(3).substring(1) : "-"}</span>
+                            <span className="text-red-650 w-9 font-bold">{player.strikeout_pct != null ? `${player.strikeout_pct.toFixed(0)}%` : (player.kPct != null ? `${Number(player.kPct).toFixed(0)}%` : "-")}</span>
                           </div>
                         </div>
                         {expandedPlayer === `home-${idx}` && (
@@ -643,6 +650,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       <span className="w-10 text-red-600">{(game.lineups.home.reduce((sum, p) => sum + (p.ops || 0), 0) / game.lineups.home.length).toFixed(3)}</span>
                       <span className="w-9">-</span>
                       <span className="w-9">{(game.lineups.home.reduce((sum, p) => sum + (p.woba || 0), 0) / game.lineups.home.length).toFixed(3).substring(1)}</span>
+                      <span className="w-9 text-red-700">{(game.lineups.home.reduce((sum, p) => sum + (p.strikeout_pct ?? p.kPct ?? 0), 0) / game.lineups.home.length).toFixed(1)}%</span>
                     </div>
                   </div>
                 </div>

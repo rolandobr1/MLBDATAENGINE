@@ -24,6 +24,7 @@ import {
   BettingLines
 } from "./src/types";
 import { generateMLDatasetCSV, generateBattersCSV } from "./src/utils";
+import { savantCache } from "./src/etl/extractors/savantScraper";
 
 const envLocalPath = path.join(process.cwd(), ".env.local");
 if (fs.existsSync(envLocalPath)) {
@@ -197,6 +198,8 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
   const aSplitLhp = g.offensive_splits?.away?.vsLhp;
   const fPitchers = g.fatigue_metrics?.pitchers;
   const fBullpen = g.fatigue_metrics?.bullpen;
+  const canUseActualKs = isFinalGameStatus(g.game_result?.gameStatus);
+  const canUseBettingLines = hasRealBettingLines(g);
 
   return {
     game_id: g.id,
@@ -231,21 +234,27 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
     ofensa_ops_local: g.offense.home.ops,
     ofensa_obp_local: g.offense.home.obp,
     ofensa_slg_local: g.offense.home.slg,
+    home_offense_kPct: g.lineups?.home && g.lineups.home.length > 0 
+      ? parseFloat((g.lineups.home.reduce((sum, p) => sum + (p.strikeout_pct ?? p.kPct ?? 0), 0) / g.lineups.home.length).toFixed(2)) 
+      : null,
     ofensa_run_g_away: g.offense.away.runsPerGame,
     ofensa_ops_away: g.offense.away.ops,
     ofensa_obp_away: g.offense.away.obp,
     ofensa_slg_away: g.offense.away.slg,
-    linea_moneyline_open_local: g.betting_lines.openingMoneylineHome,
-    linea_moneyline_open_away: g.betting_lines.openingMoneylineAway,
-    linea_moneyline_curr_local: g.betting_lines.currentMoneylineHome,
-    linea_moneyline_curr_away: g.betting_lines.currentMoneylineAway,
-    linea_runline_local: g.betting_lines.runLineHome,
-    linea_runline_odds_local: g.betting_lines.runLineHomeOdds,
-    linea_runline_away: g.betting_lines.runLineAway,
-    linea_runline_odds_away: g.betting_lines.runLineAwayOdds,
-    linea_total_carreras: g.betting_lines.totalRuns,
-    linea_over_odds: g.betting_lines.overOdds,
-    linea_under_odds: g.betting_lines.underOdds,
+    away_offense_kPct: g.lineups?.away && g.lineups.away.length > 0 
+      ? parseFloat((g.lineups.away.reduce((sum, p) => sum + (p.strikeout_pct ?? p.kPct ?? 0), 0) / g.lineups.away.length).toFixed(2)) 
+      : null,
+    linea_moneyline_open_local: canUseBettingLines ? g.betting_lines.openingMoneylineHome : null,
+    linea_moneyline_open_away: canUseBettingLines ? g.betting_lines.openingMoneylineAway : null,
+    linea_moneyline_curr_local: canUseBettingLines ? g.betting_lines.currentMoneylineHome : null,
+    linea_moneyline_curr_away: canUseBettingLines ? g.betting_lines.currentMoneylineAway : null,
+    linea_runline_local: canUseBettingLines ? g.betting_lines.runLineHome : null,
+    linea_runline_odds_local: canUseBettingLines ? g.betting_lines.runLineHomeOdds : null,
+    linea_runline_away: canUseBettingLines ? g.betting_lines.runLineAway : null,
+    linea_runline_odds_away: canUseBettingLines ? g.betting_lines.runLineAwayOdds : null,
+    linea_total_carreras: canUseBettingLines ? g.betting_lines.totalRuns : null,
+    linea_over_odds: canUseBettingLines ? g.betting_lines.overOdds : null,
+    linea_under_odds: canUseBettingLines ? g.betting_lines.underOdds : null,
     weather_temp: g.weather?.temp ?? null,
     weather_humidity: g.weather?.humidity ?? null,
     weather_wind_speed: g.weather?.windSpeed ?? null,
@@ -305,6 +314,18 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
     home_pitcher_so_rate: g.advanced_pitching?.home?.strikeoutRate ?? null,
     home_pitcher_bb_rate: g.advanced_pitching?.home?.walkRate ?? null,
     home_pitcher_swstr_pct: g.advanced_pitching?.home?.swingingStrikePct ?? null,
+    home_pitcher_csw_pct: g.advanced_pitching?.home?.cswPct ?? null,
+    home_pitcher_actual_ks: canUseActualKs ? (g.advanced_pitching?.home?.actualStrikeouts ?? null) : null,
+    home_pitcher_last5_ks_avg: g.advanced_pitching?.home?.last5KsAvg ?? null,
+    home_pitcher_last5_ks_std: g.advanced_pitching?.home?.last5KsStd ?? null,
+    home_pitcher_last5_ip_avg: g.advanced_pitching?.home?.last5IpAvg ?? null,
+    home_pitcher_last5_bf_avg: g.advanced_pitching?.home?.last5BfAvg ?? null,
+    home_pitcher_last5_pitch_count_avg: g.advanced_pitching?.home?.last5PitchCountAvg ?? null,
+    home_pitcher_career_k_pct_vs_team: g.advanced_pitching?.home?.careerKPctVsTeam ?? null,
+    home_pitcher_last3_vs_team_ks_avg: g.advanced_pitching?.home?.last3VsTeamKsAvg ?? null,
+    home_pitcher_last3_vs_team_bf_avg: g.advanced_pitching?.home?.last3VsTeamBfAvg ?? null,
+    home_pitcher_projected_pitches: g.advanced_pitching?.home?.projectedPitchCount ?? null,
+    home_pitcher_bf_per_start: g.advanced_pitching?.home?.battersFacedPerStart ?? null,
     away_pitcher_xera: g.advanced_pitching?.away?.xEra ?? null,
     away_pitcher_fip: g.advanced_pitching?.away?.fip ?? null,
     away_pitcher_xfip: g.advanced_pitching?.away?.xFip ?? null,
@@ -316,6 +337,18 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
     away_pitcher_so_rate: g.advanced_pitching?.away?.strikeoutRate ?? null,
     away_pitcher_bb_rate: g.advanced_pitching?.away?.walkRate ?? null,
     away_pitcher_swstr_pct: g.advanced_pitching?.away?.swingingStrikePct ?? null,
+    away_pitcher_csw_pct: g.advanced_pitching?.away?.cswPct ?? null,
+    away_pitcher_actual_ks: canUseActualKs ? (g.advanced_pitching?.away?.actualStrikeouts ?? null) : null,
+    away_pitcher_last5_ks_avg: g.advanced_pitching?.away?.last5KsAvg ?? null,
+    away_pitcher_last5_ks_std: g.advanced_pitching?.away?.last5KsStd ?? null,
+    away_pitcher_last5_ip_avg: g.advanced_pitching?.away?.last5IpAvg ?? null,
+    away_pitcher_last5_bf_avg: g.advanced_pitching?.away?.last5BfAvg ?? null,
+    away_pitcher_last5_pitch_count_avg: g.advanced_pitching?.away?.last5PitchCountAvg ?? null,
+    away_pitcher_career_k_pct_vs_team: g.advanced_pitching?.away?.careerKPctVsTeam ?? null,
+    away_pitcher_last3_vs_team_ks_avg: g.advanced_pitching?.away?.last3VsTeamKsAvg ?? null,
+    away_pitcher_last3_vs_team_bf_avg: g.advanced_pitching?.away?.last3VsTeamBfAvg ?? null,
+    away_pitcher_projected_pitches: g.advanced_pitching?.away?.projectedPitchCount ?? null,
+    away_pitcher_bf_per_start: g.advanced_pitching?.away?.battersFacedPerStart ?? null,
     home_offense_woba: g.advanced_offense?.home?.wOba ?? null,
     home_offense_xwoba: g.advanced_offense?.home?.xwOba ?? null,
     home_offense_wrcplus: g.advanced_offense?.home?.wrcPlus ?? null,
@@ -325,6 +358,10 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
     home_offense_barrel_pct: g.advanced_offense?.home?.barrelPct ?? null,
     home_offense_contact_pct: g.advanced_offense?.home?.contactPct ?? null,
     home_offense_chase_pct: g.advanced_offense?.home?.chasePct ?? null,
+    home_offense_k_pct_vs_pitch_hand: g.advanced_offense?.home?.kPctVsPitchHand ?? null,
+    home_offense_projected_lineup_k_pct: g.advanced_offense?.home?.projectedLineupKPct ?? null,
+    home_projected_lineup_k_pct_vs_hand: g.advanced_offense?.home?.projectedLineupKPct ?? null,
+    home_projected_lineup_contact_pct_vs_hand: g.advanced_offense?.home?.projectedLineupContactPctVsHand ?? null,
     away_offense_woba: g.advanced_offense?.away?.wOba ?? null,
     away_offense_xwoba: g.advanced_offense?.away?.xwOba ?? null,
     away_offense_wrcplus: g.advanced_offense?.away?.wrcPlus ?? null,
@@ -334,11 +371,15 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
     away_offense_barrel_pct: g.advanced_offense?.away?.barrelPct ?? null,
     away_offense_contact_pct: g.advanced_offense?.away?.contactPct ?? null,
     away_offense_chase_pct: g.advanced_offense?.away?.chasePct ?? null,
+    away_offense_k_pct_vs_pitch_hand: g.advanced_offense?.away?.kPctVsPitchHand ?? null,
+    away_offense_projected_lineup_k_pct: g.advanced_offense?.away?.projectedLineupKPct ?? null,
+    away_projected_lineup_k_pct_vs_hand: g.advanced_offense?.away?.projectedLineupKPct ?? null,
+    away_projected_lineup_contact_pct_vs_hand: g.advanced_offense?.away?.projectedLineupContactPctVsHand ?? null,
     diff_era: g.model_features?.diffEra ?? null,
     diff_xera: g.model_features?.diffXera ?? null,
     diff_fip: g.model_features?.diffFip ?? null,
     diff_ops: g.model_features?.diffOps ?? null,
-    diff_wrcplus: g.model_features?.diffWrcPlus ?? null,
+    diff_xwoba: g.model_features?.diffXwoba ?? null,
     diff_bullpen_era: g.model_features?.diffBullpenEra ?? null,
     diff_runs_per_game: g.model_features?.diffRunsPerGame ?? null,
     diff_record_last10: g.model_features?.diffRecordLast10 ?? null,
@@ -410,11 +451,16 @@ app.get("/api/ml-dataset/csv", (req, res) => {
 // Download Batters dataset as CSV
 app.get("/api/batters-dataset/csv", (req, res) => {
   try {
+    const { date } = req.query;
     const db = readGamesDB();
     const allGames: MLBGame[] = [];
-    for (const date of Object.keys(db)) {
-      const games = db[date] || [];
-      allGames.push(...games);
+    if (date && typeof date === "string") {
+      allGames.push(...(db[date] || []));
+    } else {
+      for (const dateKey of Object.keys(db)) {
+        const games = db[dateKey] || [];
+        allGames.push(...games);
+      }
     }
     const csvContent = generateBattersCSV(allGames);
     res.setHeader("Content-Type", "text/csv");
@@ -533,6 +579,7 @@ function generateMockGameData(gameId: string, homeName: string, awayName: string
     offense: {
       home: {
         runsPerGame: 5.1,
+        strikeoutsPerGame: 8.2,
         ops: 0.785,
         obp: 0.335,
         slg: 0.450,
@@ -541,6 +588,7 @@ function generateMockGameData(gameId: string, homeName: string, awayName: string
       },
       away: {
         runsPerGame: 4.2,
+        strikeoutsPerGame: 9.1,
         ops: 0.710,
         obp: 0.312,
         slg: 0.398,
@@ -615,6 +663,91 @@ function generateMockGameData(gameId: string, homeName: string, awayName: string
 function safeFloat(val: any, fallback: number | null = null): number | null {
   const n = parseFloat(String(val));
   return isNaN(n) ? fallback : n;
+}
+
+function roundNumber(value: number | null | undefined, decimals = 1): number | null {
+  if (value === null || value === undefined || !Number.isFinite(value)) return null;
+  const factor = Math.pow(10, decimals);
+  return Math.round(value * factor) / factor;
+}
+
+function average(values: number[], decimals = 1): number | null {
+  if (!values.length) return null;
+  return roundNumber(values.reduce((sum, value) => sum + value, 0) / values.length, decimals);
+}
+
+function standardDeviation(values: number[], decimals = 2): number | null {
+  if (values.length < 2) return 0;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce((sum, value) => sum + Math.pow(value - mean, 2), 0) / values.length;
+  return roundNumber(Math.sqrt(variance), decimals);
+}
+
+function inningsToOuts(ipValue: any): number {
+  const ipStr = String(ipValue || "0.0");
+  const [wholeRaw, fracRaw = "0"] = ipStr.split(".");
+  const whole = parseInt(wholeRaw, 10) || 0;
+  const frac = parseInt(fracRaw, 10) || 0;
+  return whole * 3 + Math.min(Math.max(frac, 0), 2);
+}
+
+function outsToInnings(outs: number): number {
+  if (!Number.isFinite(outs) || outs <= 0) return 0;
+  return Math.round((outs / 3) * 10) / 10;
+}
+
+function saneAveragePitchCount(value: number | null): number | null {
+  if (value === null || value <= 0) return null;
+  return value > 130 ? null : Math.round(value);
+}
+
+function saneBattersFacedPerStart(value: number | null): number | null {
+  if (value === null || value <= 0) return null;
+  return value > 40 ? null : roundNumber(value, 1);
+}
+
+function isFinalGameStatus(status: any): boolean {
+  const normalized = String(status || "").toLowerCase();
+  return (
+    normalized.includes("final") ||
+    normalized === "game over" ||
+    normalized === "completed early" ||
+    normalized === "completed"
+  );
+}
+
+function hasRealBettingLines(game: any): boolean {
+  const summary = String(game?.betting_lines?.lineMovementSummary || "").toLowerCase();
+  if (summary.includes("estandar") || summary.includes("estándar") || summary.includes("sin lineas reales") || summary.includes("sin líneas reales")) {
+    return false;
+  }
+  const lines = game?.betting_lines || {};
+  const isSyntheticDefault =
+    lines.openingMoneylineHome === -110 &&
+    lines.openingMoneylineAway === -110 &&
+    lines.currentMoneylineHome === -110 &&
+    lines.currentMoneylineAway === -110 &&
+    lines.runLineHome === -1.5 &&
+    lines.runLineHomeOdds === -110 &&
+    lines.runLineAway === 1.5 &&
+    lines.runLineAwayOdds === -110 &&
+    lines.totalRuns === 8.5 &&
+    lines.overOdds === -110 &&
+    lines.underOdds === -110;
+  if (isSyntheticDefault) return false;
+  return [
+    lines.openingMoneylineHome,
+    lines.openingMoneylineAway,
+    lines.currentMoneylineHome,
+    lines.currentMoneylineAway,
+    lines.runLineHome,
+    lines.runLineHomeOdds,
+    lines.runLineAway,
+    lines.runLineAwayOdds,
+    lines.totalRuns,
+    lines.overOdds,
+    lines.underOdds
+  ].some((value) => value !== null && value !== undefined);
 }
 
 /** Fetch with an AbortController timeout (ms). Prevents indefinite hangs on MLB API. */
@@ -747,6 +880,7 @@ async function fetchRealMLBGameData(
     teamOffense: { home: null, away: null },
     bullpenERA: { home: null, away: null },
     pitcherIds: { home: null, away: null },
+    currentPitching: { home: null, away: null },
     linescore: null,
     liveBoxscore: null,
     playByPlay: null,
@@ -847,6 +981,25 @@ async function fetchRealMLBGameData(
     const boxRes = await fetchWithTimeout(`https://statsapi.mlb.com/api/v1/game/${gamePk}/boxscore`);
     const boxData = await boxRes.json();
 
+    const getStarterGamePitching = (teamBox: any) => {
+      const starterId = teamBox?.pitchers?.[0];
+      if (!starterId) return null;
+      const starter = teamBox.players?.[`ID${starterId}`];
+      if (!starter?.stats?.pitching) return null;
+      const s = starter?.stats?.pitching || {};
+      return {
+        actualStrikeouts: parseInt(s.strikeOuts) || 0,
+        battersFaced: parseInt(s.battersFaced) || 0,
+        pitchCount: parseInt(s.numberOfPitches) || parseInt(s.pitchesThrown) || 0,
+        ip: s.inningsPitched || "0.0"
+      };
+    };
+
+    realData.currentPitching = {
+      home: getStarterGamePitching(boxData.teams?.home),
+      away: getStarterGamePitching(boxData.teams?.away)
+    };
+
     const parseLineupFromBox = async (teamBox: any, teamName: string) => {
       if (!teamBox?.battingOrder?.length) return [];
       const players = teamBox.players || {};
@@ -892,6 +1045,8 @@ async function fetchRealMLBGameData(
 
         return {
           name: p.person.fullName,
+          id: playerId,
+          mlbId: playerId,
           position: p.position?.abbreviation || "DH",
           avg: avg,
           ops: ops,
@@ -1046,6 +1201,8 @@ async function fetchRealMLBGameData(
 
           return {
             name: p.person.fullName,
+            id: playerId,
+            mlbId: playerId,
             position: p.position?.abbreviation || "DH",
             avg: avg,
             ops: ops,
@@ -1104,6 +1261,9 @@ async function fetchRealMLBGameData(
         return {
           runsPerGame: s.runs
             ? Math.round((parseInt(s.runs) / games) * 10) / 10
+            : null,
+          strikeoutsPerGame: s.strikeOuts
+            ? Math.round((parseInt(s.strikeOuts) / games) * 10) / 10
             : null,
           ops: safeFloat(s.ops),
           obp: safeFloat(s.obp),
@@ -1322,7 +1482,7 @@ async function fetchWeatherData(venue: string, date: string, gameDateISO: string
 }
 
 async function fetchOffensiveSplits(teamId: number, season: string): Promise<any> {
-  const defaultSplit = { avg: 0.250, ops: 0.720, obp: 0.320, slg: 0.400, runsPerGame: 4.5, hr: 15 };
+  const defaultSplit = { avg: 0.250, ops: 0.720, obp: 0.320, slg: 0.400, runsPerGame: 4.5, hr: 15, kPct: 20.0 };
   try {
     const url = `https://statsapi.mlb.com/api/v1/teams/${teamId}/stats?stats=statSplits&season=${season}&group=hitting&sitCodes=vl,vr`;
     const res = await fetchWithTimeout(url, 6000);
@@ -1337,13 +1497,16 @@ async function fetchOffensiveSplits(teamId: number, season: string): Promise<any
       const code = split.split?.code;
       const s = split.stat || {};
       const gp = parseInt(s.gamesPlayed) || 1;
+      const pa = parseInt(s.plateAppearances) || 0;
+      const so = parseInt(s.strikeOuts) || 0;
       const splitData = {
         avg: safeFloat(s.avg) ?? 0.250,
         ops: safeFloat(s.ops) ?? 0.720,
         obp: safeFloat(s.obp) ?? 0.320,
         slg: safeFloat(s.slg) ?? 0.400,
         runsPerGame: s.runs ? Math.round((parseInt(s.runs) / gp) * 10) / 10 : 4.5,
-        hr: parseInt(s.homeRuns) || 0
+        hr: parseInt(s.homeRuns) || 0,
+        kPct: pa > 0 ? Math.round((so / pa) * 1000) / 10 : 20.0
       };
       if (code === "vr") {
         vsRhp = splitData;
@@ -1395,15 +1558,41 @@ async function fetchAdvancedPitching(pitcherId: number, season: string): Promise
     const strikeoutRate = bf > 0 && stdStat.strikeOuts ? Math.round((parseInt(stdStat.strikeOuts) / bf) * 1000) / 10 : null;
     const walkRate = bf > 0 && stdStat.baseOnBalls ? Math.round((parseInt(stdStat.baseOnBalls) / bf) * 1000) / 10 : null;
 
-    const go = parseInt(stdStat.groundOuts) || 0;
-    const ao = parseInt(stdStat.airOuts) || 0;
-    const totalOuts = go + ao;
-    const groundBallPct = totalOuts > 0 ? Math.round((go / totalOuts) * 1000) / 10 : null;
-    const flyBallPct = totalOuts > 0 ? Math.round((ao / totalOuts) * 1000) / 10 : null;
+    let groundBallPct: number | null = null;
+    let flyBallPct: number | null = null;
+
+    const gb = (parseInt(advStat.groundHits) || 0) + (parseInt(advStat.groundOuts) || 0);
+    const fb = (parseInt(advStat.flyHits) || 0) + (parseInt(advStat.flyOuts) || 0);
+    const ld = (parseInt(advStat.lineHits) || 0) + (parseInt(advStat.lineOuts) || 0);
+    const pu = (parseInt(advStat.popHits) || 0) + (parseInt(advStat.popOuts) || 0);
+    const totalBip = gb + fb + ld + pu;
+
+    if (totalBip > 0) {
+      groundBallPct = Math.round((gb / totalBip) * 1000) / 10;
+      flyBallPct = Math.round((fb / totalBip) * 1000) / 10;
+    } else {
+      const go = parseInt(stdStat.groundOuts) || 0;
+      const ao = parseInt(stdStat.airOuts) || 0;
+      const totalOuts = go + ao;
+      groundBallPct = totalOuts > 0 ? Math.round((go / totalOuts) * 1000) / 10 : null;
+      flyBallPct = totalOuts > 0 ? Math.round((ao / totalOuts) * 1000) / 10 : null;
+    }
 
     const pitches = stdStat.numberOfPitches ? parseInt(stdStat.numberOfPitches) : (bf && advStat.pitchesPerPlateAppearance ? Math.round(bf * parseFloat(advStat.pitchesPerPlateAppearance)) : 0);
     const swingingStrikePct = pitches > 0 && advStat.swingAndMisses ? Math.round((parseInt(advStat.swingAndMisses) / pitches) * 1000) / 10 : null;
 
+    const gs = parseInt(stdStat.gamesStarted) || 0;
+    const projectedPitchCount = saneAveragePitchCount(gs > 0 ? Math.round((parseInt(stdStat.numberOfPitches) || 0) / gs) : null);
+    const battersFacedPerStart = saneBattersFacedPerStart(gs > 0 ? Math.round(((parseInt(stdStat.battersFaced) || 0) / gs) * 10) / 10 : null);
+
+    const strikes = parseInt(stdStat.strikes) || 0;
+    const totalSwings = parseInt(advStat.totalSwings) || 0;
+    const swingAndMisses = parseInt(advStat.swingAndMisses) || 0;
+    const cswPct = pitches > 0 && strikes > 0 && totalSwings > 0 
+      ? Math.round(((strikes - totalSwings + swingAndMisses) / pitches) * 1000) / 10 
+      : null;
+
+    // Note: xEra, hardHitPct, barrelPct are injected after this call from savantCache
     return {
       xEra: null,
       fip: fip,
@@ -1415,7 +1604,10 @@ async function fetchAdvancedPitching(pitcherId: number, season: string): Promise
       flyBallPct,
       strikeoutRate,
       walkRate,
-      swingingStrikePct
+      swingingStrikePct,
+      cswPct,
+      projectedPitchCount,
+      battersFacedPerStart
     };
   } catch (err) {
     console.error(`Error fetching advanced pitching for ${pitcherId}:`, err);
@@ -1503,6 +1695,55 @@ async function fetchAdvancedPitchingLast7(pitcherId: number, season: string, tar
   }
 }
 
+async function fetchPitcherLast5Profile(pitcherId: number, season: string, targetDateStr: string): Promise<Partial<AdvancedPitchingStats>> {
+  if (!pitcherId) return {};
+  try {
+    const url = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=gameLog&season=${season}&group=pitching`;
+    const res = await fetchWithTimeout(url, 5000);
+    if (!res.ok) return {};
+    const data = await res.json();
+    const targetDate = new Date(targetDateStr);
+    let logs = data.stats?.[0]?.splits || [];
+
+    logs = logs
+      .filter((log: any) => log.date && new Date(log.date) < targetDate)
+      .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    const starts = logs.filter((log: any) => {
+      const s = log.stat || {};
+      const gamesStarted = parseInt(s.gamesStarted);
+      if (!isNaN(gamesStarted)) return gamesStarted > 0;
+      return inningsToOuts(s.inningsPitched) >= 9;
+    });
+
+    const last5 = (starts.length > 0 ? starts : logs).slice(0, 5);
+    if (last5.length === 0) return {};
+
+    const ks = last5.map((log: any) => parseInt(log.stat?.strikeOuts) || 0);
+    const ip = last5.map((log: any) => outsToInnings(inningsToOuts(log.stat?.inningsPitched)));
+    const bf = last5.map((log: any) => parseInt(log.stat?.battersFaced) || 0).filter((value: number) => value > 0);
+    const pitchCounts = last5
+      .map((log: any) => parseInt(log.stat?.numberOfPitches) || parseInt(log.stat?.pitchesThrown) || 0)
+      .filter((value: number) => value > 0);
+
+    const last5BfAvg = saneBattersFacedPerStart(average(bf, 1));
+    const last5PitchCountAvg = saneAveragePitchCount(average(pitchCounts, 0));
+
+    return {
+      last5KsAvg: average(ks, 2),
+      last5KsStd: standardDeviation(ks, 2),
+      last5IpAvg: average(ip, 1),
+      last5BfAvg,
+      last5PitchCountAvg,
+      projectedPitchCount: last5PitchCountAvg,
+      battersFacedPerStart: last5BfAvg
+    };
+  } catch (err) {
+    console.error(`Error fetching last 5 profile for pitcher ${pitcherId}:`, err);
+    return {};
+  }
+}
+
 async function fetchBatterLast7(batterId: number, season: string, targetDateStr: string) {
   const defaults = {
     last7_avg: 0,
@@ -1569,7 +1810,11 @@ async function fetchBatterSplits(batterId: number, season: string) {
     ops_vs_rhp: 0,
     ops_vs_lhp: 0,
     slg_vs_rhp: 0,
-    slg_vs_lhp: 0
+    slg_vs_lhp: 0,
+    k_pct_vs_rhp: 0,
+    k_pct_vs_lhp: 0,
+    contact_pct_vs_rhp: null,
+    contact_pct_vs_lhp: null
   };
   if (!batterId) return defaults;
   try {
@@ -1583,16 +1828,27 @@ async function fetchBatterSplits(batterId: number, season: string) {
     let ops_vs_lhp = 0;
     let slg_vs_rhp = 0;
     let slg_vs_lhp = 0;
+    let k_pct_vs_rhp = 0;
+    let k_pct_vs_lhp = 0;
+    let contact_pct_vs_rhp: number | null = null;
+    let contact_pct_vs_lhp: number | null = null;
 
     for (const split of splits) {
       const code = split.split?.code;
       const stat = split.stat || {};
+      const pa = parseInt(stat.plateAppearances) || 0;
+      const so = parseInt(stat.strikeOuts) || 0;
+      const kPct = pa > 0 ? Math.round((so / pa) * 1000) / 10 : 0;
       if (code === "vr") { // vs Right Handed Pitchers
         ops_vs_rhp = safeFloat(stat.ops) ?? 0;
         slg_vs_rhp = safeFloat(stat.slg) ?? 0;
+        k_pct_vs_rhp = kPct;
+        contact_pct_vs_rhp = safeFloat(stat.contactPct) ?? safeFloat(stat.contactPercent);
       } else if (code === "vl") { // vs Left Handed Pitchers
         ops_vs_lhp = safeFloat(stat.ops) ?? 0;
         slg_vs_lhp = safeFloat(stat.slg) ?? 0;
+        k_pct_vs_lhp = kPct;
+        contact_pct_vs_lhp = safeFloat(stat.contactPct) ?? safeFloat(stat.contactPercent);
       }
     }
 
@@ -1600,7 +1856,11 @@ async function fetchBatterSplits(batterId: number, season: string) {
       ops_vs_rhp,
       ops_vs_lhp,
       slg_vs_rhp,
-      slg_vs_lhp
+      slg_vs_lhp,
+      k_pct_vs_rhp,
+      k_pct_vs_lhp,
+      contact_pct_vs_rhp,
+      contact_pct_vs_lhp
     };
   } catch (err) {
     console.error(`Error fetching splits for batter ${batterId}:`, err);
@@ -1663,6 +1923,7 @@ async function fetchAdvancedPitchingVsOpp(pitcherId: number, opposingTeamId: num
       walkRate,
       groundBallPct,
       flyBallPct,
+      careerKPctVsTeam: strikeoutRate,
       era: estimatedEra,
       whip: estimatedWhip,
       ip: ipString,
@@ -1675,6 +1936,49 @@ async function fetchAdvancedPitchingVsOpp(pitcherId: number, opposingTeamId: num
   }
 }
 
+async function fetchPitcherLast3VsTeamProfile(
+  pitcherId: number,
+  opposingTeamId: number,
+  season: string,
+  targetDateStr: string
+): Promise<Partial<AdvancedPitchingStats>> {
+  if (!pitcherId || !opposingTeamId) return {};
+  try {
+    const url = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=gameLog&season=${season}&group=pitching`;
+    const res = await fetchWithTimeout(url, 5000);
+    if (!res.ok) return {};
+    const data = await res.json();
+    const targetDate = new Date(targetDateStr);
+    let logs = data.stats?.[0]?.splits || [];
+
+    logs = logs
+      .filter((log: any) => {
+        if (!log.date || new Date(log.date) >= targetDate) return false;
+        const opponentId =
+          log.opponent?.id ??
+          log.opponent?.team?.id ??
+          log.team?.opponent?.id ??
+          log.game?.opponent?.id;
+        return String(opponentId) === String(opposingTeamId);
+      })
+      .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 3);
+
+    if (logs.length === 0) return {};
+
+    const ks = logs.map((log: any) => parseInt(log.stat?.strikeOuts) || 0);
+    const bf = logs.map((log: any) => parseInt(log.stat?.battersFaced) || 0).filter((value: number) => value > 0);
+
+    return {
+      last3VsTeamKsAvg: average(ks, 2),
+      last3VsTeamBfAvg: average(bf, 1)
+    };
+  } catch (err) {
+    console.error(`Error fetching last 3 vs team for pitcher ${pitcherId}:`, err);
+    return {};
+  }
+}
+
 async function fetchAdvancedOffense(teamId: number, season: string): Promise<AdvancedOffenseStats> {
   const defaults: AdvancedOffenseStats = {
     wOba: null, xwOba: null, wrcPlus: null, iso: null, babip: null,
@@ -1682,11 +1986,20 @@ async function fetchAdvancedOffense(teamId: number, season: string): Promise<Adv
   };
   try {
     const stdUrl = `https://statsapi.mlb.com/api/v1/teams/${teamId}/stats?stats=season&season=${season}&group=hitting`;
-    const stdRes = await fetchWithTimeout(stdUrl, 5000);
+    const advUrl = `https://statsapi.mlb.com/api/v1/teams/${teamId}/stats?stats=seasonAdvanced&season=${season}&group=hitting`;
+    const [stdRes, advRes] = await Promise.all([
+      fetchWithTimeout(stdUrl, 5000),
+      fetchWithTimeout(advUrl, 5000)
+    ]);
     let stdStat: any = {};
+    let advStat: any = {};
     if (stdRes.ok) {
       const stdData = await stdRes.json();
       stdStat = stdData.stats?.[0]?.splits?.[0]?.stat || {};
+    }
+    if (advRes.ok) {
+      const advData = await advRes.json();
+      advStat = advData.stats?.[0]?.splits?.[0]?.stat || {};
     }
 
     if (!stdStat.atBats) {
@@ -1718,6 +2031,27 @@ async function fetchAdvancedOffense(teamId: number, season: string): Promise<Adv
       ? Math.round(((0.69 * (bb - ibb) + 0.72 * hbp + 0.88 * single + 1.25 * dbl + 1.58 * tpl + 2.05 * hr) / wobaDenom) * 1000) / 1000
       : null;
 
+    const firstNumber = (...values: any[]): number | null => {
+      for (const value of values) {
+        const parsed = safeFloat(value);
+        if (parsed !== null) return parsed;
+      }
+      return null;
+    };
+
+    const swings = firstNumber(advStat.totalSwings, advStat.swings, stdStat.totalSwings);
+    const swingAndMisses = firstNumber(advStat.swingAndMisses, advStat.swingingStrikes, stdStat.swingAndMisses);
+    const contactPct = swings && swingAndMisses !== null && swings > 0
+      ? roundNumber(((swings - swingAndMisses) / swings) * 100, 1)
+      : firstNumber(advStat.contactPct, advStat.contactPercent, advStat.contact);
+
+    const chasePct = firstNumber(
+      advStat.chasePct,
+      advStat.chasePercent,
+      advStat.oSwingPct,
+      advStat.outOfZoneSwingPct
+    );
+
     return {
       wOba: woba,
       xwOba: null,
@@ -1726,8 +2060,8 @@ async function fetchAdvancedOffense(teamId: number, season: string): Promise<Adv
       babip,
       hardHitPct: null,
       barrelPct: null,
-      contactPct: null,
-      chasePct: null
+      contactPct,
+      chasePct
     };
   } catch (err) {
     console.error(`Error fetching advanced offense for team ${teamId}:`, err);
@@ -1971,8 +2305,9 @@ function calculateModelFeatures(gameData: any): ModelFeatures {
   const homeOps = safeFloat(gameData.offense?.home?.ops) ?? 0.730;
   const awayOps = safeFloat(gameData.offense?.away?.ops) ?? 0.730;
 
-  const homeWrcPlus = safeFloat(gameData.advanced_offense?.home?.wrcPlus) ?? 100;
-  const awayWrcPlus = safeFloat(gameData.advanced_offense?.away?.wrcPlus) ?? 100;
+  // Use xwOBA difference instead of wRC+ (wRC+ is always null – FanGraphs proprietary)
+  const homeXwoba = safeFloat(gameData.advanced_offense?.home?.xwOba) ?? safeFloat(gameData.advanced_offense?.home?.wOba) ?? 0.320;
+  const awayXwoba = safeFloat(gameData.advanced_offense?.away?.xwOba) ?? safeFloat(gameData.advanced_offense?.away?.wOba) ?? 0.320;
 
   const homeBullpenEra = safeFloat(gameData.bullpen?.home?.era) ?? 4.0;
   const awayBullpenEra = safeFloat(gameData.bullpen?.away?.era) ?? 4.0;
@@ -1996,12 +2331,18 @@ function calculateModelFeatures(gameData: any): ModelFeatures {
   let varRunLine = 0;
   let varTotalRuns = 0;
 
-  if (gameData.line_movements && gameData.line_movements.length > 1) {
+  if (hasRealBettingLines(gameData) && gameData.line_movements && gameData.line_movements.length > 1) {
     const opening = gameData.line_movements[0];
     const current = gameData.line_movements[gameData.line_movements.length - 1];
-    varMoneyline = current.currentMoneylineHome - opening.currentMoneylineHome;
-    varRunLine = current.runLineHomeOdds - opening.runLineHomeOdds;
-    varTotalRuns = current.totalRuns - opening.totalRuns;
+    const currentMoneylineHome = safeFloat(current.currentMoneylineHome);
+    const openingMoneylineHome = safeFloat(opening.currentMoneylineHome);
+    const currentRunLineOdds = safeFloat(current.runLineHomeOdds);
+    const openingRunLineOdds = safeFloat(opening.runLineHomeOdds);
+    const currentTotalRuns = safeFloat(current.totalRuns);
+    const openingTotalRuns = safeFloat(opening.totalRuns);
+    varMoneyline = currentMoneylineHome !== null && openingMoneylineHome !== null ? currentMoneylineHome - openingMoneylineHome : 0;
+    varRunLine = currentRunLineOdds !== null && openingRunLineOdds !== null ? currentRunLineOdds - openingRunLineOdds : 0;
+    varTotalRuns = currentTotalRuns !== null && openingTotalRuns !== null ? currentTotalRuns - openingTotalRuns : 0;
   }
 
   return {
@@ -2009,7 +2350,7 @@ function calculateModelFeatures(gameData: any): ModelFeatures {
     diffXera: Math.round((homeStarterXera - awayStarterXera) * 100) / 100,
     diffFip: Math.round((homeStarterFip - awayStarterFip) * 100) / 100,
     diffOps: Math.round((homeOps - awayOps) * 1000) / 1000,
-    diffWrcPlus: Math.round((homeWrcPlus - awayWrcPlus) * 10) / 10,
+    diffXwoba: Math.round((homeXwoba - awayXwoba) * 10000) / 10000,
     diffBullpenEra: Math.round((homeBullpenEra - awayBullpenEra) * 100) / 100,
     diffRunsPerGame: Math.round((homeRpg - awayRpg) * 10) / 10,
     diffRecordLast10: Math.round((homeRecordLast10 - awayRecordLast10) * 100) / 100,
@@ -2148,17 +2489,17 @@ function buildDirectGameData(
       }
 
       odds = {
-        openingMoneylineHome: h2h?.outcomes.find((o: any) => o.name === matchOdds.home_team)?.price || -110,
-        openingMoneylineAway: h2h?.outcomes.find((o: any) => o.name === matchOdds.away_team)?.price || -110,
-        currentMoneylineHome: h2h?.outcomes.find((o: any) => o.name === matchOdds.home_team)?.price || -110,
-        currentMoneylineAway: h2h?.outcomes.find((o: any) => o.name === matchOdds.away_team)?.price || -110,
-        runLineHome: spreads?.outcomes.find((o: any) => o.name === matchOdds.home_team)?.point || -1.5,
-        runLineHomeOdds: spreads?.outcomes.find((o: any) => o.name === matchOdds.home_team)?.price || -110,
-        runLineAway: spreads?.outcomes.find((o: any) => o.name === matchOdds.away_team)?.point || 1.5,
-        runLineAwayOdds: spreads?.outcomes.find((o: any) => o.name === matchOdds.away_team)?.price || -110,
-        totalRuns: totals?.outcomes.find((o: any) => o.name === 'Over')?.point || 8.5,
-        overOdds: totals?.outcomes.find((o: any) => o.name === 'Over')?.price || -110,
-        underOdds: totals?.outcomes.find((o: any) => o.name === 'Under')?.price || -110,
+        openingMoneylineHome: h2h?.outcomes.find((o: any) => o.name === matchOdds.home_team)?.price ?? null,
+        openingMoneylineAway: h2h?.outcomes.find((o: any) => o.name === matchOdds.away_team)?.price ?? null,
+        currentMoneylineHome: h2h?.outcomes.find((o: any) => o.name === matchOdds.home_team)?.price ?? null,
+        currentMoneylineAway: h2h?.outcomes.find((o: any) => o.name === matchOdds.away_team)?.price ?? null,
+        runLineHome: spreads?.outcomes.find((o: any) => o.name === matchOdds.home_team)?.point ?? null,
+        runLineHomeOdds: spreads?.outcomes.find((o: any) => o.name === matchOdds.home_team)?.price ?? null,
+        runLineAway: spreads?.outcomes.find((o: any) => o.name === matchOdds.away_team)?.point ?? null,
+        runLineAwayOdds: spreads?.outcomes.find((o: any) => o.name === matchOdds.away_team)?.price ?? null,
+        totalRuns: totals?.outcomes.find((o: any) => o.name === 'Over')?.point ?? totals?.outcomes.find((o: any) => o.name === 'Under')?.point ?? null,
+        overOdds: totals?.outcomes.find((o: any) => o.name === 'Over')?.price ?? null,
+        underOdds: totals?.outcomes.find((o: any) => o.name === 'Under')?.price ?? null,
         lineMovementSummary: "Líneas de cuotas provistas por The Odds API (Modo Directo)."
       };
     }
@@ -2167,11 +2508,11 @@ function buildDirectGameData(
   // Fallback odds if matching failed
   if (!odds) {
     odds = {
-      openingMoneylineHome: -110, openingMoneylineAway: -110,
-      currentMoneylineHome: -110, currentMoneylineAway: -110,
-      runLineHome: -1.5, runLineHomeOdds: -110, runLineAway: 1.5, runLineAwayOdds: -110,
-      totalRuns: 8.5, overOdds: -110, underOdds: -110,
-      lineMovementSummary: "Líneas estándar generadas automáticamente (Sin IA)."
+      openingMoneylineHome: null, openingMoneylineAway: null,
+      currentMoneylineHome: null, currentMoneylineAway: null,
+      runLineHome: null, runLineHomeOdds: null, runLineAway: null, runLineAwayOdds: null,
+      totalRuns: null, overOdds: null, underOdds: null,
+      lineMovementSummary: "Sin lineas reales disponibles."
     };
   }
 
@@ -2234,12 +2575,14 @@ function buildDirectGameData(
     offense: {
       home: {
         runsPerGame: safeFloat(realMLBData?.teamOffense?.home?.runsPerGame) ?? "N/A",
+        strikeoutsPerGame: safeFloat(realMLBData?.teamOffense?.home?.strikeoutsPerGame) ?? "N/A",
         ops: safeFloat(realMLBData?.teamOffense?.home?.ops) ?? "N/A",
         obp: safeFloat(realMLBData?.teamOffense?.home?.obp) ?? "N/A",
         slg: safeFloat(realMLBData?.teamOffense?.home?.slg) ?? "N/A"
       },
       away: {
         runsPerGame: safeFloat(realMLBData?.teamOffense?.away?.runsPerGame) ?? "N/A",
+        strikeoutsPerGame: safeFloat(realMLBData?.teamOffense?.away?.strikeoutsPerGame) ?? "N/A",
         ops: safeFloat(realMLBData?.teamOffense?.away?.ops) ?? "N/A",
         obp: safeFloat(realMLBData?.teamOffense?.away?.obp) ?? "N/A",
         slg: safeFloat(realMLBData?.teamOffense?.away?.slg) ?? "N/A"
@@ -2257,6 +2600,8 @@ function buildDirectGameData(
     lineups: {
       home: (realMLBData?.lineups?.home || []).map((p: any) => ({
         name: p.name || "Jugador",
+        id: p.id ?? p.mlbId ?? null,
+        mlbId: p.mlbId ?? p.id ?? null,
         position: p.position || "DH",
         avg: safeFloat(p.avg) || 0.250,
         ops: safeFloat(p.ops) || 0.700,
@@ -2281,6 +2626,10 @@ function buildDirectGameData(
         ops_vs_lhp: p.ops_vs_lhp ?? 0,
         slg_vs_rhp: p.slg_vs_rhp ?? 0,
         slg_vs_lhp: p.slg_vs_lhp ?? 0,
+        k_pct_vs_rhp: p.k_pct_vs_rhp ?? 0,
+        k_pct_vs_lhp: p.k_pct_vs_lhp ?? 0,
+        contact_pct_vs_rhp: p.contact_pct_vs_rhp ?? null,
+        contact_pct_vs_lhp: p.contact_pct_vs_lhp ?? null,
         last7_avg: safeFloat(p.last7_avg) || 0.0,
         last7_ops: safeFloat(p.last7_ops) || 0.0,
         last7_slg: safeFloat(p.last7_slg) || 0.0,
@@ -2290,6 +2639,8 @@ function buildDirectGameData(
       })),
       away: (realMLBData?.lineups?.away || []).map((p: any) => ({
         name: p.name || "Jugador",
+        id: p.id ?? p.mlbId ?? null,
+        mlbId: p.mlbId ?? p.id ?? null,
         position: p.position || "DH",
         avg: safeFloat(p.avg) || 0.250,
         ops: safeFloat(p.ops) || 0.700,
@@ -2314,6 +2665,10 @@ function buildDirectGameData(
         ops_vs_lhp: p.ops_vs_lhp ?? 0,
         slg_vs_rhp: p.slg_vs_rhp ?? 0,
         slg_vs_lhp: p.slg_vs_lhp ?? 0,
+        k_pct_vs_rhp: p.k_pct_vs_rhp ?? 0,
+        k_pct_vs_lhp: p.k_pct_vs_lhp ?? 0,
+        contact_pct_vs_rhp: p.contact_pct_vs_rhp ?? null,
+        contact_pct_vs_lhp: p.contact_pct_vs_lhp ?? null,
         last7_avg: safeFloat(p.last7_avg) || 0.0,
         last7_ops: safeFloat(p.last7_ops) || 0.0,
         last7_slg: safeFloat(p.last7_slg) || 0.0,
@@ -2365,6 +2720,11 @@ app.post("/api/harvest", async (req, res) => {
 
   // Fetch real odds for the day
   const realOddsData = await fetchRealBettingLines(date);
+
+  // Pre-cargar Baseball Savant (una sola descarga para toda la sesión)
+  const season = date.substring(0, 4);
+  emit({ phase: "schedule", step: "Cargando datos de Baseball Savant...", pct: 4 });
+  await savantCache.load(parseInt(season));
 
   const harvestedGames: any[] = [];
   const errorsCollection = readErrorsDB();
@@ -2457,8 +2817,12 @@ app.post("/api/harvest", async (req, res) => {
         awayAdvPitching,
         homeLast7,
         awayLast7,
+        homeLast5Profile,
+        awayLast5Profile,
         homeVsOpp,
         awayVsOpp,
+        homeLast3VsTeam,
+        awayLast3VsTeam,
         homeAdvOffense,
         awayAdvOffense,
         fatigue
@@ -2470,8 +2834,12 @@ app.post("/api/harvest", async (req, res) => {
         fetchAdvancedPitching(awayPitcherId, season),
         fetchAdvancedPitchingLast7(homePitcherId, season, date),
         fetchAdvancedPitchingLast7(awayPitcherId, season, date),
+        fetchPitcherLast5Profile(homePitcherId, season, date),
+        fetchPitcherLast5Profile(awayPitcherId, season, date),
         fetchAdvancedPitchingVsOpp(homePitcherId, awayTeamId),
         fetchAdvancedPitchingVsOpp(awayPitcherId, homeTeamId),
+        fetchPitcherLast3VsTeamProfile(homePitcherId, awayTeamId, season, date),
+        fetchPitcherLast3VsTeamProfile(awayPitcherId, homeTeamId, season, date),
         fetchAdvancedOffense(homeTeamId, season),
         fetchAdvancedOffense(awayTeamId, season),
         fetchFatigueMetrics(homePitcherId, awayPitcherId, homeTeamId, awayTeamId, date)
@@ -2483,6 +2851,66 @@ app.post("/api/harvest", async (req, res) => {
         home: homeSplits,
         away: awaySplits
       };
+      // Inyectar métricas de Baseball Savant en estadísticas de pitchers
+      const homePitcherSavant = savantCache.getPitcher(homePitcherId);
+      const awayPitcherSavant = savantCache.getPitcher(awayPitcherId);
+      if (homePitcherSavant) {
+        homeAdvPitching.xEra = homePitcherSavant.xERA;
+        homeAdvPitching.hardHitPct = homePitcherSavant.hardHitPct;
+        homeAdvPitching.barrelPct = homePitcherSavant.barrelPct;
+        if (homePitcherSavant.xwOBA !== null) {
+          homeAdvOffense.xwOba = homeAdvOffense.xwOba ?? homePitcherSavant.xwOBA;
+        }
+      }
+      if (awayPitcherSavant) {
+        awayAdvPitching.xEra = awayPitcherSavant.xERA;
+        awayAdvPitching.hardHitPct = awayPitcherSavant.hardHitPct;
+        awayAdvPitching.barrelPct = awayPitcherSavant.barrelPct;
+        if (awayPitcherSavant.xwOBA !== null) {
+          awayAdvOffense.xwOba = awayAdvOffense.xwOba ?? awayPitcherSavant.xwOBA;
+        }
+      }
+      // Inyectar xwOBA de ofensiva desde los bateadores del lineup
+      const homeLineup: any[] = gameDataParsed.lineups?.home || [];
+      const awayLineup: any[] = gameDataParsed.lineups?.away || [];
+      const homeXwobaVals = homeLineup.map((p: any) => savantCache.getBatter(p.id ?? p.mlbId)?.xwOBA).filter((v): v is number => v !== null && v !== undefined);
+      const awayXwobaVals = awayLineup.map((p: any) => savantCache.getBatter(p.id ?? p.mlbId)?.xwOBA).filter((v): v is number => v !== null && v !== undefined);
+      if (homeXwobaVals.length > 0) homeAdvOffense.xwOba = Math.round(homeXwobaVals.reduce((a, b) => a + b, 0) / homeXwobaVals.length * 1000) / 1000;
+      if (awayXwobaVals.length > 0) awayAdvOffense.xwOba = Math.round(awayXwobaVals.reduce((a, b) => a + b, 0) / awayXwobaVals.length * 1000) / 1000;
+
+      // Inyectar K% proyectado de la alineación y K% del rival vs mano del pitcher
+      const homePitcherHand = realMLBData.pitchers?.home?.pitchHand || "R";
+      const awayPitcherHand = realMLBData.pitchers?.away?.pitchHand || "R";
+
+      homeAdvOffense.kPctVsPitchHand = awayPitcherHand === "L" ? (homeSplits?.vsLhp?.kPct ?? 20.0) : (homeSplits?.vsRhp?.kPct ?? 20.0);
+      awayAdvOffense.kPctVsPitchHand = homePitcherHand === "L" ? (awaySplits?.vsLhp?.kPct ?? 20.0) : (awaySplits?.vsRhp?.kPct ?? 20.0);
+
+      const getLineupVsHandProjection = (lineup: any[], pitcherHand: string) => {
+        if (!lineup.length) return { kPct: null, contactPct: null };
+        const isLefty = pitcherHand === "L";
+      const kValues = lineup
+        .map((p: any) => safeFloat(isLefty ? p.k_pct_vs_lhp : p.k_pct_vs_rhp) ?? safeFloat(p.strikeout_pct) ?? safeFloat(p.kPct))
+        .filter((value): value is number => value !== null && value > 0);
+        const contactValues = lineup
+          .map((p: any) => safeFloat(isLefty ? p.contact_pct_vs_lhp : p.contact_pct_vs_rhp))
+          .filter((value): value is number => value !== null && value > 0);
+        const kPct = average(kValues, 1);
+        return {
+          kPct,
+          contactPct: contactValues.length > 0 ? average(contactValues, 1) : null
+        };
+      };
+
+      const homeLineupVsHand = getLineupVsHandProjection(homeLineup, awayPitcherHand);
+      const awayLineupVsHand = getLineupVsHandProjection(awayLineup, homePitcherHand);
+      homeAdvOffense.projectedLineupKPct = homeLineupVsHand.kPct;
+      awayAdvOffense.projectedLineupKPct = awayLineupVsHand.kPct;
+      homeAdvOffense.projectedLineupContactPctVsHand = homeLineupVsHand.contactPct;
+      awayAdvOffense.projectedLineupContactPctVsHand = awayLineupVsHand.contactPct;
+
+      Object.assign(homeAdvPitching, homeLast5Profile, homeLast3VsTeam);
+      Object.assign(awayAdvPitching, awayLast5Profile, awayLast3VsTeam);
+
       gameDataParsed.advanced_pitching = {
         home: homeAdvPitching,
         away: awayAdvPitching,
@@ -2545,6 +2973,14 @@ app.post("/api/harvest", async (req, res) => {
       if (gameResult) {
         gameDataParsed.game_result = gameResult;
       }
+
+      const canUseActualKs = isFinalGameStatus(gameDataParsed.game_result?.gameStatus);
+      gameDataParsed.advanced_pitching.home.actualStrikeouts = canUseActualKs
+        ? (realMLBData.currentPitching?.home?.actualStrikeouts ?? null)
+        : null;
+      gameDataParsed.advanced_pitching.away.actualStrikeouts = canUseActualKs
+        ? (realMLBData.currentPitching?.away?.actualStrikeouts ?? null)
+        : null;
 
       // Validation Layer
       const validationResult = validateGamePayload(gameDataParsed, errorsCollection);
@@ -2642,6 +3078,7 @@ async function updateSingleGameData(gameId: string, date: string): Promise<any> 
 
   // 5. Fetch advanced stats
   const season = date.substring(0, 4);
+  await savantCache.load(parseInt(season));
   const homePitcherId = realMLBData.pitcherIds?.home || 0;
   const awayPitcherId = realMLBData.pitcherIds?.away || 0;
 
@@ -2653,8 +3090,12 @@ async function updateSingleGameData(gameId: string, date: string): Promise<any> 
     awayAdvPitching,
     homeLast7,
     awayLast7,
+    homeLast5Profile,
+    awayLast5Profile,
     homeVsOpp,
     awayVsOpp,
+    homeLast3VsTeam,
+    awayLast3VsTeam,
     homeAdvOffense,
     awayAdvOffense,
     fatigue
@@ -2666,8 +3107,12 @@ async function updateSingleGameData(gameId: string, date: string): Promise<any> 
     fetchAdvancedPitching(awayPitcherId, season),
     fetchAdvancedPitchingLast7(homePitcherId, season, date),
     fetchAdvancedPitchingLast7(awayPitcherId, season, date),
+    fetchPitcherLast5Profile(homePitcherId, season, date),
+    fetchPitcherLast5Profile(awayPitcherId, season, date),
     fetchAdvancedPitchingVsOpp(homePitcherId, awayTeamId),
     fetchAdvancedPitchingVsOpp(awayPitcherId, homeTeamId),
+    fetchPitcherLast3VsTeamProfile(homePitcherId, awayTeamId, season, date),
+    fetchPitcherLast3VsTeamProfile(awayPitcherId, homeTeamId, season, date),
     fetchAdvancedOffense(homeTeamId, season),
     fetchAdvancedOffense(awayTeamId, season),
     fetchFatigueMetrics(homePitcherId, awayPitcherId, homeTeamId, awayTeamId, date)
@@ -2676,6 +3121,60 @@ async function updateSingleGameData(gameId: string, date: string): Promise<any> 
   // Populate advanced fields
   gameDataParsed.weather = weather;
   gameDataParsed.offensive_splits = { home: homeSplits, away: awaySplits };
+  // Inyectar métricas de Baseball Savant
+  const homePitcherSavantU = savantCache.getPitcher(homePitcherId);
+  const awayPitcherSavantU = savantCache.getPitcher(awayPitcherId);
+  if (homePitcherSavantU) {
+    homeAdvPitching.xEra = homePitcherSavantU.xERA;
+    homeAdvPitching.hardHitPct = homePitcherSavantU.hardHitPct;
+    homeAdvPitching.barrelPct = homePitcherSavantU.barrelPct;
+  }
+  if (awayPitcherSavantU) {
+    awayAdvPitching.xEra = awayPitcherSavantU.xERA;
+    awayAdvPitching.hardHitPct = awayPitcherSavantU.hardHitPct;
+    awayAdvPitching.barrelPct = awayPitcherSavantU.barrelPct;
+  }
+  // xwOBA desde lineup
+  const homeLineupU: any[] = gameDataParsed.lineups?.home || [];
+  const awayLineupU: any[] = gameDataParsed.lineups?.away || [];
+  const homeXwobaValsU = homeLineupU.map((p: any) => savantCache.getBatter(p.id ?? p.mlbId)?.xwOBA).filter((v): v is number => v !== null && v !== undefined);
+  const awayXwobaValsU = awayLineupU.map((p: any) => savantCache.getBatter(p.id ?? p.mlbId)?.xwOBA).filter((v): v is number => v !== null && v !== undefined);
+  if (homeXwobaValsU.length > 0) homeAdvOffense.xwOba = Math.round(homeXwobaValsU.reduce((a, b) => a + b, 0) / homeXwobaValsU.length * 1000) / 1000;
+  if (awayXwobaValsU.length > 0) awayAdvOffense.xwOba = Math.round(awayXwobaValsU.reduce((a, b) => a + b, 0) / awayXwobaValsU.length * 1000) / 1000;
+
+  // Inyectar K% proyectado de la alineación y K% del rival vs mano del pitcher
+  const homePitcherHand = realMLBData.pitchers?.home?.pitchHand || "R";
+  const awayPitcherHand = realMLBData.pitchers?.away?.pitchHand || "R";
+
+  homeAdvOffense.kPctVsPitchHand = awayPitcherHand === "L" ? (homeSplits?.vsLhp?.kPct ?? 20.0) : (homeSplits?.vsRhp?.kPct ?? 20.0);
+  awayAdvOffense.kPctVsPitchHand = homePitcherHand === "L" ? (awaySplits?.vsLhp?.kPct ?? 20.0) : (awaySplits?.vsRhp?.kPct ?? 20.0);
+
+  const getLineupVsHandProjection = (lineup: any[], pitcherHand: string) => {
+    if (!lineup.length) return { kPct: null, contactPct: null };
+    const isLefty = pitcherHand === "L";
+    const kValues = lineup
+      .map((p: any) => safeFloat(isLefty ? p.k_pct_vs_lhp : p.k_pct_vs_rhp) ?? safeFloat(p.strikeout_pct) ?? safeFloat(p.kPct))
+      .filter((value): value is number => value !== null && value > 0);
+    const contactValues = lineup
+      .map((p: any) => safeFloat(isLefty ? p.contact_pct_vs_lhp : p.contact_pct_vs_rhp))
+      .filter((value): value is number => value !== null && value > 0);
+    const kPct = average(kValues, 1);
+    return {
+      kPct,
+      contactPct: contactValues.length > 0 ? average(contactValues, 1) : null
+    };
+  };
+
+  const homeLineupVsHand = getLineupVsHandProjection(homeLineupU, awayPitcherHand);
+  const awayLineupVsHand = getLineupVsHandProjection(awayLineupU, homePitcherHand);
+  homeAdvOffense.projectedLineupKPct = homeLineupVsHand.kPct;
+  awayAdvOffense.projectedLineupKPct = awayLineupVsHand.kPct;
+  homeAdvOffense.projectedLineupContactPctVsHand = homeLineupVsHand.contactPct;
+  awayAdvOffense.projectedLineupContactPctVsHand = awayLineupVsHand.contactPct;
+
+  Object.assign(homeAdvPitching, homeLast5Profile, homeLast3VsTeam);
+  Object.assign(awayAdvPitching, awayLast5Profile, awayLast3VsTeam);
+
   gameDataParsed.advanced_pitching = {
     home: homeAdvPitching,
     away: awayAdvPitching,
@@ -2732,6 +3231,14 @@ async function updateSingleGameData(gameId: string, date: string): Promise<any> 
   if (gameResult) {
     gameDataParsed.game_result = gameResult;
   }
+
+  const canUseActualKs = isFinalGameStatus(gameDataParsed.game_result?.gameStatus);
+  gameDataParsed.advanced_pitching.home.actualStrikeouts = canUseActualKs
+    ? (realMLBData.currentPitching?.home?.actualStrikeouts ?? null)
+    : null;
+  gameDataParsed.advanced_pitching.away.actualStrikeouts = canUseActualKs
+    ? (realMLBData.currentPitching?.away?.actualStrikeouts ?? null)
+    : null;
 
   const errorsCollection = readErrorsDB();
   const validationResult = validateGamePayload(gameDataParsed, errorsCollection);
