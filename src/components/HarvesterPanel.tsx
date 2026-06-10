@@ -138,7 +138,7 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
             {/* Morning check */}
             <div className="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-200/60 shadow-sm leading-none">
               <span className="text-slate-600 font-medium font-sans">1. Mañana (08:00 AM)</span>
-              <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold uppercase text-[9px] tracking-wide text-right">
+              <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold uppercase text-[11px] tracking-wide text-right">
                 Completado
               </span>
             </div>
@@ -146,7 +146,7 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
             {/* Hourly Sync indicators */}
             <div className="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-200/60 shadow-sm leading-none">
               <span className="text-slate-600 font-medium font-sans">2. Sincronización Horaria</span>
-              <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold uppercase text-[9px] tracking-wide text-right">
+              <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold uppercase text-[11px] tracking-wide text-right">
                 Activa (Horario)
               </span>
             </div>
@@ -154,7 +154,7 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
             {/* Lock Lines prior to Game */}
             <div className="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-200/60 shadow-sm leading-none">
               <span className="text-slate-600 font-medium font-sans">3. Cierre Líneas (T-35m)</span>
-              <span className="bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded font-bold uppercase text-[9px] tracking-wide text-right">
+              <span className="bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded font-bold uppercase text-[11px] tracking-wide text-right">
                 Programado
               </span>
             </div>
@@ -188,12 +188,12 @@ function HarvestProgressBar({ progress }: { progress: ProgressData }) {
     <div className="w-full space-y-2.5">
 
       {/* Top row: step label + percentage */}
-      <div className="flex items-center justify-between text-[10px] font-mono gap-2">
+      <div className="flex items-center justify-between text-xs font-mono gap-2">
         <span className="text-blue-600 font-semibold truncate flex-1 animate-pulse">
           {step || "Iniciando..."}
         </span>
         <span
-          className="text-white font-bold text-[11px] bg-blue-600 px-2 py-0.5 rounded shrink-0 tabular-nums transition-all duration-500"
+          className="text-white font-bold text-xs bg-blue-600 px-2 py-0.5 rounded shrink-0 tabular-nums transition-all duration-500"
         >
           {pct}%
         </span>
@@ -248,7 +248,7 @@ function HarvestProgressBar({ progress }: { progress: ProgressData }) {
 
       {/* Game counter row (only visible during per-game phases) */}
       {gameIndex && totalGames && (
-        <div className="flex items-center justify-between text-[9px] font-mono text-slate-500 border-t border-slate-200/60 pt-1.5">
+        <div className="flex items-center justify-between text-[11px] font-mono text-slate-500 border-t border-slate-200/60 pt-1.5">
           <span className="truncate max-w-[70%]">{gameLabel}</span>
           <span className="shrink-0 font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">
             {gameIndex} / {totalGames}

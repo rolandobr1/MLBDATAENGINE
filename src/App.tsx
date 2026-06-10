@@ -270,7 +270,7 @@ export default function App() {
         onScrollToSheets={scrollToSheets}
       />
 
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 w-full">
+      <main className="flex-1 max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 w-full">
         
         {/* Row 1: Harvester Controls Dashboard */}
         <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -353,7 +353,7 @@ export default function App() {
             </div>
           ) : (
             /* Match grid lists */
-            <div className="space-y-6">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
               {sortedGames.filter(g => {
                 if (!searchQuery) return true;
                 const searchLower = searchQuery.toLowerCase();

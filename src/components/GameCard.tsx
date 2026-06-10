@@ -24,6 +24,44 @@ interface GameCardProps {
   onTogglePin?: () => void;
 }
 
+const MLB_TEAM_ABBR: Record<string, string> = {
+  "Arizona Diamondbacks": "ARI",
+  "Atlanta Braves": "ATL",
+  "Baltimore Orioles": "BAL",
+  "Boston Red Sox": "BOS",
+  "Chicago Cubs": "CHC",
+  "Chicago White Sox": "CHW",
+  "Cincinnati Reds": "CIN",
+  "Cleveland Guardians": "CLE",
+  "Colorado Rockies": "COL",
+  "Detroit Tigers": "DET",
+  "Houston Astros": "HOU",
+  "Kansas City Royals": "KC",
+  "Los Angeles Angels": "LAA",
+  "Los Angeles Dodgers": "LAD",
+  "Miami Marlins": "MIA",
+  "Milwaukee Brewers": "MIL",
+  "Minnesota Twins": "MIN",
+  "New York Mets": "NYM",
+  "New York Yankees": "NYY",
+  "Oakland Athletics": "OAK",
+  "Athletics": "OAK",
+  "Philadelphia Phillies": "PHI",
+  "Pittsburgh Pirates": "PIT",
+  "San Diego Padres": "SD",
+  "San Francisco Giants": "SF",
+  "Seattle Mariners": "SEA",
+  "St. Louis Cardinals": "STL",
+  "Tampa Bay Rays": "TB",
+  "Texas Rangers": "TEX",
+  "Toronto Blue Jays": "TOR",
+  "Washington Nationals": "WSH"
+};
+
+const getTeamAbbr = (teamName: string): string => {
+  return MLB_TEAM_ABBR[teamName] || teamName;
+};
+
 export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, onTogglePin }) => {
   const [expanded, setExpanded] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<"lineups" | "boxscore" | "splits" | "fatigue" | "sabermetrics">("lineups");
@@ -479,10 +517,9 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
 
             <div className="grid grid-cols-2 gap-4 text-xs font-mono">
               <div className="space-y-0.5">
-                <div className="font-sans font-semibold text-blue-900 truncate">
-                  {game.metadata.awayTeam}
-                  {" "}
-                  <span className="ml-1.5 rounded bg-blue-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-blue-700">
+                <div className="font-sans font-bold text-blue-900 truncate flex items-center gap-1.5">
+                  <span className="text-sm">{getTeamAbbr(game.metadata.awayTeam)}</span>
+                  <span className="rounded bg-blue-50 px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide text-blue-700">
                     Visitante
                   </span>
                 </div>
@@ -494,10 +531,9 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
               </div>
 
               <div className="space-y-0.5">
-                <div className="font-sans font-semibold text-red-900 truncate">
-                  {game.metadata.homeTeam}
-                  {" "}
-                  <span className="ml-1.5 rounded bg-red-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-red-700">
+                <div className="font-sans font-bold text-red-900 truncate flex items-center gap-1.5">
+                  <span className="text-sm">{getTeamAbbr(game.metadata.homeTeam)}</span>
+                  <span className="rounded bg-red-50 px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide text-red-700">
                     Local
                   </span>
                 </div>
@@ -591,32 +627,32 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
 
             {/* TAB: Lineups Comparison */}
             {activeTab === "lineups" && game.lineups && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-2">
+              <div className="grid grid-cols-1 gap-6 mb-2">
                 {/* Away Lineup */}
                 <div className="bg-white rounded-lg border border-slate-200/60 overflow-hidden shadow-sm">
-                  <div className="bg-slate-800 text-white px-4 py-2 font-display font-bold text-xs uppercase tracking-wider flex justify-between">
+                  <div className="bg-slate-800 text-white px-4 py-2.5 font-display font-bold text-xs md:text-sm uppercase tracking-wider flex justify-between">
                     <span>Alineación Visitante ({game.metadata.awayTeam})</span>
-                    <div className="flex gap-2 text-right shrink-0 font-mono text-[9px] text-slate-300">
+                    <div className="flex gap-2 text-right shrink-0 font-mono text-[10px] md:text-xs text-slate-300">
                       <span className="w-10 cursor-help border-b border-dotted border-slate-400" title="Promedio de Bateo (Batting Average).">AVG</span>
                       <span className="w-10 cursor-help border-b border-dotted border-slate-400" title="OPS (On-base Plus Slugging): Suma del porcentaje de embasado y el slugging.">OPS</span>
-                      <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="Cuadrangulares (Home Runs).">HR</span>
-                      <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="wOBA (Weighted On-Base Average): Métrica ponderada de embasado.">wOBA</span>
+                      <span className="hidden md:inline-block w-9 cursor-help border-b border-dotted border-slate-400" title="Cuadrangulares (Home Runs).">HR</span>
+                      <span className="hidden md:inline-block w-9 cursor-help border-b border-dotted border-slate-400" title="wOBA (Weighted On-Base Average): Métrica ponderada de embasado.">wOBA</span>
                       <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="K% (Strikeout Percentage) del bateador.">K%</span>
                     </div>
                   </div>
-                  <div className="divide-y divide-slate-100 font-mono text-[11px]">
+                  <div className="divide-y divide-slate-100 font-mono text-xs md:text-sm">
                     {game.lineups.away.map((player, idx) => (
                       <React.Fragment key={idx}>
                         <div 
                           onClick={() => togglePlayerExpansion("away", idx)}
-                          className={`px-4 py-2 flex justify-between items-center hover:bg-slate-50/80 transition cursor-pointer select-none ${expandedPlayer === `away-${idx}` ? "bg-slate-50 font-semibold" : ""}`}
+                          className={`px-4 py-2.5 flex justify-between items-center hover:bg-slate-50/80 transition cursor-pointer select-none ${expandedPlayer === `away-${idx}` ? "bg-slate-50 font-semibold" : ""}`}
                         >
-                          <div className="flex items-center gap-2 truncate">
-                            <span className="text-slate-400 font-semibold w-3 text-right">{idx + 1}</span>
-                            <span className="bg-slate-100 text-slate-600 px-1 rounded text-[8px] font-bold shrink-0 w-6 text-center">{player.position}</span>
-                            <span className="text-slate-800 font-sans font-medium truncate" title={player.name}>{player.name}</span>
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <span className="text-slate-400 font-semibold w-3 text-right text-[11px] md:text-xs">{idx + 1}</span>
+                            <span className="bg-slate-100 text-slate-600 px-1 rounded text-[10px] font-bold shrink-0 w-8 text-center">{player.position}</span>
+                            <span className="text-slate-900 font-sans font-semibold text-xs md:text-sm truncate" title={player.name}>{player.name}</span>
                             {player.totalBasesProp != null && (
-                              <span title={`Bases totales DataStreak: O ${formatOdds(player.totalBasesPropOverOdds)} / U ${formatOdds(player.totalBasesPropUnderOdds)}`} className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded text-[8px] font-bold shrink-0">
+                              <span title={`Bases totales DataStreak: O ${formatOdds(player.totalBasesPropOverOdds)} / U ${formatOdds(player.totalBasesPropUnderOdds)}`} className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0">
                                 TB {player.totalBasesProp}
                               </span>
                             )}
@@ -624,17 +660,17 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           <div className="flex gap-2 text-right shrink-0">
                             <span className="text-slate-800 font-bold w-10">{player.avg.toFixed(3).substring(1)}</span>
                             <span className="text-blue-600 w-10">{player.ops.toFixed(3)}</span>
-                            <span className="text-slate-500 w-9">{player.hr}</span>
-                            <span className="text-slate-500 w-9">{player.woba != null ? player.woba.toFixed(3).substring(1) : "-"}</span>
+                            <span className="hidden md:inline-block text-slate-500 w-9">{player.hr}</span>
+                            <span className="hidden md:inline-block text-slate-500 w-9">{player.woba != null ? player.woba.toFixed(3).substring(1) : "-"}</span>
                             <span className="text-red-650 w-9 font-bold">{player.strikeout_pct != null ? `${player.strikeout_pct.toFixed(0)}%` : (player.kPct != null ? `${Number(player.kPct).toFixed(0)}%` : "-")}</span>
                           </div>
                         </div>
                         {expandedPlayer === `away-${idx}` && (
-                          <div className="bg-slate-50/70 border-t border-b border-slate-200/60 px-5 py-3 grid grid-cols-2 gap-4 text-[10px] font-sans text-slate-600 animate-fade-in">
+                          <div className="bg-slate-50/70 border-t border-b border-slate-200/60 px-5 py-3 grid grid-cols-2 gap-4 text-[11px] md:text-xs font-sans text-slate-600 animate-fade-in">
                             <div className="space-y-1 pr-2 border-r border-slate-200/60">
                               <div className="font-bold text-slate-800 uppercase tracking-wider mb-1.5 flex items-center justify-between">
                                 <span>Temporada</span>
-                                <span className="bg-slate-200/60 text-slate-700 px-1 rounded text-[8px] font-bold font-mono">BAT: {player.bat_side || "R"}</span>
+                                <span className="bg-slate-200/60 text-slate-700 px-1.5 py-0.5 rounded text-[9px] font-bold font-mono">BAT: {player.bat_side || "R"}</span>
                               </div>
                               <div className="flex justify-between"><span>OBP / SLG:</span> <strong className="font-mono text-slate-800">{player.obp != null ? player.obp.toFixed(3) : "N/D"} / {player.slg != null ? player.slg.toFixed(3) : "N/D"}</strong></div>
                               <div className="flex justify-between"><span>wOBA:</span> <strong className="font-mono text-emerald-600">{player.woba != null ? player.woba.toFixed(3) : "N/D"}</strong></div>
@@ -663,13 +699,13 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       </React.Fragment>
                     ))}
                   </div>
-                  <div className="bg-slate-50 px-4 py-2 flex justify-between items-center border-t border-slate-200/60 font-mono text-[11px] text-slate-700">
+                  <div className="bg-slate-50 px-4 py-2.5 flex justify-between items-center border-t border-slate-200/60 font-mono text-xs md:text-sm text-slate-700">
                     <span className="font-bold">Promedio Proyectado</span>
                     <div className="flex gap-2 text-right shrink-0 font-bold">
                       <span className="w-10 text-slate-800">{(game.lineups.away.reduce((sum, p) => sum + (p.avg || 0), 0) / game.lineups.away.length).toFixed(3).substring(1)}</span>
                       <span className="w-10 text-blue-600">{(game.lineups.away.reduce((sum, p) => sum + (p.ops || 0), 0) / game.lineups.away.length).toFixed(3)}</span>
-                      <span className="w-9">-</span>
-                      <span className="w-9">{(game.lineups.away.reduce((sum, p) => sum + (p.woba || 0), 0) / game.lineups.away.length).toFixed(3).substring(1)}</span>
+                      <span className="hidden md:inline-block w-9">-</span>
+                      <span className="hidden md:inline-block w-9">{(game.lineups.away.reduce((sum, p) => sum + (p.woba || 0), 0) / game.lineups.away.length).toFixed(3).substring(1)}</span>
                       <span className="w-9 text-red-700">{(game.lineups.away.reduce((sum, p) => sum + (p.strikeout_pct ?? p.kPct ?? 0), 0) / game.lineups.away.length).toFixed(1)}%</span>
                     </div>
                   </div>
@@ -677,29 +713,29 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
 
                 {/* Home Lineup */}
                 <div className="bg-white rounded-lg border border-slate-200/60 overflow-hidden shadow-sm">
-                  <div className="bg-red-950 text-white px-4 py-2 font-display font-bold text-xs uppercase tracking-wider flex justify-between">
+                  <div className="bg-red-950 text-white px-4 py-2.5 font-display font-bold text-xs md:text-sm uppercase tracking-wider flex justify-between">
                     <span>Alineación Local ({game.metadata.homeTeam})</span>
-                    <div className="flex gap-2 text-right shrink-0 font-mono text-[9px] text-red-300">
+                    <div className="flex gap-2 text-right shrink-0 font-mono text-[10px] md:text-xs text-red-300">
                       <span className="w-10 cursor-help border-b border-dotted border-slate-400" title="Promedio de Bateo (Batting Average).">AVG</span>
                       <span className="w-10 cursor-help border-b border-dotted border-slate-400" title="OPS (On-base Plus Slugging): Suma del porcentaje de embasado y el slugging.">OPS</span>
-                      <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="Cuadrangulares (Home Runs).">HR</span>
-                      <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="wOBA (Weighted On-Base Average): Métrica ponderada de embasado.">wOBA</span>
+                      <span className="hidden md:inline-block w-9 cursor-help border-b border-dotted border-slate-400" title="Cuadrangulares (Home Runs).">HR</span>
+                      <span className="hidden md:inline-block w-9 cursor-help border-b border-dotted border-slate-400" title="wOBA (Weighted On-Base Average): Métrica ponderada de embasado.">wOBA</span>
                       <span className="w-9 cursor-help border-b border-dotted border-slate-400" title="K% (Strikeout Percentage) del bateador.">K%</span>
                     </div>
                   </div>
-                  <div className="divide-y divide-slate-100 font-mono text-[11px]">
+                  <div className="divide-y divide-slate-100 font-mono text-xs md:text-sm">
                     {game.lineups.home.map((player, idx) => (
                       <React.Fragment key={idx}>
                         <div 
                           onClick={() => togglePlayerExpansion("home", idx)}
-                          className={`px-4 py-2 flex justify-between items-center hover:bg-slate-50/80 transition cursor-pointer select-none ${expandedPlayer === `home-${idx}` ? "bg-slate-50 font-semibold" : ""}`}
+                          className={`px-4 py-2.5 flex justify-between items-center hover:bg-slate-50/80 transition cursor-pointer select-none ${expandedPlayer === `home-${idx}` ? "bg-slate-50 font-semibold" : ""}`}
                         >
-                          <div className="flex items-center gap-2 truncate">
-                            <span className="text-slate-400 font-semibold w-3 text-right">{idx + 1}</span>
-                            <span className="bg-slate-100 text-slate-600 px-1 rounded text-[8px] font-bold shrink-0 w-6 text-center">{player.position}</span>
-                            <span className="text-slate-800 font-sans font-medium truncate" title={player.name}>{player.name}</span>
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <span className="text-slate-400 font-semibold w-3 text-right text-[11px] md:text-xs">{idx + 1}</span>
+                            <span className="bg-slate-100 text-slate-600 px-1 rounded text-[10px] font-bold shrink-0 w-8 text-center">{player.position}</span>
+                            <span className="text-slate-900 font-sans font-semibold text-xs md:text-sm truncate" title={player.name}>{player.name}</span>
                             {player.totalBasesProp != null && (
-                              <span title={`Bases totales DataStreak: O ${formatOdds(player.totalBasesPropOverOdds)} / U ${formatOdds(player.totalBasesPropUnderOdds)}`} className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded text-[8px] font-bold shrink-0">
+                              <span title={`Bases totales DataStreak: O ${formatOdds(player.totalBasesPropOverOdds)} / U ${formatOdds(player.totalBasesPropUnderOdds)}`} className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0">
                                 TB {player.totalBasesProp}
                               </span>
                             )}
@@ -707,17 +743,17 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           <div className="flex gap-2 text-right shrink-0">
                             <span className="text-slate-800 font-bold w-10">{player.avg.toFixed(3).substring(1)}</span>
                             <span className="text-red-600 w-10">{player.ops.toFixed(3)}</span>
-                            <span className="text-slate-500 w-9">{player.hr}</span>
-                            <span className="text-slate-500 w-9">{player.woba != null ? player.woba.toFixed(3).substring(1) : "-"}</span>
+                            <span className="hidden md:inline-block text-slate-500 w-9">{player.hr}</span>
+                            <span className="hidden md:inline-block text-slate-500 w-9">{player.woba != null ? player.woba.toFixed(3).substring(1) : "-"}</span>
                             <span className="text-red-650 w-9 font-bold">{player.strikeout_pct != null ? `${player.strikeout_pct.toFixed(0)}%` : (player.kPct != null ? `${Number(player.kPct).toFixed(0)}%` : "-")}</span>
                           </div>
                         </div>
                         {expandedPlayer === `home-${idx}` && (
-                          <div className="bg-slate-50/70 border-t border-b border-slate-200/60 px-5 py-3 grid grid-cols-2 gap-4 text-[10px] font-sans text-slate-600 animate-fade-in">
+                          <div className="bg-slate-50/70 border-t border-b border-slate-200/60 px-5 py-3 grid grid-cols-2 gap-4 text-[11px] md:text-xs font-sans text-slate-600 animate-fade-in">
                             <div className="space-y-1 pr-2 border-r border-slate-200/60">
                               <div className="font-bold text-slate-800 uppercase tracking-wider mb-1.5 flex items-center justify-between">
                                 <span>Temporada</span>
-                                <span className="bg-slate-200/60 text-slate-700 px-1 rounded text-[8px] font-bold font-mono">BAT: {player.bat_side || "R"}</span>
+                                <span className="bg-slate-200/60 text-slate-700 px-1.5 py-0.5 rounded text-[9px] font-bold font-mono">BAT: {player.bat_side || "R"}</span>
                               </div>
                               <div className="flex justify-between"><span>OBP / SLG:</span> <strong className="font-mono text-slate-800">{player.obp != null ? player.obp.toFixed(3) : "N/D"} / {player.slg != null ? player.slg.toFixed(3) : "N/D"}</strong></div>
                               <div className="flex justify-between"><span>wOBA:</span> <strong className="font-mono text-emerald-600">{player.woba != null ? player.woba.toFixed(3) : "N/D"}</strong></div>
@@ -746,13 +782,13 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       </React.Fragment>
                     ))}
                   </div>
-                  <div className="bg-slate-50 px-4 py-2 flex justify-between items-center border-t border-slate-200/60 font-mono text-[11px] text-slate-700">
+                  <div className="bg-slate-50 px-4 py-2.5 flex justify-between items-center border-t border-slate-200/60 font-mono text-xs md:text-sm text-slate-700">
                     <span className="font-bold">Promedio Proyectado</span>
                     <div className="flex gap-2 text-right shrink-0 font-bold">
                       <span className="w-10 text-slate-800">{(game.lineups.home.reduce((sum, p) => sum + (p.avg || 0), 0) / game.lineups.home.length).toFixed(3).substring(1)}</span>
                       <span className="w-10 text-red-600">{(game.lineups.home.reduce((sum, p) => sum + (p.ops || 0), 0) / game.lineups.home.length).toFixed(3)}</span>
-                      <span className="w-9">-</span>
-                      <span className="w-9">{(game.lineups.home.reduce((sum, p) => sum + (p.woba || 0), 0) / game.lineups.home.length).toFixed(3).substring(1)}</span>
+                      <span className="hidden md:inline-block w-9">-</span>
+                      <span className="hidden md:inline-block w-9">{(game.lineups.home.reduce((sum, p) => sum + (p.woba || 0), 0) / game.lineups.home.length).toFixed(3).substring(1)}</span>
                       <span className="w-9 text-red-700">{(game.lineups.home.reduce((sum, p) => sum + (p.strikeout_pct ?? p.kPct ?? 0), 0) / game.lineups.home.length).toFixed(1)}%</span>
                     </div>
                   </div>

@@ -124,14 +124,14 @@ export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({
                         Gravedad: {err.severity}
                       </strong>
                     </div>
-                    <span className="text-slate-500 text-[10px]">
+                    <span className="text-slate-500 text-xs">
                       {new Date(err.timestamp).toLocaleTimeString("es-MX", { hour12: false })}
                     </span>
                   </div>
 
                   <p className="font-sans leading-relaxed text-slate-700">{err.message}</p>
 
-                  <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1 border-t border-slate-900/5">
+                  <div className="flex items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-900/5">
                     <span>Origen: {err.source}</span>
                     {err.gameId && <span className="font-bold">ID Juego: {err.gameId}</span>}
                   </div>

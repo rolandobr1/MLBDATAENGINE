@@ -10,7 +10,6 @@ export const generateMLBCsvString = (games: MLBGame[]): string => {
     "home_score", "away_score", "winner", "run_line_covered", "over_under_result", "game_status",
     // Starter Pitchers Season
     "home_pitcher_name", "away_pitcher_name",
-    "home_pitcher_k_prop", "away_pitcher_k_prop",
     "home_pitcher_era", "away_pitcher_era",
     "home_pitcher_ip", "away_pitcher_ip",
     "home_pitcher_fip", "away_pitcher_fip",
@@ -80,7 +79,6 @@ export const generateMLBCsvString = (games: MLBGame[]): string => {
       
       // Starter Pitchers Season
       safeVal(game.pitchers?.home?.name), safeVal(game.pitchers?.away?.name),
-      safeVal(game.pitchers?.home?.strikeoutProp), safeVal(game.pitchers?.away?.strikeoutProp),
       safeVal(game.pitchers?.home?.era), safeVal(game.pitchers?.away?.era),
       safeVal(game.pitchers?.home?.ip), safeVal(game.pitchers?.away?.ip),
       safeVal(advHome?.fip), safeVal(advAway?.fip),

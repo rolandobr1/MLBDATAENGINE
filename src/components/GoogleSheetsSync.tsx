@@ -31,14 +31,64 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({ games, selec
     URL.revokeObjectURL(url);
   };
 
-  const handleDownloadDailyResultsCSV = () => {
-    const link = document.createElement("a");
-    link.setAttribute("href", `/api/daily-results/csv?date=${encodeURIComponent(selectedDate)}&_=${Date.now()}`);
-    link.setAttribute("download", `MLB_RESULTADOS_DIA_${selectedDate}.csv`);
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleDownloadDailyResultsCSV = async () => {
+    try {
+      const res = await fetch(`/api/daily-results/csv?date=${encodeURIComponent(selectedDate)}&_=${Date.now()}`);
+      if (!res.ok) throw new Error(await res.text());
+      const csv = await res.text();
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `MLB_RESULTADOS_DIA_${selectedDate}.csv`);
+      link.style.visibility = "hidden";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Error downloading Daily Results CSV:", err);
+    }
+  };
+
+  const handleDownloadKPropsCSV = async () => {
+    try {
+      const res = await fetch(`/api/k-props/csv?date=${encodeURIComponent(selectedDate)}&_=${Date.now()}`);
+      if (!res.ok) throw new Error(await res.text());
+      const csv = await res.text();
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `k_props_lines_${selectedDate}.csv`);
+      link.style.visibility = "hidden";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Error downloading K Props CSV:", err);
+    }
+  };
+
+  const handleDownloadBatterTotalBasesCSV = async () => {
+    try {
+      const res = await fetch(`/api/batter-total-bases/csv?date=${encodeURIComponent(selectedDate)}&_=${Date.now()}`);
+      if (!res.ok) throw new Error(await res.text());
+      const csv = await res.text();
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `batter_total_bases_lines_${selectedDate}.csv`);
+      link.style.visibility = "hidden";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Error downloading Batter Total Bases CSV:", err);
+    }
   };
 
   return (
@@ -61,7 +111,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({ games, selec
         <div className={compact ? "hidden" : ""}>
           <h4 className="font-display font-semibold text-slate-800 text-sm flex items-center gap-1.5">
             <span>Descargas de Archivos CSV</span>
-            <span className="bg-blue-100 text-blue-800 text-[10px] uppercase font-bold px-1.5 py-0.5 rounded">
+            <span className="bg-blue-100 text-blue-800 text-xs uppercase font-bold px-1.5 py-0.5 rounded">
               Directo
             </span>
           </h4>
@@ -70,28 +120,55 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({ games, selec
           </p>
         </div>
 
-        <div className="space-y-1.5">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-            Dataset Unificado
-          </span>
-          <div className="flex flex-col sm:flex-row gap-2">
-            <button
-              onClick={handleDownloadDailyResultsCSV}
-              disabled={games.length === 0}
-              className="flex-1 py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-            >
-              <CalendarDays size={14} />
-              <span>Descargar resultados del día</span>
-            </button>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+              Datasets Principales (Sin Props)
+            </span>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={handleDownloadDailyResultsCSV}
+                disabled={games.length === 0}
+                className="flex-1 py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+              >
+                <CalendarDays size={14} />
+                <span>Descargar resultados del día</span>
+              </button>
 
-            <button
-              onClick={handleDownloadBattersCSV}
-              disabled={games.length === 0}
-              className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-            >
-              <Database size={14} />
-              <span>Descargar CSV</span>
-            </button>
+              <button
+                onClick={handleDownloadBattersCSV}
+                disabled={games.length === 0}
+                className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+              >
+                <Database size={14} />
+                <span>Descargar CSV Bateadores</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+              Props de Jugadores (Líneas e Odds)
+            </span>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={handleDownloadKPropsCSV}
+                disabled={games.length === 0}
+                className="flex-1 py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+              >
+                <Database size={14} />
+                <span>Descargar K Props (Lanzadores)</span>
+              </button>
+
+              <button
+                onClick={handleDownloadBatterTotalBasesCSV}
+                disabled={games.length === 0}
+                className="flex-1 py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+              >
+                <Database size={14} />
+                <span>Descargar Bases Totales (Bateadores)</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
