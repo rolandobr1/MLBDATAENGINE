@@ -295,7 +295,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
           </div>
         </div>
 
-        <div className="flex items-center gap-4 text-xs font-mono">
+        <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 text-xs font-mono">
           {game.weather && (
             <div className="hidden lg:flex bg-slate-800 border border-slate-700/60 rounded px-2.5 py-1 text-slate-300 text-[10px] items-center gap-2">
               <span className="font-bold text-slate-100">{game.weather.temp}°C</span>
@@ -307,7 +307,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
               <span className="text-blue-400 font-medium">{game.weather.skyStatus}</span>
             </div>
           )}
-          <div className="text-right shrink-0 flex flex-col items-end">
+          <div className="text-right shrink-0 flex flex-col items-end justify-center">
             <div className="text-slate-400 text-[10px] uppercase font-mono">
               {game.metadata.date} • {game.metadata.time}
             </div>
@@ -335,35 +335,37 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
               </div>
             )}
           </div>
-          {onTogglePin && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            {onTogglePin && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
+                className={`p-2 rounded-lg border transition duration-150 flex items-center justify-center shrink-0 cursor-pointer ${isPinned
+                    ? "border-blue-500 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30"
+                    : "border-slate-700 bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-white"
+                  }`}
+                title={isPinned ? "Desfijar de la lista" : "Fijar arriba de la lista"}
+              >
+                <Pin size={14} className={isPinned ? "fill-blue-400" : ""} />
+              </button>
+            )}
+            {onRefresh && (
+              <button
+                onClick={handleRefreshClick}
+                disabled={isRefreshing}
+                className={`p-2 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white transition duration-150 flex items-center justify-center shrink-0 cursor-pointer disabled:opacity-50`}
+                title="Actualizar datos de este encuentro"
+              >
+                <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
+              </button>
+            )}
             <button
-              onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
-              className={`p-2 rounded-lg border transition duration-150 flex items-center justify-center shrink-0 cursor-pointer ${isPinned
-                  ? "border-blue-500 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30"
-                  : "border-slate-700 bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-white"
-                }`}
-              title={isPinned ? "Desfijar de la lista" : "Fijar arriba de la lista"}
+              onClick={handleExportGameClick}
+              className="p-2 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white transition duration-150 flex items-center justify-center shrink-0 cursor-pointer"
+              title="Exportar solo este juego"
             >
-              <Pin size={14} className={isPinned ? "fill-blue-400" : ""} />
+              <Download size={14} />
             </button>
-          )}
-          {onRefresh && (
-            <button
-              onClick={handleRefreshClick}
-              disabled={isRefreshing}
-              className={`p-2 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white transition duration-150 flex items-center justify-center shrink-0 cursor-pointer disabled:opacity-50`}
-              title="Actualizar datos de este encuentro"
-            >
-              <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
-            </button>
-          )}
-          <button
-            onClick={handleExportGameClick}
-            className="p-2 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white transition duration-150 flex items-center justify-center shrink-0 cursor-pointer"
-            title="Exportar solo este juego"
-          >
-            <Download size={14} />
-          </button>
+          </div>
         </div>
       </div>
 
