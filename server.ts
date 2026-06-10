@@ -23,7 +23,7 @@ import {
   MLBGame,
   BettingLines
 } from "./src/types";
-import { generateMLDatasetCSV, generateBattersCSV } from "./src/utils";
+import { generateMLDatasetCSV, generateBattersCSV, generateSingleGameCSV, generateDailyPlayerResultsCSV } from "./src/utils";
 import { savantCache } from "./src/etl/extractors/savantScraper";
 import { fangraphsCache } from "./src/etl/extractors/fangraphsScraper";
 
@@ -65,6 +65,52 @@ function writeGamesDB(data: Record<string, any[]>) {
   } catch (err) {
     console.error("Error writing database:", err);
   }
+}
+
+function getGameTimestamp(game: any): number {
+  const value = game?.timestamp || game?.updatedAt || game?.createdAt;
+  const time = value ? new Date(value).getTime() : 0;
+  return Number.isFinite(time) ? time : 0;
+}
+
+async function syncFirestoreToLocalDB(reason = "manual"): Promise<{ synced: boolean; games: number; dates: number }> {
+  const hasFirebase = !!process.env.FIREBASE_PROJECT_ID;
+  if (!hasFirebase) {
+    console.warn(`[Firestore Sync] FIREBASE_PROJECT_ID no configurado. Saltando sync (${reason}).`);
+    return { synced: false, games: 0, dates: 0 };
+  }
+
+  const firestoreGames = await loadAllGamesFromFirestore();
+  if (!firestoreGames || firestoreGames.length === 0) {
+    console.log(`[Firestore Sync] No se encontraron juegos en Firestore (${reason}).`);
+    return { synced: false, games: 0, dates: 0 };
+  }
+
+  const localDB = readGamesDB();
+  const mergedDB: Record<string, any[]> = { ...localDB };
+
+  for (const game of firestoreGames) {
+    const date = game?.metadata?.date;
+    const id = String(game?.id || game?.metadata?.id || "");
+    if (!date || !id) continue;
+
+    const dateGames = Array.isArray(mergedDB[date]) ? [...mergedDB[date]] : [];
+    const existingIndex = dateGames.findIndex((g: any) => String(g?.id || g?.metadata?.id || "") === id);
+
+    if (existingIndex === -1) {
+      dateGames.push(game);
+    } else {
+      const localGame = dateGames[existingIndex];
+      dateGames[existingIndex] = getGameTimestamp(game) >= getGameTimestamp(localGame) ? game : localGame;
+    }
+
+    mergedDB[date] = dateGames;
+  }
+
+  writeGamesDB(mergedDB);
+  const dates = Object.keys(mergedDB).filter(date => Array.isArray(mergedDB[date]) && mergedDB[date].length > 0);
+  console.log(`[Firestore Sync] Sync completado (${reason}): ${firestoreGames.length} juegos remotos, ${dates.length} fechas locales.`);
+  return { synced: true, games: firestoreGames.length, dates: dates.length };
 }
 
 function readErrorsDB(): any[] {
@@ -400,10 +446,15 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
 }
 
 // Get list of extracted dates
-app.get("/api/extracted-dates", (req, res) => {
+app.get("/api/extracted-dates", async (req, res) => {
   try {
-    const db = readGamesDB();
-    const dates = Object.keys(db).filter(date => Array.isArray(db[date]) && db[date].length > 0);
+    let db = readGamesDB();
+    let dates = Object.keys(db).filter(date => Array.isArray(db[date]) && db[date].length > 0);
+    if (dates.length === 0) {
+      await syncFirestoreToLocalDB("extracted-dates-fallback");
+      db = readGamesDB();
+      dates = Object.keys(db).filter(date => Array.isArray(db[date]) && db[date].length > 0);
+    }
     // Sort dates descending
     dates.sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
     res.json({ dates });
@@ -471,6 +522,55 @@ app.get("/api/batters-dataset/csv", async (req, res) => {
   } catch (err) {
     console.error("Error generating Batters CSV:", err);
     res.status(500).send("Error al generar CSV");
+  }
+});
+
+// Download one game's enriched dataset as CSV
+app.get("/api/game/:gameId/csv", async (req, res) => {
+  try {
+    const { gameId } = req.params;
+    const { date } = req.query;
+    const db = readGamesDB();
+    const candidateGames: MLBGame[] = [];
+
+    if (date && db[String(date)]) {
+      candidateGames.push(...db[String(date)]);
+    } else {
+      for (const games of Object.values(db) as MLBGame[][]) {
+        candidateGames.push(...games);
+      }
+    }
+
+    const game = candidateGames.find((g: MLBGame) => String(g.id) === String(gameId));
+    if (!game) {
+      res.status(404).send("Juego no encontrado");
+      return;
+    }
+
+    const [enrichedGame] = await enrichGamesWithTotalBasesProps([game]);
+    const csvContent = generateSingleGameCSV(enrichedGame);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename=mlb_game_${gameId}_${enrichedGame.metadata.date}.csv`);
+    res.send(csvContent);
+  } catch (err) {
+    console.error("Error generating single game CSV:", err);
+    res.status(500).send("Error al generar CSV del juego");
+  }
+});
+
+// Download daily player results from live boxscore only
+app.get("/api/daily-results/csv", (req, res) => {
+  try {
+    const { date } = req.query;
+    const db = readGamesDB();
+    const games = date && db[String(date)] ? db[String(date)] : [];
+    const csvContent = generateDailyPlayerResultsCSV(games);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename=mlb_resultados_dia_${date || "sin_fecha"}.csv`);
+    res.send(csvContent);
+  } catch (err) {
+    console.error("Error generating daily results CSV:", err);
+    res.status(500).send("Error al generar CSV de resultados del dia");
   }
 });
 
@@ -805,6 +905,14 @@ function getTeamAbbr(teamName: string): string | null {
   return MLB_TEAM_ABBR[teamName] || null;
 }
 
+function normalizeTeamAbbr(value: any): string | null {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const upper = raw.toUpperCase();
+  if (/^[A-Z]{2,3}$/.test(upper)) return upper;
+  return getTeamAbbr(raw);
+}
+
 function hasRealBettingLines(game: any): boolean {
   const summary = String(game?.betting_lines?.lineMovementSummary || "").toLowerCase();
   if (summary.includes("estandar") || summary.includes("estándar") || summary.includes("sin lineas reales") || summary.includes("sin líneas reales")) {
@@ -998,11 +1106,11 @@ function enrichLineupWithTotalBasesProps(lineup: any[], rows: any[]) {
 
   return lineup.map((player: any) => {
     const playerName = normalizeName(player.player_name || player.name);
-    const playerTeam = String(player.team || "").toUpperCase();
+    const playerTeam = normalizeTeamAbbr(player.team);
     const match = rows.find((row: any) => {
       const rowName = normalizeName(row.player_name || row.name);
-      const rowTeam = String(row.team_abbr || row.team || "").toUpperCase();
-      return rowName === playerName && (!playerTeam || rowTeam === playerTeam);
+      const rowTeam = normalizeTeamAbbr(row.team_abbr || row.team);
+      return rowName === playerName && (!playerTeam || !rowTeam || rowTeam === playerTeam);
     });
 
     if (!match) return player;
@@ -1017,6 +1125,35 @@ function enrichLineupWithTotalBasesProps(lineup: any[], rows: any[]) {
       totalBasesPropHitRateDisplay: match.hit_rate_display || null
     };
   });
+}
+
+function findDataStreakPitcherKProp(rows: any[], pitcherName: string, pitcherTeam: string, opponentTeam: string) {
+  if (!Array.isArray(rows) || rows.length === 0 || !pitcherName || pitcherName === "Por definir" || pitcherName === "TBD") {
+    return null;
+  }
+
+  const normalizedPitcherName = normalizeName(pitcherName);
+  const pitcherTeamAbbr = getTeamAbbr(pitcherTeam);
+  const opponentTeamAbbr = getTeamAbbr(opponentTeam);
+
+  const match = rows.find((row: any) => {
+    const rowName = normalizeName(row.player_name || row.name);
+    const rowTeam = String(row.team_abbr || row.team || "").toUpperCase();
+    const rowOpponent = String(row.opponent || "").toUpperCase();
+    const nameMatches = rowName === normalizedPitcherName || rowName.includes(normalizedPitcherName) || normalizedPitcherName.includes(rowName);
+    const teamMatches = !pitcherTeamAbbr || rowTeam === pitcherTeamAbbr;
+    const opponentMatches = !opponentTeamAbbr || !rowOpponent || rowOpponent === opponentTeamAbbr;
+    return nameMatches && teamMatches && opponentMatches;
+  });
+
+  if (!match) return null;
+
+  return {
+    point: safeFloat(match.line),
+    overOdds: safeFloat(match.odds),
+    underOdds: safeFloat(match.under_odds),
+    book: match.vendor || "datastreak"
+  };
 }
 
 async function enrichGamesWithTotalBasesProps(games: MLBGame[]): Promise<MLBGame[]> {
@@ -1202,6 +1339,9 @@ async function fetchRealMLBGameData(
           wins: parseInt(s.wins) || 0,
           losses: parseInt(s.losses) || 0,
           ip: s.inningsPitched || "0.0",
+          starts: parseInt(s.gamesStarted) || 0,
+          totalStrikeouts: parseInt(s.strikeOuts) || 0,
+          totalWalks: parseInt(s.baseOnBalls) || 0,
           pitchHand,
           pitcher_allowed_avg_vs_lhb,
           pitcher_allowed_avg_vs_rhb,
@@ -2717,6 +2857,7 @@ function buildDirectGameData(
   matchTime: string,
   realMLBData: any,
   realOddsData: any,
+  pitcherStrikeoutRows: any[] = [],
   totalBasesRows: any[] = []
 ) {
   // Try to match odds if provided
@@ -2746,11 +2887,13 @@ function buildDirectGameData(
       if (pitcherStrikeoutsOutcomes.length > 0) {
         const matchProp = (pitcherName: string) => {
            if (!pitcherName || pitcherName === "Por definir" || pitcherName === "TBD") return null;
-           const parts = pitcherName.split(' ');
+           const normalizedPitcherName = normalizeName(pitcherName);
+           const parts = normalizedPitcherName.split(' ');
            const lastName = parts[parts.length - 1];
-           const outcomes = pitcherStrikeoutsOutcomes.filter((o: any) => 
-               o.description && (o.description.includes(pitcherName) || o.description.includes(lastName))
-           );
+           const outcomes = pitcherStrikeoutsOutcomes.filter((o: any) => {
+               const description = normalizeName(o.description);
+               return description === normalizedPitcherName || description.includes(normalizedPitcherName) || description.split(" ").includes(lastName);
+           });
            if (outcomes.length > 0) {
               const over = outcomes.find((o:any) => o.name === 'Over');
               const under = outcomes.find((o:any) => o.name === 'Under');
@@ -2779,6 +2922,19 @@ function buildDirectGameData(
     }
   }
 
+  homeKPropData = homeKPropData || findDataStreakPitcherKProp(
+    pitcherStrikeoutRows,
+    realMLBData?.pitchers?.home?.name,
+    homeName,
+    awayName
+  );
+  awayKPropData = awayKPropData || findDataStreakPitcherKProp(
+    pitcherStrikeoutRows,
+    realMLBData?.pitchers?.away?.name,
+    awayName,
+    homeName
+  );
+
   // Fallback odds if matching failed
   if (!odds) {
     odds = {
@@ -2804,6 +2960,9 @@ function buildDirectGameData(
         wins: parseInt(realMLBData?.pitchers?.home?.wins) || "N/A",
         losses: parseInt(realMLBData?.pitchers?.home?.losses) || "N/A",
         ip: realMLBData?.pitchers?.home?.ip || "N/A",
+        starts: safeFloat(realMLBData?.pitchers?.home?.starts) ?? "N/A",
+        totalStrikeouts: safeFloat(realMLBData?.pitchers?.home?.totalStrikeouts) ?? "N/A",
+        totalWalks: safeFloat(realMLBData?.pitchers?.home?.totalWalks) ?? "N/A",
         strikeoutProp: homeKPropData?.point ?? null,
         strikeoutPropOverOdds: homeKPropData?.overOdds ?? null,
         strikeoutPropUnderOdds: homeKPropData?.underOdds ?? null,
@@ -2822,6 +2981,9 @@ function buildDirectGameData(
         wins: parseInt(realMLBData?.pitchers?.away?.wins) || "N/A",
         losses: parseInt(realMLBData?.pitchers?.away?.losses) || "N/A",
         ip: realMLBData?.pitchers?.away?.ip || "N/A",
+        starts: safeFloat(realMLBData?.pitchers?.away?.starts) ?? "N/A",
+        totalStrikeouts: safeFloat(realMLBData?.pitchers?.away?.totalStrikeouts) ?? "N/A",
+        totalWalks: safeFloat(realMLBData?.pitchers?.away?.totalWalks) ?? "N/A",
         strikeoutProp: awayKPropData?.point ?? null,
         strikeoutPropOverOdds: awayKPropData?.overOdds ?? null,
         strikeoutPropUnderOdds: awayKPropData?.underOdds ?? null,
@@ -3006,6 +3168,7 @@ app.post("/api/harvest", async (req, res) => {
 
   // Fetch real odds for the day
   const realOddsData = await fetchRealBettingLines(date);
+  const pitcherStrikeoutRows = await fetchDataStreakPitcherStrikeoutProps(date);
   const totalBasesRows = await fetchDataStreakTotalBasesProps(date);
 
   // Pre-cargar Baseball Savant (una sola descarga para toda la sesión)
@@ -3082,7 +3245,7 @@ app.post("/api/harvest", async (req, res) => {
         pct: basePct + Math.floor(pctPerGame * 0.6),
       });
 
-      const gameDataParsed: any = buildDirectGameData(gameId, homeName, awayName, venueName, date, matchTime, realMLBData, realOddsData, totalBasesRows);
+      const gameDataParsed: any = buildDirectGameData(gameId, homeName, awayName, venueName, date, matchTime, realMLBData, realOddsData, pitcherStrikeoutRows, totalBasesRows);
 
       // 3. Fetch Clima, Sabermetría, Splits, Fatiga y Resultados
       emit({
@@ -3364,13 +3527,14 @@ async function updateSingleGameData(gameId: string, date: string): Promise<any> 
 
   // 2. Fetch real odds
   const realOddsData = await fetchRealBettingLines(date);
+  const pitcherStrikeoutRows = await fetchDataStreakPitcherStrikeoutProps(date);
   const totalBasesRows = await fetchDataStreakTotalBasesProps(date);
 
   // 3. Fetch real MLB game data
   const realMLBData = await fetchRealMLBGameData(gameId, homeTeamId, awayTeamId, date);
 
   // 4. Build game data
-  const gameDataParsed: any = buildDirectGameData(gameId, homeName, awayName, venueName, date, matchTime, realMLBData, realOddsData, totalBasesRows);
+  const gameDataParsed: any = buildDirectGameData(gameId, homeName, awayName, venueName, date, matchTime, realMLBData, realOddsData, pitcherStrikeoutRows, totalBasesRows);
 
   // 5. Fetch advanced stats
   const season = date.substring(0, 4);
@@ -3675,6 +3839,12 @@ async function startServer() {
     }
   } catch (fsRestoreErr) {
     console.error("[Restaurador Firestore] Error general al intentar restaurar desde Firestore:", fsRestoreErr);
+  }
+
+  try {
+    await syncFirestoreToLocalDB("startup");
+  } catch (fsSyncErr) {
+    console.error("[Firestore Sync] Error general al sincronizar desde Firestore:", fsSyncErr);
   }
 
   if (process.env.NODE_ENV !== "production") {

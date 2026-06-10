@@ -22,17 +22,14 @@ import {
   Search
 } from "lucide-react";
 
-export default function App() {
-  const [selectedDate, setSelectedDate] = React.useState<string>(() => {
-    // Intentar cargar la última fecha consultada guardada en localStorage
-    const savedDate = localStorage.getItem("mlb_selected_date");
-    if (savedDate) return savedDate;
+function getLocalDateString(): string {
+  const localDate = new Date();
+  const tzOffset = localDate.getTimezoneOffset() * 60000;
+  return new Date(localDate.getTime() - tzOffset).toISOString().split("T")[0];
+}
 
-    // Si no hay fecha guardada, usar la fecha actual local como fallback inicial
-    const localDate = new Date();
-    const tzOffset = localDate.getTimezoneOffset() * 60000;
-    return new Date(localDate.getTime() - tzOffset).toISOString().split("T")[0];
-  });
+export default function App() {
+  const [selectedDate, setSelectedDate] = React.useState<string>(() => getLocalDateString());
   const [games, setGames] = React.useState<MLBGame[]>([]);
   const [errors, setErrors] = React.useState<LoggedError[]>([]);
   const [extractedDates, setExtractedDates] = React.useState<string[]>([]);
@@ -90,7 +87,7 @@ export default function App() {
   // References for scrolling
   const sheetsRef = React.useRef<HTMLDivElement>(null);
 
-  const fetchExtractedDates = React.useCallback(async (skipAutoRedirect = false) => {
+  const fetchExtractedDates = React.useCallback(async () => {
     try {
       const res = await fetch(`/api/extracted-dates?_=${Date.now()}`);
       if (res.ok) {
@@ -98,18 +95,7 @@ export default function App() {
         const dates = data.dates || [];
         setExtractedDates(dates);
 
-        // Solo auto-redirigir en carga inicial si el usuario no ha seleccionado manualmente
-        // y la fecha seleccionada no tiene datos en la BD
-        if (!skipAutoRedirect && !userHasSelectedDate.current && dates.length > 0) {
-          setSelectedDate(prev => {
-            const hasDataForCurrentDate = dates.includes(prev);
-            if (!hasDataForCurrentDate) {
-              // La fecha seleccionada no tiene datos → cambiar a la más reciente con datos
-              return dates[0];
-            }
-            return prev;
-          });
-        }
+        // La fecha seleccionada se conserva; no redirigimos automaticamente a la ultima extraccion.
       }
     } catch (err) {
       console.error("Fallo al conectar con el servidor local para fechas extraídas:", err);
@@ -120,7 +106,7 @@ export default function App() {
     fetchLocalDB(selectedDate);
     fetchErrorsDB();
     // Only auto-redirect on first load
-    fetchExtractedDates(userHasSelectedDate.current);
+    fetchExtractedDates();
   }, [selectedDate, fetchLocalDB, fetchErrorsDB, fetchExtractedDates]);
 
   // Hook de consulta periódica (polling) automático para juegos activos en progreso
@@ -204,8 +190,7 @@ export default function App() {
       // Refrescar la BD local para asegurar que se muestran los juegos recién extraídos
       await fetchLocalDB(date);
       await fetchErrorsDB();
-      // skipAutoRedirect=true para que no cambie la fecha después del harvest
-      await fetchExtractedDates(true);
+      await fetchExtractedDates();
     } catch (err) {
       alert("Error en la recolección: " + (err instanceof Error ? err.message : String(err)));
     } finally {
@@ -311,6 +296,10 @@ export default function App() {
               extractedDates={extractedDates}
             />
           </div>
+
+          <div ref={sheetsRef} className="px-6 pb-6">
+            <GoogleSheetsSync games={games} selectedDate={selectedDate} compact />
+          </div>
         </section>
 
         {/* Row 2: Active Harvested MLB Games Section */}
@@ -398,12 +387,7 @@ export default function App() {
           )}
         </section>
 
-        {/* Row 3: Google Sheets Hub Section (Requisito 7) */}
-        <section ref={sheetsRef} className="pt-2">
-          <GoogleSheetsSync games={games} selectedDate={selectedDate} />
-        </section>
- 
-        {/* Row 4: Machine learning ML Guidelines Card (Requisito 8) */}
+        {/* Row 3: Machine learning ML Guidelines Card (Requisito 8) */}
         <section className="bg-slate-900 text-white rounded-xl p-6 font-sans border border-slate-800 shadow-sm space-y-4">
           <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
             <FileCode className="text-baseball-blue" size={20} />

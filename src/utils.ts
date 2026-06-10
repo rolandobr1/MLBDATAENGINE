@@ -5,6 +5,11 @@
 
 import { MLBGame } from "./types";
 
+function escapeCsvValue(val: any): string {
+  if (val === undefined || val === null || val === "") return "";
+  return `"${String(val).replace(/"/g, '""')}"`;
+}
+
 function getLineupAverageKPct(lineup: any[] | undefined): string {
   if (!lineup || !Array.isArray(lineup) || lineup.length === 0) return "";
   const sum = lineup.reduce((acc, p) => acc + (p.strikeout_pct ?? p.kPct ?? 0), 0);
@@ -157,8 +162,8 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
     // Metadata
     "game_id", "fecha", "hora", "equipo_local", "equipo_visitante", "estadio",
     // Pitchers standard
-    "local_pitcher", "local_pitcher_era", "local_pitcher_whip", "local_pitcher_kPct", "local_pitcher_bbPct", "local_pitcher_wins", "local_pitcher_losses", "local_pitcher_ip",
-    "away_pitcher", "away_pitcher_era", "away_pitcher_whip", "away_pitcher_kPct", "away_pitcher_bbPct", "away_pitcher_wins", "away_pitcher_losses", "away_pitcher_ip",
+    "local_pitcher", "local_pitcher_era", "local_pitcher_whip", "local_pitcher_kPct", "local_pitcher_bbPct", "local_pitcher_wins", "local_pitcher_losses", "local_pitcher_ip", "home_pitcher_strikeout_prop", "home_pitcher_strikeout_prop_over_odds", "home_pitcher_strikeout_prop_under_odds",
+    "away_pitcher", "away_pitcher_era", "away_pitcher_whip", "away_pitcher_kPct", "away_pitcher_bbPct", "away_pitcher_wins", "away_pitcher_losses", "away_pitcher_ip", "away_pitcher_strikeout_prop", "away_pitcher_strikeout_prop_over_odds", "away_pitcher_strikeout_prop_under_odds",
     // Bullpen standard
     "bullpen_era_local", "bullpen_usage_local", "bullpen_ip_7d_local",
     "bullpen_era_away", "bullpen_usage_away", "bullpen_ip_7d_away",
@@ -229,6 +234,9 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
       g.pitchers.home.wins ?? "",
       g.pitchers.home.losses ?? "",
       escapeStr(g.pitchers.home.ip),
+      g.pitchers.home.strikeoutProp ?? "",
+      g.pitchers.home.strikeoutPropOverOdds ?? "",
+      g.pitchers.home.strikeoutPropUnderOdds ?? "",
       escapeStr(g.pitchers.away.name),
       g.pitchers.away.era ?? "",
       g.pitchers.away.whip ?? "",
@@ -237,6 +245,9 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
       g.pitchers.away.wins ?? "",
       g.pitchers.away.losses ?? "",
       escapeStr(g.pitchers.away.ip),
+      g.pitchers.away.strikeoutProp ?? "",
+      g.pitchers.away.strikeoutPropOverOdds ?? "",
+      g.pitchers.away.strikeoutPropUnderOdds ?? "",
       // Bullpen standard
       g.bullpen.home.era ?? "",
       escapeStr(g.bullpen.home.usageLast3Days),
@@ -435,6 +446,109 @@ export function downloadCSV(content: string, filename: string) {
   document.body.removeChild(link);
 }
 
+export function generateSingleGameCSV(game: MLBGame): string {
+  return generateBattersCSV([game]);
+}
+
+export function generateDailyPlayerResultsCSV(games: MLBGame[]): string {
+  const headers = [
+    "game_id",
+    "date",
+    "game_time",
+    "away_team",
+    "home_team",
+    "team",
+    "home_away",
+    "player_name",
+    "player_type",
+    "position",
+    "ab",
+    "r",
+    "h",
+    "rbi",
+    "bb",
+    "k",
+    "ip",
+    "er",
+    "pitches",
+    "game_status",
+    "away_score",
+    "home_score"
+  ];
+
+  const rows: any[][] = [];
+
+  const pushBatterRows = (game: MLBGame, players: any[] | undefined, team: string, homeAway: "home" | "away") => {
+    for (const player of players || []) {
+      rows.push([
+        game.id,
+        game.metadata.date,
+        game.metadata.time,
+        game.metadata.awayTeam,
+        game.metadata.homeTeam,
+        team,
+        homeAway,
+        player.name,
+        "batter",
+        player.position,
+        player.ab ?? "",
+        player.r ?? "",
+        player.h ?? "",
+        player.rbi ?? "",
+        player.bb ?? "",
+        player.k ?? "",
+        "",
+        "",
+        "",
+        game.game_result?.gameStatus ?? "",
+        game.game_result?.awayScore ?? "",
+        game.game_result?.homeScore ?? ""
+      ]);
+    }
+  };
+
+  const pushPitcherRows = (game: MLBGame, players: any[] | undefined, team: string, homeAway: "home" | "away") => {
+    for (const player of players || []) {
+      rows.push([
+        game.id,
+        game.metadata.date,
+        game.metadata.time,
+        game.metadata.awayTeam,
+        game.metadata.homeTeam,
+        team,
+        homeAway,
+        player.name,
+        "pitcher",
+        player.position,
+        "",
+        "",
+        player.h ?? "",
+        "",
+        player.bb ?? "",
+        player.k ?? "",
+        player.ip ?? "",
+        player.er ?? "",
+        player.pitches ?? "",
+        game.game_result?.gameStatus ?? "",
+        game.game_result?.awayScore ?? "",
+        game.game_result?.homeScore ?? ""
+      ]);
+    }
+  };
+
+  for (const game of games) {
+    pushBatterRows(game, game.liveBoxscore?.away?.batters, game.metadata.awayTeam, "away");
+    pushPitcherRows(game, game.liveBoxscore?.away?.pitchers, game.metadata.awayTeam, "away");
+    pushBatterRows(game, game.liveBoxscore?.home?.batters, game.metadata.homeTeam, "home");
+    pushPitcherRows(game, game.liveBoxscore?.home?.pitchers, game.metadata.homeTeam, "home");
+  }
+
+  return [
+    headers.join(","),
+    ...rows.map((row) => row.map(escapeCsvValue).join(","))
+  ].join("\n");
+}
+
 export function generateBattersCSV(games: MLBGame[]): string {
   const headers = [
     // --- Batter Info & Stats (36 columns) ---
@@ -488,8 +602,8 @@ export function generateBattersCSV(games: MLBGame[]): string {
     // --- Game Context & Team Stats (72 columns) ---
     "hora", "equipo_local", "equipo_visitante", "estadio",
     // Pitchers standard
-    "local_pitcher", "local_pitcher_era", "local_pitcher_whip", "local_pitcher_kPct", "local_pitcher_bbPct", "local_pitcher_wins", "local_pitcher_losses", "local_pitcher_ip",
-    "away_pitcher", "away_pitcher_era", "away_pitcher_whip", "away_pitcher_kPct", "away_pitcher_bbPct", "away_pitcher_wins", "away_pitcher_losses", "away_pitcher_ip",
+    "local_pitcher", "local_pitcher_era", "local_pitcher_whip", "local_pitcher_kPct", "local_pitcher_bbPct", "local_pitcher_wins", "local_pitcher_losses", "local_pitcher_ip", "home_pitcher_strikeout_prop", "home_pitcher_strikeout_prop_over_odds", "home_pitcher_strikeout_prop_under_odds",
+    "away_pitcher", "away_pitcher_era", "away_pitcher_whip", "away_pitcher_kPct", "away_pitcher_bbPct", "away_pitcher_wins", "away_pitcher_losses", "away_pitcher_ip", "away_pitcher_strikeout_prop", "away_pitcher_strikeout_prop_over_odds", "away_pitcher_strikeout_prop_under_odds",
     // Bullpen standard
     "bullpen_era_local", "bullpen_usage_local", "bullpen_ip_7d_local",
     "bullpen_era_away", "bullpen_usage_away", "bullpen_ip_7d_away",
@@ -557,6 +671,9 @@ export function generateBattersCSV(games: MLBGame[]): string {
       game.pitchers.home.wins ?? "",
       game.pitchers.home.losses ?? "",
       escapeStr(game.pitchers.home.ip),
+      game.pitchers.home.strikeoutProp ?? "",
+      game.pitchers.home.strikeoutPropOverOdds ?? "",
+      game.pitchers.home.strikeoutPropUnderOdds ?? "",
       escapeStr(game.pitchers.away.name),
       game.pitchers.away.era ?? "",
       game.pitchers.away.whip ?? "",
@@ -565,6 +682,9 @@ export function generateBattersCSV(games: MLBGame[]): string {
       game.pitchers.away.wins ?? "",
       game.pitchers.away.losses ?? "",
       escapeStr(game.pitchers.away.ip),
+      game.pitchers.away.strikeoutProp ?? "",
+      game.pitchers.away.strikeoutPropOverOdds ?? "",
+      game.pitchers.away.strikeoutPropUnderOdds ?? "",
       // Bullpen standard
       game.bullpen.home.era ?? "",
       escapeStr(game.bullpen.home.usageLast3Days),

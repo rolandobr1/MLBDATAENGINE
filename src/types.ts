@@ -23,6 +23,9 @@ export interface PitcherStats {
   wins: number | string;
   losses: number | string;
   ip: string;
+  starts?: number | string;
+  totalStrikeouts?: number | string;
+  totalWalks?: number | string;
   strikeoutProp?: number | null; // e.g. 5.5
   strikeoutPropOverOdds?: number | null; // e.g. -110
   strikeoutPropUnderOdds?: number | null; // e.g. -120
