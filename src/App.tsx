@@ -9,6 +9,7 @@ import { HarvesterPanel } from "./components/HarvesterPanel";
 import { GameCard } from "./components/GameCard";
 import { GoogleSheetsSync } from "./components/GoogleSheetsSync";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
+import { BetTracking } from "./components/BetTracking";
 import { MLBGame, LoggedError } from "./types";
 import { 
   Database, 
@@ -19,7 +20,8 @@ import {
   Activity, 
   CheckCircle,
   FileCode,
-  Search
+  Search,
+  TrendingUp
 } from "lucide-react";
 
 function getLocalDateString(): string {
@@ -45,6 +47,7 @@ export default function App() {
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = React.useState<boolean>(false);
   const [searchQuery, setSearchQuery] = React.useState<string>("");
   const [pinnedGames, setPinnedGames] = React.useState<string[]>([]);
+  const [showBetTracking, setShowBetTracking] = React.useState<boolean>(false);
 
   React.useEffect(() => {
     localStorage.setItem("mlb_selected_date", selectedDate);
@@ -94,18 +97,17 @@ export default function App() {
         const data = await res.json();
         const dates = data.dates || [];
         setExtractedDates(dates);
-
-        // La fecha seleccionada se conserva; no redirigimos automaticamente a la ultima extraccion.
+        return dates as string[];
       }
     } catch (err) {
       console.error("Fallo al conectar con el servidor local para fechas extraídas:", err);
     }
+    return [] as string[];
   }, []);
 
   React.useEffect(() => {
     fetchLocalDB(selectedDate);
     fetchErrorsDB();
-    // Only auto-redirect on first load
     fetchExtractedDates();
   }, [selectedDate, fetchLocalDB, fetchErrorsDB, fetchExtractedDates]);
 
@@ -300,7 +302,34 @@ export default function App() {
           <div ref={sheetsRef} className="px-6 pb-6">
             <GoogleSheetsSync games={games} selectedDate={selectedDate} compact />
           </div>
+
+          {/* Bet Tracking Toggle Button */}
+          <div className="px-6 pb-6">
+            <button
+              onClick={() => setShowBetTracking(prev => !prev)}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white text-sm font-semibold rounded-lg shadow transition-all duration-200"
+            >
+              <TrendingUp size={16} />
+              {showBetTracking ? "Ocultar Bet Tracking" : "📊 Bet Tracking"}
+            </button>
+          </div>
         </section>
+
+        {/* Bet Tracking Panel */}
+        {showBetTracking && (
+          <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="bg-gradient-to-r from-violet-700 to-indigo-700 border-b border-violet-800 p-4 text-white flex items-center gap-2">
+              <TrendingUp size={18} className="text-violet-200" />
+              <h2 className="font-display font-medium text-sm uppercase tracking-wider">Bet Tracking</h2>
+            </div>
+            <div className="p-6">
+              <BetTracking
+                games={games}
+                onRefreshGame={(gameId) => handleRefreshGame(gameId, selectedDate)}
+              />
+            </div>
+          </section>
+        )}
 
         {/* Row 2: Active Harvested MLB Games Section */}
         <section className="space-y-4">

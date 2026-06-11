@@ -23,9 +23,9 @@ import {
   MLBGame,
   BettingLines
 } from "./src/types";
-import { generateMLDatasetCSV, generateBattersCSV, generateSingleGameCSV, generateDailyPlayerResultsCSV } from "./src/utils";
+import { generateMLDatasetCSV, generateBattersCSV, generateSingleGameCSV, generateDailyPlayerResultsCSV, generateKPropsLinesCSV, generateBatterTotalBasesLinesCSV } from "./src/utils";
 import { savantCache } from "./src/etl/extractors/savantScraper";
-import { fangraphsCache } from "./src/etl/extractors/fangraphsScraper";
+
 
 const envLocalPath = path.join(process.cwd(), ".env.local");
 if (fs.existsSync(envLocalPath)) {
@@ -36,7 +36,7 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3001;
 const DB_PATH = path.join(process.cwd(), "mlb_database.json");
 const ERRORS_PATH = path.join(process.cwd(), "mlb_errors.json");
 
@@ -486,6 +486,54 @@ app.get("/api/ml-dataset/csv", (req, res) => {
   }
 });
 
+// Download K Props dataset as CSV
+app.get("/api/k-props/csv", async (req, res) => {
+  try {
+    const { date } = req.query;
+    const db = readGamesDB();
+    const allGames: MLBGame[] = [];
+    if (date && typeof date === "string") {
+      allGames.push(...(db[date] || []));
+    } else {
+      for (const dateKey of Object.keys(db)) {
+        const games = db[dateKey] || [];
+        allGames.push(...games);
+      }
+    }
+    const csvContent = generateKPropsLinesCSV(allGames);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename=k_props_lines_${date || "all"}.csv`);
+    res.send(csvContent);
+  } catch (err) {
+    console.error("Error generating K Props CSV:", err);
+    res.status(500).send("Error al generar CSV");
+  }
+});
+
+// Download Batter Total Bases dataset as CSV
+app.get("/api/batter-total-bases/csv", async (req, res) => {
+  try {
+    const { date } = req.query;
+    const db = readGamesDB();
+    const allGames: MLBGame[] = [];
+    if (date && typeof date === "string") {
+      allGames.push(...(db[date] || []));
+    } else {
+      for (const dateKey of Object.keys(db)) {
+        const games = db[dateKey] || [];
+        allGames.push(...games);
+      }
+    }
+    const csvContent = generateBatterTotalBasesLinesCSV(allGames);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename=batter_total_bases_lines_${date || "all"}.csv`);
+    res.send(csvContent);
+  } catch (err) {
+    console.error("Error generating Batter Total Bases CSV:", err);
+    res.status(500).send("Error al generar CSV");
+  }
+});
+
 // Download Batters dataset as CSV
 app.get("/api/batters-dataset/csv", async (req, res) => {
   try {
@@ -804,21 +852,43 @@ function calculateLineupSavantAverages(lineup: any[]) {
         .map((p) => p?.barrelPct)
         .filter((value): value is number => value !== null && value !== undefined),
       1
+    ),
+    chasePct: average(
+      batterStats
+        .map((p) => p?.chasePct)
+        .filter((value): value is number => value !== null && value !== undefined),
+      1
+    ),
+    whiffPct: average(
+      batterStats
+        .map((p) => p?.whiffPct)
+        .filter((value): value is number => value !== null && value !== undefined),
+      1
+    ),
+    whiffPctVsFastball: average(
+      batterStats.map(p => p?.whiffPctVsFastball).filter((v): v is number => v !== null && v !== undefined),
+      1
+    ),
+    whiffPctVsSlider: average(
+      batterStats.map(p => p?.whiffPctVsSlider).filter((v): v is number => v !== null && v !== undefined),
+      1
+    ),
+    whiffPctVsCurve: average(
+      batterStats.map(p => p?.whiffPctVsCurve).filter((v): v is number => v !== null && v !== undefined),
+      1
+    ),
+    whiffPctVsChangeup: average(
+      batterStats.map(p => p?.whiffPctVsChangeup).filter((v): v is number => v !== null && v !== undefined),
+      1
+    ),
+    whiffPctVsSplitter: average(
+      batterStats.map(p => p?.whiffPctVsSplitter).filter((v): v is number => v !== null && v !== undefined),
+      1
     )
   };
 }
 
-function injectFangraphsWrcPlus(
-  homeAdvOffense: AdvancedOffenseStats,
-  awayAdvOffense: AdvancedOffenseStats,
-  homeName: string,
-  awayName: string
-) {
-  const homeWrcPlus = fangraphsCache.getTeamWrcPlus(homeName);
-  const awayWrcPlus = fangraphsCache.getTeamWrcPlus(awayName);
-  if (homeWrcPlus !== null) homeAdvOffense.wrcPlus = homeWrcPlus;
-  if (awayWrcPlus !== null) awayAdvOffense.wrcPlus = awayWrcPlus;
-}
+
 
 function inningsToOuts(ipValue: any): number {
   const ipStr = String(ipValue || "0.0");
@@ -1476,15 +1546,24 @@ async function fetchRealMLBGameData(
           const p = players[`ID${id}`];
           if (!p) return;
           const s = p.stats?.batting || {};
+          const liveHits    = s.hits || 0;
+          const liveDbl     = s.doubles || 0;
+          const liveTpl     = s.triples || 0;
+          const liveHr      = s.homeRuns || 0;
+          const liveSingles = Math.max(0, liveHits - liveDbl - liveTpl - liveHr);
           batters.push({
             name: p.person?.fullName || "Bateador",
             position: p.position?.abbreviation || "DH",
             ab: s.atBats || 0,
             r: s.runs || 0,
-            h: s.hits || 0,
+            h: liveHits,
             rbi: s.rbi || 0,
             bb: s.baseOnBalls || 0,
-            k: s.strikeOuts || 0
+            k: s.strikeOuts || 0,
+            doubles: liveDbl,
+            triples: liveTpl,
+            home_runs: liveHr,
+            total_bases: liveSingles + 2 * liveDbl + 3 * liveTpl + 4 * liveHr
           });
         });
       }
@@ -2762,7 +2841,7 @@ function calculateModelFeatures(gameData: any): ModelFeatures {
   };
 }
 
-async function fetchGameResult(gamePk: string, bettingLines: BettingLines): Promise<MLGameResult | undefined> {
+async function fetchGameResult(gamePk: string, bettingLines?: BettingLines | null): Promise<MLGameResult | undefined> {
   try {
     const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&gamePk=${gamePk}`;
     const res = await fetchWithTimeout(url, 4000);
@@ -2788,7 +2867,7 @@ async function fetchGameResult(gamePk: string, bettingLines: BettingLines): Prom
     else if (awayScore > homeScore) winner = "away";
     else if (!isScheduled && homeScore === awayScore) winner = "tie";
 
-    const runLineHome = bettingLines.runLineHome ?? -1.5;
+    const runLineHome = bettingLines?.runLineHome ?? -1.5;
     let runLineCovered: "home" | "away" | "push" = "push";
     if (homeScore + runLineHome > awayScore) {
       runLineCovered = "home";
@@ -2796,7 +2875,7 @@ async function fetchGameResult(gamePk: string, bettingLines: BettingLines): Prom
       runLineCovered = "away";
     }
 
-    const totalRuns = bettingLines.totalRuns ?? 8.5;
+    const totalRuns = bettingLines?.totalRuns ?? 8.5;
     const totalScore = homeScore + awayScore;
     let overUnderResult: "over" | "under" | "push" = "push";
     if (totalScore > totalRuns) {
@@ -3162,7 +3241,7 @@ app.post("/api/harvest", async (req, res) => {
   emit({ phase: "schedule", step: "Cargando datos sabermetricos...", pct: 4 });
   await Promise.all([
     savantCache.load(parseInt(season)),
-    fangraphsCache.load(parseInt(season))
+
   ]);
 
   const harvestedGames: any[] = [];
@@ -3297,6 +3376,11 @@ app.post("/api/harvest", async (req, res) => {
         homeAdvPitching.xEra = homePitcherSavant.xERA;
         homeAdvPitching.hardHitPct = homePitcherSavant.hardHitPct;
         homeAdvPitching.barrelPct = homePitcherSavant.barrelPct;
+        homeAdvPitching.fastballPct = homePitcherSavant.fastballPct;
+        homeAdvPitching.sliderPct = homePitcherSavant.sliderPct;
+        homeAdvPitching.curvePct = homePitcherSavant.curvePct;
+        homeAdvPitching.changeupPct = homePitcherSavant.changeupPct;
+        homeAdvPitching.splitterPct = homePitcherSavant.splitterPct;
         if (homePitcherSavant.xwOBA !== null) {
           homeAdvOffense.xwOba = homeAdvOffense.xwOba ?? homePitcherSavant.xwOBA;
         }
@@ -3305,6 +3389,11 @@ app.post("/api/harvest", async (req, res) => {
         awayAdvPitching.xEra = awayPitcherSavant.xERA;
         awayAdvPitching.hardHitPct = awayPitcherSavant.hardHitPct;
         awayAdvPitching.barrelPct = awayPitcherSavant.barrelPct;
+        awayAdvPitching.fastballPct = awayPitcherSavant.fastballPct;
+        awayAdvPitching.sliderPct = awayPitcherSavant.sliderPct;
+        awayAdvPitching.curvePct = awayPitcherSavant.curvePct;
+        awayAdvPitching.changeupPct = awayPitcherSavant.changeupPct;
+        awayAdvPitching.splitterPct = awayPitcherSavant.splitterPct;
         if (awayPitcherSavant.xwOBA !== null) {
           awayAdvOffense.xwOba = awayAdvOffense.xwOba ?? awayPitcherSavant.xwOBA;
         }
@@ -3320,7 +3409,73 @@ app.post("/api/harvest", async (req, res) => {
       if (awayLineupSavant.hardHitPct !== null) awayAdvOffense.hardHitPct = awayLineupSavant.hardHitPct;
       if (homeLineupSavant.barrelPct !== null) homeAdvOffense.barrelPct = homeLineupSavant.barrelPct;
       if (awayLineupSavant.barrelPct !== null) awayAdvOffense.barrelPct = awayLineupSavant.barrelPct;
-      injectFangraphsWrcPlus(homeAdvOffense, awayAdvOffense, homeName, awayName);
+
+      if (homeLineupSavant.chasePct !== null) homeAdvOffense.chasePct = homeLineupSavant.chasePct;
+      if (awayLineupSavant.chasePct !== null) awayAdvOffense.chasePct = awayLineupSavant.chasePct;
+
+      if (homeLineupSavant.whiffPct !== null) {
+        homeAdvOffense.projectedLineupWhiffPctVsHand = homeLineupSavant.whiffPct;
+        homeAdvOffense.contactPct = 100 - homeLineupSavant.whiffPct;
+        homeAdvOffense.projectedLineupContactPctVsHand = 100 - homeLineupSavant.whiffPct;
+      }
+      homeAdvOffense.whiffPctVsFastball = homeLineupSavant.whiffPctVsFastball;
+      homeAdvOffense.whiffPctVsSlider = homeLineupSavant.whiffPctVsSlider;
+      homeAdvOffense.whiffPctVsCurve = homeLineupSavant.whiffPctVsCurve;
+      homeAdvOffense.whiffPctVsChangeup = homeLineupSavant.whiffPctVsChangeup;
+      homeAdvOffense.whiffPctVsSplitter = homeLineupSavant.whiffPctVsSplitter;
+
+      if (awayLineupSavant.whiffPct !== null) {
+        awayAdvOffense.projectedLineupWhiffPctVsHand = awayLineupSavant.whiffPct;
+        awayAdvOffense.contactPct = 100 - awayLineupSavant.whiffPct;
+        awayAdvOffense.projectedLineupContactPctVsHand = 100 - awayLineupSavant.whiffPct;
+      }
+      awayAdvOffense.whiffPctVsFastball = awayLineupSavant.whiffPctVsFastball;
+      awayAdvOffense.whiffPctVsSlider = awayLineupSavant.whiffPctVsSlider;
+      awayAdvOffense.whiffPctVsCurve = awayLineupSavant.whiffPctVsCurve;
+      awayAdvOffense.whiffPctVsChangeup = awayLineupSavant.whiffPctVsChangeup;
+      awayAdvOffense.whiffPctVsSplitter = awayLineupSavant.whiffPctVsSplitter;
+
+      // Catcher Framing mapping
+      const homeCatcher = homeLineup.find(p => p.position === "C");
+      if (homeCatcher) {
+        homeAdvPitching.catcherName = homeCatcher.name;
+        const savantCatcher = savantCache.getCatcher(homeCatcher.id ?? homeCatcher.mlbId);
+        if (savantCatcher && savantCatcher.framingRuns !== null) {
+          homeAdvPitching.catcherFramingRuns = savantCatcher.framingRuns;
+        }
+      }
+      const awayCatcher = awayLineup.find(p => p.position === "C");
+      if (awayCatcher) {
+        awayAdvPitching.catcherName = awayCatcher.name;
+        const savantCatcher = savantCache.getCatcher(awayCatcher.id ?? awayCatcher.mlbId);
+        if (savantCatcher && savantCatcher.framingRuns !== null) {
+          awayAdvPitching.catcherFramingRuns = savantCatcher.framingRuns;
+        }
+      }
+
+      for (const p of homeLineup) {
+        const savant = savantCache.getBatter(p.id ?? p.mlbId);
+        if (savant) {
+          p.chase_pct = savant.chasePct;
+          p.whiff_pct = savant.whiffPct;
+          if (savant.whiffPct !== null) {
+            p.contact_pct_vs_rhp = 100 - savant.whiffPct;
+            p.contact_pct_vs_lhp = 100 - savant.whiffPct;
+          }
+        }
+      }
+      for (const p of awayLineup) {
+        const savant = savantCache.getBatter(p.id ?? p.mlbId);
+        if (savant) {
+          p.chase_pct = savant.chasePct;
+          p.whiff_pct = savant.whiffPct;
+          if (savant.whiffPct !== null) {
+            p.contact_pct_vs_rhp = 100 - savant.whiffPct;
+            p.contact_pct_vs_lhp = 100 - savant.whiffPct;
+          }
+        }
+      }
+
 
       // Inyectar K% proyectado de la alineación y K% del rival vs mano del pitcher
       const homePitcherHand = realMLBData.pitchers?.home?.pitchHand || "R";
@@ -3349,8 +3504,8 @@ app.post("/api/harvest", async (req, res) => {
       const awayLineupVsHand = getLineupVsHandProjection(awayLineup, homePitcherHand);
       homeAdvOffense.projectedLineupKPct = homeLineupVsHand.kPct;
       awayAdvOffense.projectedLineupKPct = awayLineupVsHand.kPct;
-      homeAdvOffense.projectedLineupContactPctVsHand = homeLineupVsHand.contactPct;
-      awayAdvOffense.projectedLineupContactPctVsHand = awayLineupVsHand.contactPct;
+      if (homeLineupVsHand.contactPct !== null) homeAdvOffense.projectedLineupContactPctVsHand = homeLineupVsHand.contactPct;
+      if (awayLineupVsHand.contactPct !== null) awayAdvOffense.projectedLineupContactPctVsHand = awayLineupVsHand.contactPct;
 
       Object.assign(homeAdvPitching, homeLast5Profile, homeLast3VsTeam);
       Object.assign(awayAdvPitching, awayLast5Profile, awayLast3VsTeam);
@@ -3526,7 +3681,7 @@ async function updateSingleGameData(gameId: string, date: string): Promise<any> 
   const season = date.substring(0, 4);
   await Promise.all([
     savantCache.load(parseInt(season)),
-    fangraphsCache.load(parseInt(season))
+
   ]);
   const homePitcherId = realMLBData.pitcherIds?.home || 0;
   const awayPitcherId = realMLBData.pitcherIds?.away || 0;
@@ -3577,11 +3732,27 @@ async function updateSingleGameData(gameId: string, date: string): Promise<any> 
     homeAdvPitching.xEra = homePitcherSavantU.xERA;
     homeAdvPitching.hardHitPct = homePitcherSavantU.hardHitPct;
     homeAdvPitching.barrelPct = homePitcherSavantU.barrelPct;
+    homeAdvPitching.fastballPct = homePitcherSavantU.fastballPct;
+    homeAdvPitching.sliderPct = homePitcherSavantU.sliderPct;
+    homeAdvPitching.curvePct = homePitcherSavantU.curvePct;
+    homeAdvPitching.changeupPct = homePitcherSavantU.changeupPct;
+    homeAdvPitching.splitterPct = homePitcherSavantU.splitterPct;
+    if (homePitcherSavantU.xwOBA !== null) {
+      homeAdvOffense.xwOba = homeAdvOffense.xwOba ?? homePitcherSavantU.xwOBA;
+    }
   }
   if (awayPitcherSavantU) {
     awayAdvPitching.xEra = awayPitcherSavantU.xERA;
     awayAdvPitching.hardHitPct = awayPitcherSavantU.hardHitPct;
     awayAdvPitching.barrelPct = awayPitcherSavantU.barrelPct;
+    awayAdvPitching.fastballPct = awayPitcherSavantU.fastballPct;
+    awayAdvPitching.sliderPct = awayPitcherSavantU.sliderPct;
+    awayAdvPitching.curvePct = awayPitcherSavantU.curvePct;
+    awayAdvPitching.changeupPct = awayPitcherSavantU.changeupPct;
+    awayAdvPitching.splitterPct = awayPitcherSavantU.splitterPct;
+    if (awayPitcherSavantU.xwOBA !== null) {
+      awayAdvOffense.xwOba = awayAdvOffense.xwOba ?? awayPitcherSavantU.xwOBA;
+    }
   }
   // xwOBA desde lineup
   const homeLineupU: any[] = gameDataParsed.lineups?.home || [];
@@ -3594,7 +3765,73 @@ async function updateSingleGameData(gameId: string, date: string): Promise<any> 
   if (awayLineupSavantU.hardHitPct !== null) awayAdvOffense.hardHitPct = awayLineupSavantU.hardHitPct;
   if (homeLineupSavantU.barrelPct !== null) homeAdvOffense.barrelPct = homeLineupSavantU.barrelPct;
   if (awayLineupSavantU.barrelPct !== null) awayAdvOffense.barrelPct = awayLineupSavantU.barrelPct;
-  injectFangraphsWrcPlus(homeAdvOffense, awayAdvOffense, homeName, awayName);
+
+  if (homeLineupSavantU.chasePct !== null) homeAdvOffense.chasePct = homeLineupSavantU.chasePct;
+  if (awayLineupSavantU.chasePct !== null) awayAdvOffense.chasePct = awayLineupSavantU.chasePct;
+
+  if (homeLineupSavantU.whiffPct !== null) {
+    homeAdvOffense.projectedLineupWhiffPctVsHand = homeLineupSavantU.whiffPct;
+    homeAdvOffense.contactPct = 100 - homeLineupSavantU.whiffPct;
+    homeAdvOffense.projectedLineupContactPctVsHand = 100 - homeLineupSavantU.whiffPct;
+  }
+  homeAdvOffense.whiffPctVsFastball = homeLineupSavantU.whiffPctVsFastball;
+  homeAdvOffense.whiffPctVsSlider = homeLineupSavantU.whiffPctVsSlider;
+  homeAdvOffense.whiffPctVsCurve = homeLineupSavantU.whiffPctVsCurve;
+  homeAdvOffense.whiffPctVsChangeup = homeLineupSavantU.whiffPctVsChangeup;
+  homeAdvOffense.whiffPctVsSplitter = homeLineupSavantU.whiffPctVsSplitter;
+
+  if (awayLineupSavantU.whiffPct !== null) {
+    awayAdvOffense.projectedLineupWhiffPctVsHand = awayLineupSavantU.whiffPct;
+    awayAdvOffense.contactPct = 100 - awayLineupSavantU.whiffPct;
+    awayAdvOffense.projectedLineupContactPctVsHand = 100 - awayLineupSavantU.whiffPct;
+  }
+  awayAdvOffense.whiffPctVsFastball = awayLineupSavantU.whiffPctVsFastball;
+  awayAdvOffense.whiffPctVsSlider = awayLineupSavantU.whiffPctVsSlider;
+  awayAdvOffense.whiffPctVsCurve = awayLineupSavantU.whiffPctVsCurve;
+  awayAdvOffense.whiffPctVsChangeup = awayLineupSavantU.whiffPctVsChangeup;
+  awayAdvOffense.whiffPctVsSplitter = awayLineupSavantU.whiffPctVsSplitter;
+
+  // Catcher Framing mapping
+  const homeCatcherU = homeLineupU.find(p => p.position === "C");
+  if (homeCatcherU) {
+    homeAdvPitching.catcherName = homeCatcherU.name;
+    const savantCatcher = savantCache.getCatcher(homeCatcherU.id ?? homeCatcherU.mlbId);
+    if (savantCatcher && savantCatcher.framingRuns !== null) {
+      homeAdvPitching.catcherFramingRuns = savantCatcher.framingRuns;
+    }
+  }
+  const awayCatcherU = awayLineupU.find(p => p.position === "C");
+  if (awayCatcherU) {
+    awayAdvPitching.catcherName = awayCatcherU.name;
+    const savantCatcher = savantCache.getCatcher(awayCatcherU.id ?? awayCatcherU.mlbId);
+    if (savantCatcher && savantCatcher.framingRuns !== null) {
+      awayAdvPitching.catcherFramingRuns = savantCatcher.framingRuns;
+    }
+  }
+
+  for (const p of homeLineupU) {
+    const savant = savantCache.getBatter(p.id ?? p.mlbId);
+    if (savant) {
+      p.chase_pct = savant.chasePct;
+      p.whiff_pct = savant.whiffPct;
+      if (savant.whiffPct !== null) {
+        p.contact_pct_vs_rhp = 100 - savant.whiffPct;
+        p.contact_pct_vs_lhp = 100 - savant.whiffPct;
+      }
+    }
+  }
+  for (const p of awayLineupU) {
+    const savant = savantCache.getBatter(p.id ?? p.mlbId);
+    if (savant) {
+      p.chase_pct = savant.chasePct;
+      p.whiff_pct = savant.whiffPct;
+      if (savant.whiffPct !== null) {
+        p.contact_pct_vs_rhp = 100 - savant.whiffPct;
+        p.contact_pct_vs_lhp = 100 - savant.whiffPct;
+      }
+    }
+  }
+
 
   // Inyectar K% proyectado de la alineación y K% del rival vs mano del pitcher
   const homePitcherHand = realMLBData.pitchers?.home?.pitchHand || "R";
@@ -3623,8 +3860,8 @@ async function updateSingleGameData(gameId: string, date: string): Promise<any> 
   const awayLineupVsHand = getLineupVsHandProjection(awayLineupU, homePitcherHand);
   homeAdvOffense.projectedLineupKPct = homeLineupVsHand.kPct;
   awayAdvOffense.projectedLineupKPct = awayLineupVsHand.kPct;
-  homeAdvOffense.projectedLineupContactPctVsHand = homeLineupVsHand.contactPct;
-  awayAdvOffense.projectedLineupContactPctVsHand = awayLineupVsHand.contactPct;
+  if (homeLineupVsHand.contactPct !== null) homeAdvOffense.projectedLineupContactPctVsHand = homeLineupVsHand.contactPct;
+  if (awayLineupVsHand.contactPct !== null) awayAdvOffense.projectedLineupContactPctVsHand = awayLineupVsHand.contactPct;
 
   Object.assign(homeAdvPitching, homeLast5Profile, homeLast3VsTeam);
   Object.assign(awayAdvPitching, awayLast5Profile, awayLast3VsTeam);

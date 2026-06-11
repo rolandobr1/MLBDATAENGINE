@@ -1084,6 +1084,14 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                               }`}
                           />
                         </button>
+                        <button
+                          type="button"
+                          onClick={handleRefreshClick}
+                          disabled={isRefreshing}
+                          className="p-1 rounded hover:bg-slate-200"
+                        >
+                          <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
+                        </button>
                       </div>
                     </div>
 
@@ -1101,50 +1109,63 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       </div>
                     )}
 
-                    <div className="space-y-2 mt-2 max-h-96 overflow-y-auto pr-1">
-                      {showAllPlays ? (
-                        !game.playByPlay.allPlays || game.playByPlay.allPlays.length === 0 ? (
-                          <div className="text-xs text-slate-400 italic text-center py-4">No hay jugadas registradas aún.</div>
-                        ) : (
-                          game.playByPlay.allPlays.map((play: any, idx: number) => {
-                            const isScoring = play.isScoringPlay;
-                            return (
-                              <div key={idx} className={`flex gap-3 items-start border-b border-slate-100 pb-2 last:border-0 p-1.5 rounded transition text-left ${isScoring ? "bg-yellow-50/70 border-l-2 border-l-yellow-400" : "hover:bg-slate-50/50"
-                                }`}>
-                                <div className={`font-bold px-2 py-0.5 rounded text-[9px] shrink-0 font-mono mt-0.5 w-14 text-center ${isScoring ? "bg-yellow-100 text-yellow-800" : "bg-slate-100 text-slate-600"
-                                  }`}>
-                                  {play.inning}
+                    {(() => {
+                      const isGameInProgress = game.game_result && 
+                        !["Scheduled", "Pre-Game", "Warmup"].includes(game.game_result.gameStatus) && 
+                        !game.game_result.gameStatus.includes("Final") && 
+                        game.game_result.gameStatus !== "Game Over" && 
+                        game.game_result.gameStatus !== "Postponed";
+                      
+                      const allPlays = isGameInProgress && game.playByPlay.allPlays ? [...game.playByPlay.allPlays].reverse() : game.playByPlay.allPlays;
+                      const scoringPlays = isGameInProgress && game.playByPlay.scoringPlays ? [...game.playByPlay.scoringPlays].reverse() : game.playByPlay.scoringPlays;
+
+                      return (
+                        <div className="space-y-2 mt-2 max-h-96 overflow-y-auto pr-1">
+                          {showAllPlays ? (
+                            !allPlays || allPlays.length === 0 ? (
+                              <div className="text-xs text-slate-400 italic text-center py-4">No hay jugadas registradas aún.</div>
+                            ) : (
+                              allPlays.map((play: any, idx: number) => {
+                                const isScoring = play.isScoringPlay;
+                                return (
+                                  <div key={idx} className={`flex gap-3 items-start border-b border-slate-100 pb-2 last:border-0 p-1.5 rounded transition text-left ${isScoring ? "bg-yellow-50/70 border-l-2 border-l-yellow-400" : "hover:bg-slate-50/50"
+                                    }`}>
+                                    <div className={`font-bold px-2 py-0.5 rounded text-[9px] shrink-0 font-mono mt-0.5 w-14 text-center ${isScoring ? "bg-yellow-100 text-yellow-800" : "bg-slate-100 text-slate-600"
+                                      }`}>
+                                      {play.inning}
+                                    </div>
+                                    <div className="text-xs font-sans text-slate-700 flex-1">
+                                      {play.description}
+                                    </div>
+                                    <div className="font-mono font-bold text-slate-800 text-xs shrink-0 mt-0.5 bg-slate-50 px-1.5 rounded">
+                                      {play.score}
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )
+                          ) : (
+                            !scoringPlays || scoringPlays.length === 0 ? (
+                              <div className="text-xs text-slate-400 italic text-center py-4">No hay carreras anotadas aún.</div>
+                            ) : (
+                              scoringPlays.map((play: any, idx: number) => (
+                                <div key={idx} className="flex gap-3 items-start border-b border-slate-100 pb-2 last:border-0 p-1.5 bg-yellow-50/30 border-l-2 border-l-yellow-400 rounded text-left">
+                                  <div className="bg-yellow-100 text-yellow-800 font-bold px-2 py-0.5 rounded text-[9px] shrink-0 font-mono mt-0.5 w-14 text-center">
+                                    {play.inning}
+                                  </div>
+                                  <div className="text-xs font-sans text-slate-700 flex-1">
+                                    {play.description}
+                                  </div>
+                                  <div className="font-mono font-bold text-slate-800 text-xs shrink-0 mt-0.5 bg-slate-50 px-1.5 rounded">
+                                    {play.score}
+                                  </div>
                                 </div>
-                                <div className="text-xs font-sans text-slate-700 flex-1">
-                                  {play.description}
-                                </div>
-                                <div className="font-mono font-bold text-slate-800 text-xs shrink-0 mt-0.5 bg-slate-50 px-1.5 rounded">
-                                  {play.score}
-                                </div>
-                              </div>
-                            );
-                          })
-                        )
-                      ) : (
-                        game.playByPlay.scoringPlays.length === 0 ? (
-                          <div className="text-xs text-slate-400 italic text-center py-4">No hay carreras anotadas aún.</div>
-                        ) : (
-                          game.playByPlay.scoringPlays.map((play: any, idx: number) => (
-                            <div key={idx} className="flex gap-3 items-start border-b border-slate-100 pb-2 last:border-0 p-1.5 bg-yellow-50/30 border-l-2 border-l-yellow-400 rounded text-left">
-                              <div className="bg-yellow-100 text-yellow-800 font-bold px-2 py-0.5 rounded text-[9px] shrink-0 font-mono mt-0.5 w-14 text-center">
-                                {play.inning}
-                              </div>
-                              <div className="text-xs font-sans text-slate-700 flex-1">
-                                {play.description}
-                              </div>
-                              <div className="font-mono font-bold text-slate-800 text-xs shrink-0 mt-0.5 bg-slate-50 px-1.5 rounded">
-                                {play.score}
-                              </div>
-                            </div>
-                          ))
-                        )
-                      )}
-                    </div>
+                              ))
+                            )
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>

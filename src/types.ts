@@ -182,6 +182,15 @@ export interface AdvancedPitchingStats {
   ip?: string | null;
   wins?: number | null;
   losses?: number | null;
+  // Pitch Arsenal
+  fastballPct?: number | null;
+  sliderPct?: number | null;
+  curvePct?: number | null;
+  changeupPct?: number | null;
+  splitterPct?: number | null;
+  // Catcher
+  catcherName?: string | null;
+  catcherFramingRuns?: number | null;
 }
 
 export interface AdvancedPitching {
@@ -206,6 +215,13 @@ export interface AdvancedOffenseStats {
   kPctVsPitchHand?: number | null;
   projectedLineupKPct?: number | null;
   projectedLineupContactPctVsHand?: number | null;
+  projectedLineupWhiffPctVsHand?: number | null;
+  // Whiff Pct by Pitch Type (Lineup Average)
+  whiffPctVsFastball?: number | null;
+  whiffPctVsSlider?: number | null;
+  whiffPctVsCurve?: number | null;
+  whiffPctVsChangeup?: number | null;
+  whiffPctVsSplitter?: number | null;
 }
 
 export interface AdvancedOffense {
@@ -295,6 +311,8 @@ export interface BatterStats {
   k_pct_vs_lhp?: number;
   contact_pct_vs_rhp?: number | null;
   contact_pct_vs_lhp?: number | null;
+  whiff_pct?: number | null;
+  chase_pct?: number | null;
 }
 
 export interface InningScore {
@@ -324,6 +342,10 @@ export interface LivePlayerStats {
   rbi?: number;
   bb?: number;
   k?: number;
+  doubles?: number;
+  triples?: number;
+  home_runs?: number;
+  total_bases?: number;
   // Pitching
   ip?: string; // e.g. "5.1"
   er?: number;
