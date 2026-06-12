@@ -9,9 +9,10 @@ import {
   Target, DollarSign, BarChart2, Trash2, PlusCircle, Users, User,
   Zap, ListChecks, RefreshCw, AlertTriangle, Download, ChevronLeft,
   BookOpen, StickyNote, Flame, Award, Percent, ArrowRight, Edit2,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, X,
 } from "lucide-react";
 import { MLBGame } from "../types";
+import { syncBets, saveBetsDb, registerUserDb, syncUsers, deleteUserDb } from "../services/betService";
 
 // ════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -68,8 +69,44 @@ function loadBets(date: string): Bet[] {
 function saveBets(date: string, bets: Bet[]): void {
   try { localStorage.setItem(BETS_KEY(date), JSON.stringify(bets)); } catch {}
 }
+const USERS_LIST_KEY = "mlb_bet_users_list";
+
+function getRegisteredUsers(): string[] {
+  try {
+    const list = JSON.parse(localStorage.getItem(USERS_LIST_KEY) || "[]");
+    if (Array.isArray(list) && list.length > 0) return list;
+  } catch {}
+  
+  // Fallback: scan bets
+  const users = new Set<string>();
+  datesWithBets().forEach(d => {
+    loadBets(d).forEach(b => {
+      if (b.userName) users.add(b.userName);
+    });
+  });
+  const arr = Array.from(users).sort();
+  if (arr.length > 0) saveRegisteredUsers(arr);
+  return arr;
+}
+
+function saveRegisteredUsers(users: string[]): void {
+  localStorage.setItem(USERS_LIST_KEY, JSON.stringify(users));
+}
+
+function registerUser(name: string): void {
+  if (!name.trim()) return;
+  const users = getRegisteredUsers();
+  if (!users.includes(name.trim())) {
+    users.push(name.trim());
+    saveRegisteredUsers(users.sort());
+  }
+}
+
 function loadUsername(): string { return localStorage.getItem(USER_KEY) ?? ""; }
-function saveUsername(name: string): void { localStorage.setItem(USER_KEY, name); }
+function saveUsername(name: string): void { 
+  localStorage.setItem(USER_KEY, name); 
+  registerUser(name);
+}
 function datesWithBets(): string[] {
   return Object.keys(localStorage)
     .filter(k => k.startsWith("mlb_bets_"))
@@ -299,17 +336,41 @@ const AnalyticsDashboard: React.FC<{ bets: Bet[] }> = ({ bets }) => {
 };
 
 // User modal
-const UserModal: React.FC<{ onSave: (name: string) => void }> = ({ onSave }) => {
+const UserModal: React.FC<{ onSave: (name: string) => void, onClose: () => void, onDeleteUser: (name: string) => void, globalUsers?: string[] }> = ({ onSave, onClose, onDeleteUser, globalUsers = [] }) => {
   const [name, setName] = useState("");
+  const existingUsers = Array.from(new Set([...globalUsers]));
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full mx-4 space-y-4">
+      <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full mx-4 space-y-4 relative">
+        <button onClick={onClose} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 bg-slate-100 hover:bg-slate-200 p-1.5 rounded-full transition-colors">
+          <X size={16} />
+        </button>
         <div className="flex flex-col items-center gap-2">
           <div className="w-14 h-14 bg-violet-100 rounded-full flex items-center justify-center"><User size={28} className="text-violet-600" /></div>
           <h2 className="font-bold text-lg text-slate-800">Bienvenido a Bet Tracking</h2>
-          <p className="text-xs text-slate-500 text-center">¿Cómo quieres que aparezca tu nombre en las apuestas?</p>
+          <p className="text-xs text-slate-500 text-center">Selecciona un usuario existente o escribe tu nombre.</p>
         </div>
-        <input type="text" placeholder="Tu nombre o alias" value={name} onChange={e => setName(e.target.value)}
+        
+        {existingUsers.length > 0 && (
+          <div className="flex flex-wrap justify-center gap-2 pt-2">
+            {existingUsers.map(u => (
+              <div key={u} className="relative group">
+                <button onClick={() => { setName(u); onSave(u); }}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-violet-100 text-slate-600 hover:text-violet-700 text-xs font-bold rounded-lg border border-slate-200 transition-colors">
+                  {u}
+                </button>
+                <button onClick={(e) => { e.stopPropagation(); onDeleteUser(u); }}
+                  className="absolute -top-1.5 -right-1.5 bg-red-100 text-red-600 p-0.5 rounded-full sm:opacity-0 sm:group-hover:opacity-100 transition-opacity z-10"
+                  title="Eliminar usuario">
+                  <X size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <input type="text" placeholder="Nuevo usuario o alias" value={name} onChange={e => setName(e.target.value)}
           onKeyDown={e => e.key === "Enter" && name.trim() && onSave(name.trim())}
           className="w-full border border-slate-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400"
           autoFocus />
@@ -355,17 +416,47 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
   // ── Bets ──────────────────────────────────────────────────────────────────
   const [bets, setBets]               = useState<Bet[]>(() => loadBets(todayStr()));
   const [filter, setFilter]           = useState<"all" | BetStatus>("all");
+  const [userFilter, setUserFilter]   = useState<string>("all");
   const [collapsedBets, setCollapsedBets] = useState<Set<number>>(new Set());
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
   const [isRefreshingAll, setIsRefreshingAll] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
 
-  // Load bets when date changes
-  useEffect(() => { setBets(loadBets(betDate)); }, [betDate]);
+  // Load and Sync bets when date changes
+  useEffect(() => {
+    // Initial local load
+    setBets(loadBets(betDate));
+    
+    // Sync with Firestore
+    const unsubscribe = syncBets(betDate, (dbBets) => {
+      // Avoid overwriting if db is empty and we have local bets (migration)
+      const currentLocal = loadBets(betDate);
+      if (dbBets.length === 0 && currentLocal.length > 0) {
+        saveBetsDb(betDate, currentLocal);
+      } else {
+        setBets(dbBets);
+        saveBets(betDate, dbBets);
+      }
+    });
 
-  // Save bets when they change
-  useEffect(() => { saveBets(betDate, bets); }, [bets, betDate]);
+    return () => unsubscribe();
+  }, [betDate]);
+
+  const [globalUsers, setGlobalUsers] = useState<string[]>([]);
+  useEffect(() => {
+    const unsub = syncUsers((users) => setGlobalUsers(users));
+    return () => unsub();
+  }, []);
+
+  const updateBets = (updater: (prev: Bet[]) => Bet[]) => {
+    setBets(prev => {
+      const next = updater(prev);
+      saveBets(betDate, next); // local
+      saveBetsDb(betDate, next); // firestore
+      return next;
+    });
+  };
 
   // ── Wizard ────────────────────────────────────────────────────────────────
   const [editingBetId, setEditingBetId]       = useState<number | null>(null);
@@ -413,10 +504,14 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (step !== 5) {
+      if (canNext()) setStep(s => s + 1);
+      return;
+    }
     if (!selectedGame || !category || !subject || !betLabel || !betTypeKey) return;
     
     if (editingBetId) {
-      setBets(prev => prev.map(b => b.id === editingBetId ? {
+      updateBets(prev => prev.map(b => b.id === editingBetId ? {
         ...b,
         gameId: selectedGameId,
         teamName,
@@ -457,7 +552,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
         createdAt: new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }),
         status: "pending",
       };
-      setBets(prev => [newBet, ...prev]);
+      updateBets(prev => [newBet, ...prev]);
     }
     resetForm();
   };
@@ -488,13 +583,21 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
   }), [bets, games]);
 
   useEffect(() => {
-    setBets(prev => prev.map(b => {
-      const r = resolvedBets.find(r => r.bet.id === b.id);
-      return r && r.bet.status !== b.status ? r.bet : b;
-    }));
+    setBets(prev => {
+      let changed = false;
+      const next = prev.map(b => {
+        const r = resolvedBets.find(r => r.bet.id === b.id);
+        if (r && r.bet.status !== b.status) {
+          changed = true;
+          return r.bet;
+        }
+        return b;
+      });
+      return changed ? next : prev;
+    });
   }, [resolvedBets]);
 
-  const deleteBet = (id: number) => setBets(prev => prev.filter(b => b.id !== id));
+  const deleteBet = (id: number) => updateBets(prev => prev.filter(b => b.id !== id));
 
   const handleRefreshBet = async (gameId: string) => {
     setRefreshingIds(prev => new Set(prev).add(gameId));
@@ -518,16 +621,37 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     }
   };
 
-  const allBets = resolvedBets.map(r => r.bet);
+  const uniqueUsers = useMemo(() => {
+    return Array.from(new Set(resolvedBets.map(r => r.bet.userName).filter(Boolean)));
+  }, [resolvedBets]);
+
+  const filteredByUser = userFilter === "all" ? resolvedBets : resolvedBets.filter(r => r.bet.userName === userFilter);
+
+  const allBets = filteredByUser.map(r => r.bet);
   const won     = allBets.filter(b => b.status === "won").reduce((s, b) => s + b.amount, 0);
   const wonReturn = allBets.filter(b => b.status === "won").reduce((s, b) => s + b.potentialWin, 0);
   const lost    = allBets.filter(b => b.status === "lost").reduce((s, b) => s + b.amount, 0);
   const pending = allBets.filter(b => b.status === "pending").reduce((s, b) => s + b.amount, 0);
   const net     = wonReturn - lost;
 
-  const filtered = filter === "all" ? resolvedBets : resolvedBets.filter(r => r.bet.status === filter);
+  const filtered = filter === "all" ? filteredByUser : filteredByUser.filter(r => r.bet.status === filter);
 
-  const handleUserSave = (name: string) => { saveUsername(name); setUserName(name); setShowUserModal(false); };
+  const handleUserSave = (name: string) => { 
+    saveUsername(name); 
+    setUserName(name); 
+    setShowUserModal(false); 
+    registerUserDb(name);
+  };
+
+  const handleDeleteUser = (name: string) => {
+    if (window.confirm(`¿Estás seguro de que deseas eliminar al usuario "${name}"? Esto no borrará sus apuestas existentes, solo lo quitará de la lista.`)) {
+      deleteUserDb(name);
+      if (userName === name) {
+        saveUsername("");
+        setUserName("");
+      }
+    }
+  };
 
   const changeDate = (delta: number) => {
     const d = new Date(betDate + "T12:00:00");
@@ -547,7 +671,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
 
   return (
     <div className="space-y-4 font-sans">
-      {showUserModal && <UserModal onSave={handleUserSave} />}
+      {showUserModal && <UserModal onSave={handleUserSave} onClose={() => setShowUserModal(false)} onDeleteUser={handleDeleteUser} globalUsers={globalUsers} />}
 
       {/* ── Toolbar ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-200">
@@ -877,11 +1001,11 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
               {step > 1 && <button type="button" onClick={() => setStep(s => s - 1)}
                 className="flex-1 py-2 border border-slate-300 text-slate-600 text-xs rounded-lg hover:bg-slate-100 font-semibold">← Atrás</button>}
               {step < 5
-                ? <button type="button" onClick={() => canNext() && setStep(s => s + 1)} disabled={!canNext()}
+                ? <button key="btn-next" type="button" onClick={(e) => { e.preventDefault(); if(canNext()) setStep(s => s + 1); }} disabled={!canNext()}
                     className="flex-1 py-2 bg-violet-600 text-white text-xs font-bold rounded-lg hover:bg-violet-700 disabled:opacity-40 flex items-center justify-center gap-1">
                     Siguiente <ChevronRight size={12} />
                   </button>
-                : <button type="submit"
+                : <button key="btn-submit" type="submit"
                     className="flex-1 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 text-white text-xs font-bold rounded-lg hover:from-violet-700 hover:to-indigo-700 shadow flex items-center justify-center gap-1">
                     <Target size={12} /> {editingBetId ? "Guardar cambios" : "Registrar"}
                   </button>}
@@ -891,16 +1015,31 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
 
         {/* ── Bet list ──────────────────────────────────────────────────────────── */}
         <div className="lg:col-span-3 space-y-3">
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg w-fit">
-            {(["all","pending","won","lost"] as const).map(f => (
-              <button key={f} onClick={() => setFilter(f)}
-                className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${filter === f ? "bg-white shadow text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
-                {f === "all" ? "Todas" : f === "pending" ? "Pendientes" : f === "won" ? "Ganadas" : "Perdidas"}
-                <span className={`ml-1 text-[10px] px-1 rounded-full ${filter === f ? "bg-violet-100 text-violet-700" : "bg-slate-200 text-slate-500"}`}>
-                  {f === "all" ? bets.length : bets.filter(b => b.status === f).length}
-                </span>
-              </button>
-            ))}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg w-fit">
+              {(["all","pending","won","lost"] as const).map(f => (
+                <button key={f} onClick={() => setFilter(f)}
+                  className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${filter === f ? "bg-white shadow text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
+                  {f === "all" ? "Todas" : f === "pending" ? "Pendientes" : f === "won" ? "Ganadas" : "Perdidas"}
+                  <span className={`ml-1 text-[10px] px-1 rounded-full ${filter === f ? "bg-violet-100 text-violet-700" : "bg-slate-200 text-slate-500"}`}>
+                    {f === "all" ? allBets.length : allBets.filter(b => b.status === f).length}
+                  </span>
+                </button>
+              ))}
+            </div>
+            
+            {uniqueUsers.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-slate-500 flex items-center gap-1"><Users size={12}/> Filtro:</span>
+                <select value={userFilter} onChange={e => setUserFilter(e.target.value)}
+                  className="bg-white border border-slate-200 text-slate-700 text-xs font-bold rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-violet-400">
+                  <option value="all">Todos los usuarios ({resolvedBets.length})</option>
+                  {uniqueUsers.map(u => (
+                    <option key={u} value={u}>{u} ({resolvedBets.filter(r => r.bet.userName === u).length})</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {filtered.length === 0
@@ -1014,7 +1153,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                               className="text-[11px] text-slate-400 hover:text-violet-600 flex items-center gap-1 transition-colors font-semibold">
                               <Edit2 size={10} /> Editar
                             </button>
-                            <button onClick={(e) => { e.stopPropagation(); deleteBet(bet.id); }}
+                            <button onClick={(e) => { e.stopPropagation(); if(window.confirm("¿Estás seguro de que deseas eliminar esta apuesta? Esta acción no se puede deshacer.")) deleteBet(bet.id); }}
                               className="text-[11px] text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors font-semibold">
                               <Trash2 size={10} /> Eliminar
                             </button>
