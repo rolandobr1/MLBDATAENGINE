@@ -135,7 +135,7 @@ export default function App() {
   }, [games, selectedDate, fetchLocalDB, fetchErrorsDB]);
 
   // Handle Extraction Trigger — reads real SSE progress from server
-  const handleHarvest = async (date: string) => {
+  const handleHarvest = async (date: string, refreshOdds: boolean = true) => {
     // Mark that user has explicitly selected this date — prevent auto-redirect
     userHasSelectedDate.current = true;
     setIsLoading(true);
@@ -145,7 +145,7 @@ export default function App() {
       const res = await fetch("/api/harvest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date }),
+        body: JSON.stringify({ date, refreshOdds }),
       });
 
       if (!res.ok || !res.body) {
@@ -266,7 +266,7 @@ export default function App() {
   });
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col font-sans select-none">
+    <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
       
       {/* Platform Header */}
       <Header
@@ -289,7 +289,7 @@ export default function App() {
               </h2>
             </div>
             <span className="font-mono text-xs text-slate-400">
-              API Status: <strong className="text-emerald-400">Conectado</strong>
+              Estado API: <strong className="text-emerald-400">Conectado</strong>
             </span>
           </div>
 
@@ -386,71 +386,62 @@ export default function App() {
               </div>
             </div>
           ) : (
-            /* Match grid lists */
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              {sortedGames.filter(g => {
+            <>
+              {/* Match grid lists with Masonry effect */}
+              {(() => {
+              const filteredGames = sortedGames.filter(g => {
                 if (!searchQuery) return true;
                 const searchLower = searchQuery.toLowerCase();
                 return (
                   g.metadata.homeTeam.toLowerCase().includes(searchLower) ||
                   g.metadata.awayTeam.toLowerCase().includes(searchLower)
                 );
-              }).map((game) => (
-                <GameCard 
-                  key={game.id} 
-                  game={game} 
-                  onRefresh={() => handleRefreshGame(game.id, game.metadata.date)} 
-                  isPinned={pinnedGames.includes(String(game.id))}
-                  onTogglePin={() => togglePin(String(game.id))}
-                />
-              ))}
+              });
 
-              {sortedGames.filter(g => {
-                if (!searchQuery) return true;
-                const searchLower = searchQuery.toLowerCase();
+              if (filteredGames.length === 0) {
                 return (
-                  g.metadata.homeTeam.toLowerCase().includes(searchLower) ||
-                  g.metadata.awayTeam.toLowerCase().includes(searchLower)
+                  <div className="text-center py-8 text-slate-500 text-sm italic border border-dashed border-slate-300 rounded-lg bg-slate-50">
+                    No se encontraron partidos que coincidan con "{searchQuery}".
+                  </div>
                 );
-              }).length === 0 && (
-                <div className="text-center py-8 text-slate-500 text-sm italic border border-dashed border-slate-300 rounded-lg bg-slate-50">
-                  No se encontraron partidos que coincidan con "{searchQuery}".
+              }
+
+              const leftCol = filteredGames.filter((_, i) => i % 2 === 0);
+              const rightCol = filteredGames.filter((_, i) => i % 2 === 1);
+
+              return (
+                <div className="flex flex-col xl:flex-row gap-6 items-start">
+                  <div className="flex-1 flex flex-col gap-6 w-full xl:w-1/2">
+                    {leftCol.map((game) => (
+                      <GameCard 
+                        key={game.id} 
+                        game={game} 
+                        onRefresh={() => handleRefreshGame(game.id, game.metadata.date)} 
+                        isPinned={pinnedGames.includes(String(game.id))}
+                        onTogglePin={() => togglePin(String(game.id))}
+                      />
+                    ))}
+                  </div>
+                  {rightCol.length > 0 && (
+                    <div className="flex-1 flex flex-col gap-6 w-full xl:w-1/2">
+                      {rightCol.map((game) => (
+                        <GameCard 
+                          key={game.id} 
+                          game={game} 
+                          onRefresh={() => handleRefreshGame(game.id, game.metadata.date)} 
+                          isPinned={pinnedGames.includes(String(game.id))}
+                          onTogglePin={() => togglePin(String(game.id))}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })()}
+            </>
           )}
         </section>
 
-        {/* Row 3: Machine learning ML Guidelines Card (Requisito 8) */}
-        <section className="bg-slate-900 text-white rounded-xl p-6 font-sans border border-slate-800 shadow-sm space-y-4">
-          <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
-            <FileCode className="text-baseball-blue" size={20} />
-            <h3 className="font-display font-bold text-lg tracking-tight">
-              Arquitectura de Datos y Dataset de Machine Learning (ML)
-            </h3>
-          </div>
- 
-          <p className="text-slate-400 text-xs leading-relaxed">
-            Cada registro de juego está enriquecido con un conjunto de variables de alta fidelidad, diseñado para alimentar directamente pipelines de modelado predictivo en Python (Pandas, Scikit-Learn, XGBoost, PyTorch, TensorFlow) para detectar valor esperado positivo (EV+):
-          </p>
- 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono text-slate-300">
-            <div className="bg-slate-950 p-3.5 rounded border border-slate-850">
-              <strong className="text-blue-400 block mb-1">Sabermetría Avanzada</strong>
-              FIP, xFIP, xERA, SIERA, Hard Hit %, barrel % y groundball % para abridores y wOBA, xwOBA, wRC+, ISO, y BABIP para la ofensiva completa de cada equipo.
-            </div>
- 
-            <div className="bg-slate-950 p-3.5 rounded border border-slate-850">
-              <strong className="text-blue-400 block mb-1">Clima, Splits y Carga Física</strong>
-              Pronósticos de Open-Meteo (temperatura, viento, humedad), splits de bateo vs RHP/LHP por equipo, días de descanso y lanzamientos del abridor, y volumen de IP reciente en el bullpen.
-            </div>
- 
-            <div className="bg-slate-950 p-3.5 rounded border border-slate-850">
-              <strong className="text-blue-400 block mb-1">Líneas de Apuesta y Outcomes</strong>
-              Historial de movimientos de líneas (Moneyline, Run Line, Totales), diferencias calculadas de rendimiento (Home - Away) e indicadores finales de resultado del juego para entrenamiento supervisado.
-            </div>
-          </div>
-        </section>
 
       </main>
 

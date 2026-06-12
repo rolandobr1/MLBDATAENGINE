@@ -7,7 +7,7 @@ import React from "react";
 import { Search, Calendar, Zap, Play, Loader2, Clock, CheckCircle, Database, Brain, HardDrive } from "lucide-react";
 
 interface HarvesterPanelProps {
-  onHarvest: (date: string) => void;
+  onHarvest: (date: string, refreshOdds: boolean) => void;
   isLoading: boolean;
   selectedDate: string;
   setSelectedDate: (date: string) => void;
@@ -39,8 +39,10 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
   harvestProgress,
   extractedDates,
 }) => {
+  const [refreshOdds, setRefreshOdds] = React.useState(false);
+
   const runHarvest = () => {
-    onHarvest(selectedDate);
+    onHarvest(selectedDate, refreshOdds);
   };
 
   return (
@@ -85,6 +87,21 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
                     <option key={date} value={date}>{date} ({date === selectedDate ? "Actual" : "Ir"})</option>
                   ))}
                 </select>
+              </div>
+            )}
+            
+            {extractedDates?.includes(selectedDate) && (
+              <div className="flex items-center gap-2 mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg">
+                <input
+                  type="checkbox"
+                  id="refreshOddsCheck"
+                  checked={refreshOdds}
+                  onChange={(e) => setRefreshOdds(e.target.checked)}
+                  className="w-4 h-4 text-amber-600 rounded border-amber-300 focus:ring-amber-500"
+                />
+                <label htmlFor="refreshOddsCheck" className="text-xs text-amber-800 font-medium cursor-pointer">
+                  Refrescar cuotas (Consume The Odds API)
+                </label>
               </div>
             )}
           </div>

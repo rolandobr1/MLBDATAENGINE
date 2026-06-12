@@ -14,7 +14,9 @@ import {
   AlertTriangle,
   RefreshCw,
   Pin,
-  Download
+  Download,
+  Eye,
+  EyeOff
 } from "lucide-react";
 
 interface GameCardProps {
@@ -64,6 +66,7 @@ const getTeamAbbr = (teamName: string): string => {
 
 export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, onTogglePin }) => {
   const [expanded, setExpanded] = React.useState(false);
+  const [isCardExpanded, setIsCardExpanded] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<"lineups" | "boxscore" | "splits" | "fatigue" | "sabermetrics">("lineups");
   const [pitcherTab, setPitcherTab] = React.useState<"season" | "last7" | "vsOpp">("season");
   const [showAllPlays, setShowAllPlays] = React.useState(false);
@@ -265,7 +268,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
   };
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition duration-200 font-sans">
+    <div className="rounded-xl overflow-hidden shadow-sm hover:shadow-md transition duration-200 font-sans bg-white border border-slate-200">
 
       {/* Game Card Header Block */}
       <div className="bg-slate-900 text-white p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -336,6 +339,16 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
             )}
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={(e) => { e.stopPropagation(); setIsCardExpanded(!isCardExpanded); }}
+              className={`p-2 rounded-lg border transition duration-150 flex items-center justify-center shrink-0 cursor-pointer ${isCardExpanded
+                  ? "border-emerald-500 bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30"
+                  : "border-slate-700 bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-white"
+                }`}
+              title={isCardExpanded ? "Ocultar detalles del juego" : "Mostrar detalles del juego"}
+            >
+              {isCardExpanded ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
             {onTogglePin && (
               <button
                 onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
@@ -369,6 +382,8 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
         </div>
       </div>
 
+      {isCardExpanded && (
+        <>
       {/* Main Stats Bento-Grid */}
       <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
 
@@ -399,7 +414,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                   ({game.pitchers.away.pitchHand || "R"})
                 </span>
               </div>
-              <span className="text-[9px] font-bold font-mono tracking-wider bg-blue-105 uppercase text-blue-800 px-1.5 py-0.5 rounded">
+              <span className="text-[9px] font-bold font-mono tracking-wider bg-blue-100 uppercase text-blue-800 px-1.5 py-0.5 rounded">
                 Visitante
               </span>
 
@@ -428,7 +443,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                 <div className="flex justify-between"><span title="Porcentaje de Boletos: Frecuencia con la que el lanzador otorga bases por bolas." className="cursor-help border-b border-dotted border-slate-400">BB%:</span> <strong className="text-slate-800">{awayStats.bbPct}</strong></div>
                 <div className="flex justify-between"><span title="Ponches menos Boletos: Un indicador superior del dominio del lanzador." className="cursor-help border-b border-dotted border-slate-400">K-BB%:</span> <strong className="text-slate-800">{awayStats.kMinusBb}</strong></div>
                 <div className="flex justify-between"><span title="Porcentaje de Strikes Abanicados (Swinging Strike %)." className="cursor-help border-b border-dotted border-slate-400">SwStr%:</span> <strong className="text-slate-800">{awayStats.swStrPct}</strong></div>
-                <div className="flex justify-between"><span>GB%:</span> <strong className="text-slate-800">{awayStats.gbPct}</strong></div>
+                <div className="flex justify-between"><span title="Ground Ball % (Porcentaje de roletazos permitidos)." className="cursor-help border-b border-dotted border-slate-400">GB%:</span> <strong className="text-slate-800">{awayStats.gbPct}</strong></div>
               </div>
             </div>
 
@@ -440,7 +455,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                   ({game.pitchers.home.pitchHand || "R"})
                 </span>
               </div>
-              <span className="text-[9px] font-bold font-mono tracking-wider bg-red-105 uppercase text-red-800 px-1.5 py-0.5 rounded">
+              <span className="text-[9px] font-bold font-mono tracking-wider bg-red-100 uppercase text-red-800 px-1.5 py-0.5 rounded">
                 Local
               </span>
 
@@ -469,7 +484,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                 <div className="flex justify-between"><span title="Porcentaje de Boletos: Frecuencia con la que el lanzador otorga bases por bolas." className="cursor-help border-b border-dotted border-slate-400">BB%:</span> <strong className="text-slate-800">{homeStats.bbPct}</strong></div>
                 <div className="flex justify-between"><span title="Ponches menos Boletos: Un indicador superior del dominio del lanzador." className="cursor-help border-b border-dotted border-slate-400">K-BB%:</span> <strong className="text-slate-800">{homeStats.kMinusBb}</strong></div>
                 <div className="flex justify-between"><span title="Porcentaje de Strikes Abanicados (Swinging Strike %)." className="cursor-help border-b border-dotted border-slate-400">SwStr%:</span> <strong className="text-slate-800">{homeStats.swStrPct}</strong></div>
-                <div className="flex justify-between"><span>GB%:</span> <strong className="text-slate-800">{homeStats.gbPct}</strong></div>
+                <div className="flex justify-between"><span title="Ground Ball % (Porcentaje de roletazos permitidos)." className="cursor-help border-b border-dotted border-slate-400">GB%:</span> <strong className="text-slate-800">{homeStats.gbPct}</strong></div>
               </div>
             </div>
           </div>
@@ -559,7 +574,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
         <div className="bg-red-50/50 border-t border-red-100 px-6 py-2.5 flex flex-wrap gap-x-6 gap-y-1.5 items-center justify-start text-[11px]">
           <span className="font-display font-semibold text-red-800 uppercase tracking-wider flex items-center gap-1 shrink-0">
             <ShieldAlert size={12} className="text-red-600" />
-            <span>Lesiones Alert:</span>
+            <span>Alerta de Lesiones:</span>
           </span>
           <div className="flex flex-wrap gap-2 text-slate-600 font-mono">
             {game.injuries.slice(0, 3).map((inj, i) => (
@@ -647,7 +662,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       <React.Fragment key={idx}>
                         <div 
                           onClick={() => togglePlayerExpansion("away", idx)}
-                          className={`px-4 py-2.5 flex justify-between items-center hover:bg-slate-50/80 transition cursor-pointer select-none ${expandedPlayer === `away-${idx}` ? "bg-slate-50 font-semibold" : ""}`}
+                          className={`px-4 py-2.5 flex justify-between items-center hover:bg-slate-50/80 transition cursor-pointer ${expandedPlayer === `away-${idx}` ? "bg-slate-50 font-semibold" : ""}`}
                         >
                           <div className="flex items-center gap-2 flex-1 min-w-0">
                             <span className="text-slate-400 font-semibold w-3 text-right text-[11px] md:text-xs">{idx + 1}</span>
@@ -664,7 +679,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                             <span className="text-blue-600 w-10">{player.ops.toFixed(3)}</span>
                             <span className="hidden md:inline-block text-slate-500 w-9">{player.hr}</span>
                             <span className="hidden md:inline-block text-slate-500 w-9">{player.woba != null ? player.woba.toFixed(3).substring(1) : "-"}</span>
-                            <span className="text-red-650 w-9 font-bold">{player.strikeout_pct != null ? `${player.strikeout_pct.toFixed(0)}%` : (player.kPct != null ? `${Number(player.kPct).toFixed(0)}%` : "-")}</span>
+                            <span className="text-red-600 w-9 font-bold">{player.strikeout_pct != null ? `${player.strikeout_pct.toFixed(0)}%` : (player.kPct != null ? `${Number(player.kPct).toFixed(0)}%` : "-")}</span>
                           </div>
                         </div>
                         {expandedPlayer === `away-${idx}` && (
@@ -730,7 +745,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       <React.Fragment key={idx}>
                         <div 
                           onClick={() => togglePlayerExpansion("home", idx)}
-                          className={`px-4 py-2.5 flex justify-between items-center hover:bg-slate-50/80 transition cursor-pointer select-none ${expandedPlayer === `home-${idx}` ? "bg-slate-50 font-semibold" : ""}`}
+                          className={`px-4 py-2.5 flex justify-between items-center hover:bg-slate-50/80 transition cursor-pointer ${expandedPlayer === `home-${idx}` ? "bg-slate-50 font-semibold" : ""}`}
                         >
                           <div className="flex items-center gap-2 flex-1 min-w-0">
                             <span className="text-slate-400 font-semibold w-3 text-right text-[11px] md:text-xs">{idx + 1}</span>
@@ -747,7 +762,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                             <span className="text-red-600 w-10">{player.ops.toFixed(3)}</span>
                             <span className="hidden md:inline-block text-slate-500 w-9">{player.hr}</span>
                             <span className="hidden md:inline-block text-slate-500 w-9">{player.woba != null ? player.woba.toFixed(3).substring(1) : "-"}</span>
-                            <span className="text-red-650 w-9 font-bold">{player.strikeout_pct != null ? `${player.strikeout_pct.toFixed(0)}%` : (player.kPct != null ? `${Number(player.kPct).toFixed(0)}%` : "-")}</span>
+                            <span className="text-red-600 w-9 font-bold">{player.strikeout_pct != null ? `${player.strikeout_pct.toFixed(0)}%` : (player.kPct != null ? `${Number(player.kPct).toFixed(0)}%` : "-")}</span>
                           </div>
                         </div>
                         {expandedPlayer === `home-${idx}` && (
@@ -886,7 +901,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           </tbody>
                           {awayBattersTotals && (
                             <tfoot>
-                              <tr className="bg-slate-100/80 font-bold border-t border-slate-350 text-slate-800 text-[10px]">
+                              <tr className="bg-slate-100/80 font-bold border-t border-slate-300 text-slate-800 text-[10px]">
                                 <td className="py-2 px-4 font-sans text-left uppercase text-[9px] tracking-wider">Totales</td>
                                 <td className="py-2 px-1 text-center font-mono">{awayBattersTotals.ab}</td>
                                 <td className="py-2 px-1 text-center font-mono">{awayBattersTotals.r}</td>
@@ -912,12 +927,12 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           <thead>
                             <tr className="bg-slate-100 text-slate-700 font-display font-bold text-[10px] uppercase tracking-wider">
                               <th className="py-1.5 px-4 text-left truncate">Lanzadores</th>
-                              <th className="py-1.5 px-1 text-center font-mono">IP</th>
-                              <th className="py-1.5 px-1 text-center font-mono">H</th>
-                              <th className="py-1.5 px-1 text-center font-mono">R</th>
-                              <th className="py-1.5 px-1 text-center font-mono">ER</th>
-                              <th className="py-1.5 px-1 text-center font-mono">BB</th>
-                              <th className="py-1.5 px-1 text-center font-mono">SO</th>
+                              <th className="py-1.5 px-1 text-center font-mono"><span title="Innings Pitched (Entradas Lanzadas)" className="cursor-help border-b border-dotted border-slate-400/50">IP</span></th>
+                              <th className="py-1.5 px-1 text-center font-mono"><span title="Hits (Imparables permitidos)" className="cursor-help border-b border-dotted border-slate-400/50">H</span></th>
+                              <th className="py-1.5 px-1 text-center font-mono"><span title="Runs (Carreras permitidas)" className="cursor-help border-b border-dotted border-slate-400/50">R</span></th>
+                              <th className="py-1.5 px-1 text-center font-mono"><span title="Earned Runs (Carreras Limpias permitidas)" className="cursor-help border-b border-dotted border-slate-400/50">ER</span></th>
+                              <th className="py-1.5 px-1 text-center font-mono"><span title="Base on Balls (Boletos otorgados)" className="cursor-help border-b border-dotted border-slate-400/50">BB</span></th>
+                              <th className="py-1.5 px-1 text-center font-mono"><span title="Strikeouts (Ponches recetados)" className="cursor-help border-b border-dotted border-slate-400/50">SO</span></th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 font-mono text-[10px]">
@@ -996,7 +1011,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           </tbody>
                           {homeBattersTotals && (
                             <tfoot>
-                              <tr className="bg-slate-100/80 font-bold border-t border-slate-350 text-slate-800 text-[10px]">
+                              <tr className="bg-slate-100/80 font-bold border-t border-slate-300 text-slate-800 text-[10px]">
                                 <td className="py-2 px-4 font-sans text-left uppercase text-[9px] tracking-wider">Totales</td>
                                 <td className="py-2 px-1 text-center font-mono">{homeBattersTotals.ab}</td>
                                 <td className="py-2 px-1 text-center font-mono">{homeBattersTotals.r}</td>
@@ -1022,12 +1037,12 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           <thead>
                             <tr className="bg-slate-100 text-slate-700 font-display font-bold text-[10px] uppercase tracking-wider">
                               <th className="py-1.5 px-4 text-left truncate">Lanzadores</th>
-                              <th className="py-1.5 px-1 text-center font-mono">IP</th>
-                              <th className="py-1.5 px-1 text-center font-mono">H</th>
-                              <th className="py-1.5 px-1 text-center font-mono">R</th>
-                              <th className="py-1.5 px-1 text-center font-mono">ER</th>
-                              <th className="py-1.5 px-1 text-center font-mono">BB</th>
-                              <th className="py-1.5 px-1 text-center font-mono">SO</th>
+                              <th className="py-1.5 px-1 text-center font-mono"><span title="Innings Pitched (Entradas Lanzadas)" className="cursor-help border-b border-dotted border-slate-400/50">IP</span></th>
+                              <th className="py-1.5 px-1 text-center font-mono"><span title="Hits (Imparables permitidos)" className="cursor-help border-b border-dotted border-slate-400/50">H</span></th>
+                              <th className="py-1.5 px-1 text-center font-mono"><span title="Runs (Carreras permitidas)" className="cursor-help border-b border-dotted border-slate-400/50">R</span></th>
+                              <th className="py-1.5 px-1 text-center font-mono"><span title="Earned Runs (Carreras Limpias permitidas)" className="cursor-help border-b border-dotted border-slate-400/50">ER</span></th>
+                              <th className="py-1.5 px-1 text-center font-mono"><span title="Base on Balls (Boletos otorgados)" className="cursor-help border-b border-dotted border-slate-400/50">BB</span></th>
+                              <th className="py-1.5 px-1 text-center font-mono"><span title="Strikeouts (Ponches recetados)" className="cursor-help border-b border-dotted border-slate-400/50">SO</span></th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 font-mono text-[10px]">
@@ -1185,7 +1200,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       <div className="flex justify-between"><span title="OBP (On-Base Percentage): Porcentaje de embasado." className="cursor-help border-b border-dotted border-slate-400">OBP:</span> <strong>{game.offensive_splits.away.vsRhp.obp.toFixed(3).substring(1)}</strong></div>
                       <div className="flex justify-between"><span title="SLG (Slugging Percentage): Promedio de bases alcanzadas por turno." className="cursor-help border-b border-dotted border-slate-400">SLG:</span> <strong>{game.offensive_splits.away.vsRhp.slg.toFixed(3).substring(1)}</strong></div>
                       <div className="flex justify-between"><span title="OPS (On-base Plus Slugging): Suma del porcentaje de embasado y el slugging." className="cursor-help border-b border-dotted border-slate-400">OPS:</span> <strong className="text-blue-700">{game.offensive_splits.away.vsRhp.ops.toFixed(3)}</strong></div>
-                      <div className="flex justify-between"><span>HR/G:</span> <strong>{game.offensive_splits.away.vsRhp.hr}</strong></div>
+                      <div className="flex justify-between"><span>HR:</span> <strong>{game.offensive_splits.away.vsRhp.hr}</strong></div>
                     </div>
                     <div className="bg-blue-50/30 p-2.5 rounded border border-blue-100/50 space-y-1">
                       <div className="font-sans font-bold text-[10px] uppercase text-blue-800 mb-1">vs LHP</div>
@@ -1193,7 +1208,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       <div className="flex justify-between"><span title="OBP (On-Base Percentage): Porcentaje de embasado." className="cursor-help border-b border-dotted border-slate-400">OBP:</span> <strong>{game.offensive_splits.away.vsLhp.obp.toFixed(3).substring(1)}</strong></div>
                       <div className="flex justify-between"><span title="SLG (Slugging Percentage): Promedio de bases alcanzadas por turno." className="cursor-help border-b border-dotted border-slate-400">SLG:</span> <strong>{game.offensive_splits.away.vsLhp.slg.toFixed(3).substring(1)}</strong></div>
                       <div className="flex justify-between"><span title="OPS (On-base Plus Slugging): Suma del porcentaje de embasado y el slugging." className="cursor-help border-b border-dotted border-slate-400">OPS:</span> <strong className="text-blue-700">{game.offensive_splits.away.vsLhp.ops.toFixed(3)}</strong></div>
-                      <div className="flex justify-between"><span>HR/G:</span> <strong>{game.offensive_splits.away.vsLhp.hr}</strong></div>
+                      <div className="flex justify-between"><span>HR:</span> <strong>{game.offensive_splits.away.vsLhp.hr}</strong></div>
                     </div>
                   </div>
                 </div>
@@ -1210,7 +1225,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       <div className="flex justify-between"><span title="OBP (On-Base Percentage): Porcentaje de embasado." className="cursor-help border-b border-dotted border-slate-400">OBP:</span> <strong>{game.offensive_splits.home.vsRhp.obp.toFixed(3).substring(1)}</strong></div>
                       <div className="flex justify-between"><span title="SLG (Slugging Percentage): Promedio de bases alcanzadas por turno." className="cursor-help border-b border-dotted border-slate-400">SLG:</span> <strong>{game.offensive_splits.home.vsRhp.slg.toFixed(3).substring(1)}</strong></div>
                       <div className="flex justify-between"><span title="OPS (On-base Plus Slugging): Suma del porcentaje de embasado y el slugging." className="cursor-help border-b border-dotted border-slate-400">OPS:</span> <strong className="text-red-700">{game.offensive_splits.home.vsRhp.ops.toFixed(3)}</strong></div>
-                      <div className="flex justify-between"><span>HR/G:</span> <strong>{game.offensive_splits.home.vsRhp.hr}</strong></div>
+                      <div className="flex justify-between"><span>HR:</span> <strong>{game.offensive_splits.home.vsRhp.hr}</strong></div>
                     </div>
                     <div className="bg-red-50/20 p-2.5 rounded border border-red-100/40 space-y-1">
                       <div className="font-sans font-bold text-[10px] uppercase text-red-800 mb-1">vs LHP</div>
@@ -1218,7 +1233,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       <div className="flex justify-between"><span title="OBP (On-Base Percentage): Porcentaje de embasado." className="cursor-help border-b border-dotted border-slate-400">OBP:</span> <strong>{game.offensive_splits.home.vsLhp.obp.toFixed(3).substring(1)}</strong></div>
                       <div className="flex justify-between"><span title="SLG (Slugging Percentage): Promedio de bases alcanzadas por turno." className="cursor-help border-b border-dotted border-slate-400">SLG:</span> <strong>{game.offensive_splits.home.vsLhp.slg.toFixed(3).substring(1)}</strong></div>
                       <div className="flex justify-between"><span title="OPS (On-base Plus Slugging): Suma del porcentaje de embasado y el slugging." className="cursor-help border-b border-dotted border-slate-400">OPS:</span> <strong className="text-red-700">{game.offensive_splits.home.vsLhp.ops.toFixed(3)}</strong></div>
-                      <div className="flex justify-between"><span>HR/G:</span> <strong>{game.offensive_splits.home.vsLhp.hr}</strong></div>
+                      <div className="flex justify-between"><span>HR:</span> <strong>{game.offensive_splits.home.vsLhp.hr}</strong></div>
                     </div>
                   </div>
                 </div>
@@ -1370,7 +1385,8 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
           </div>
         )}
       </div>
-
+      </>
+      )}
     </div>
   );
 };

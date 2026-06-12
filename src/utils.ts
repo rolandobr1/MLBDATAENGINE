@@ -460,6 +460,7 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
       g.model_features?.diffRecordLast10 ?? "",
       g.model_features?.diffRecordHomeAway ?? "",
       g.model_features?.diffStarterRest ?? "",
+      g.model_features?.diffBullpenFatigue ?? "",
       // Results
       g.game_result?.homeScore ?? "",
       g.game_result?.awayScore ?? "",
@@ -889,6 +890,7 @@ export function generateBattersCSV(games: MLBGame[]): string {
       game.model_features?.diffRecordLast10 ?? "",
       game.model_features?.diffRecordHomeAway ?? "",
       game.model_features?.diffStarterRest ?? "",
+      game.model_features?.diffBullpenFatigue ?? "",
       // Results
       game.game_result?.homeScore ?? "",
       game.game_result?.awayScore ?? "",

@@ -36,6 +36,11 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
+// Servir favicon para evitar error 404
+app.get("/favicon.ico", (req, res) => {
+  res.sendFile(path.join(process.cwd(), "src", "favicon.svg"));
+});
+
 const PORT = process.env.PORT || 3001;
 const DB_PATH = path.join(process.cwd(), "mlb_database.json");
 const ERRORS_PATH = path.join(process.cwd(), "mlb_errors.json");
@@ -1175,7 +1180,22 @@ function enrichLineupWithTotalBasesProps(lineup: any[], rows: any[]) {
     const match = rows.find((row: any) => {
       const rowName = normalizeName(row.player_name || row.name);
       const rowTeam = normalizeTeamAbbr(row.team_abbr || row.team);
-      return rowName === playerName && (!playerTeam || !rowTeam || rowTeam === playerTeam);
+      const isTeamMatch = (!playerTeam || !rowTeam || rowTeam === playerTeam);
+      
+      if (!isTeamMatch) return false;
+      if (rowName === playerName) return true;
+      
+      const strippedRow = rowName.replace(/\s+/g, '');
+      const strippedPlayer = playerName.replace(/\s+/g, '');
+      if (strippedRow === strippedPlayer || strippedRow.includes(strippedPlayer) || strippedPlayer.includes(strippedRow)) return true;
+      
+      const pParts = playerName.split(' ');
+      const rParts = rowName.split(' ');
+      const pLast = pParts[pParts.length - 1];
+      const rLast = rParts[rParts.length - 1];
+      if (pLast && rLast && pLast === rLast && pParts[0][0] === rParts[0][0]) return true;
+
+      return false;
     });
 
     if (!match) return player;
@@ -1245,11 +1265,11 @@ async function enrichGamesWithTotalBasesProps(games: MLBGame[]): Promise<MLBGame
   }) as MLBGame[];
 }
 
-async function fetchRealBettingLines(date: string) {
+async function fetchRealBettingLines(date: string, forceRefreshOdds: boolean = false, gamesList: any[] = []) {
   const cacheFile = path.join(process.cwd(), `odds_cache_${date}.json`);
   
   // Check Cache first
-  if (fs.existsSync(cacheFile)) {
+  if (!forceRefreshOdds && fs.existsSync(cacheFile)) {
     try {
       console.log(`Leyendo cuotas desde el caché local: odds_cache_${date}.json`);
       const cached = fs.readFileSync(cacheFile, 'utf-8');
@@ -1279,7 +1299,22 @@ async function fetchRealBettingLines(date: string) {
     // We do this concurrently to speed up the process
     const eventsWithProps = await Promise.all(data.map(async (event: any) => {
       try {
-        const propsUrl = `https://api.the-odds-api.com/v4/sports/baseball_mlb/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=pitcher_strikeouts&oddsFormat=american`;
+        // Skip fetching lines if game has started
+        const mlbGame = gamesList.find(g => 
+           (event.home_team.includes(g.teams.home.team.name) || g.teams.home.team.name.includes(event.home_team)) &&
+           (event.away_team.includes(g.teams.away.team.name) || g.teams.away.team.name.includes(event.away_team))
+        );
+        if (mlbGame) {
+           const status = mlbGame.status?.abstractGameState || "";
+           const statusCode = mlbGame.status?.statusCode || "";
+           // In MLB API: F = Final, I = In Progress, DI/Suspended = Suspended, O = Game Over. S means Scheduled!
+           if (['Live', 'Final', 'Suspended'].includes(status) || ['F', 'I', 'O', 'DI'].includes(statusCode)) {
+               console.log(`Saltando props para ${event.home_team} vs ${event.away_team} porque su estado es ${status} (${statusCode})`);
+               return event;
+           }
+        }
+
+        const propsUrl = `https://api.the-odds-api.com/v4/sports/baseball_mlb/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=pitcher_strikeouts,batter_total_bases&oddsFormat=american`;
         const propsRes = await fetchWithTimeout(propsUrl, 10000);
         if (propsRes.ok) {
           const propsData = await propsRes.json();
@@ -2940,10 +2975,12 @@ function buildDirectGameData(
   let awayKPropData: any = null;
 
   if (realOddsData && Array.isArray(realOddsData)) {
-    const matchOdds = realOddsData.find((o: any) =>
-      (o.home_team.includes(homeName) || homeName.includes(o.home_team)) &&
-      (o.away_team.includes(awayName) || awayName.includes(o.away_team))
-    );
+    const matchOdds = realOddsData.find((o: any) => {
+      const oHomeAbbr = getTeamAbbr(o.home_team) || o.home_team;
+      const oAwayAbbr = getTeamAbbr(o.away_team) || o.away_team;
+      return (oHomeAbbr === homeName || o.home_team.includes(homeName) || homeName.includes(o.home_team)) &&
+             (oAwayAbbr === awayName || o.away_team.includes(awayName) || awayName.includes(o.away_team));
+    });
     if (matchOdds && matchOdds.bookmakers && matchOdds.bookmakers.length > 0) {
       const bookie = matchOdds.bookmakers.find((b: any) => b.key === 'draftkings' || b.key === 'fanduel') || matchOdds.bookmakers[0];
       const h2h = bookie.markets.find((m: any) => m.key === 'h2h');
@@ -2951,11 +2988,35 @@ function buildDirectGameData(
       const totals = bookie.markets.find((m: any) => m.key === 'totals');
       
       let pitcherStrikeoutsOutcomes: any[] = [];
+      let batterTotalBasesOutcomes: any[] = [];
       for (const b of matchOdds.bookmakers) {
-         const m = b.markets.find((mk: any) => mk.key === 'pitcher_strikeouts');
-         if (m && m.outcomes) {
-            pitcherStrikeoutsOutcomes.push(...m.outcomes);
+         const mPitcher = b.markets.find((mk: any) => mk.key === 'pitcher_strikeouts');
+         if (mPitcher && mPitcher.outcomes) {
+            pitcherStrikeoutsOutcomes.push(...mPitcher.outcomes);
          }
+         const mBatter = b.markets.find((mk: any) => mk.key === 'batter_total_bases');
+         if (mBatter && mBatter.outcomes) {
+            batterTotalBasesOutcomes.push(...mBatter.outcomes);
+         }
+      }
+
+      if (batterTotalBasesOutcomes.length > 0) {
+        const mappedBatterProps = new Map<string, any>();
+        for (const outcome of batterTotalBasesOutcomes) {
+           const pName = outcome.description;
+           if (!mappedBatterProps.has(pName)) {
+              mappedBatterProps.set(pName, { player_name: pName, vendor: 'TheOddsAPI' });
+           }
+           const pData = mappedBatterProps.get(pName);
+           pData.line = outcome.point;
+           if (outcome.name === 'Over') {
+              pData.odds = outcome.price;
+           } else if (outcome.name === 'Under') {
+              pData.under_odds = outcome.price;
+           }
+        }
+        const oddsApiTotalBasesRows = Array.from(mappedBatterProps.values());
+        totalBasesRows = [...oddsApiTotalBasesRows, ...totalBasesRows];
       }
 
       if (pitcherStrikeoutsOutcomes.length > 0) {
@@ -3207,7 +3268,7 @@ function buildDirectGameData(
 
 // Harvester endpoint (SSE streaming)
 app.post("/api/harvest", async (req, res) => {
-  const { date } = req.body;
+  const { date, refreshOdds } = req.body;
   if (!date || typeof date !== "string") {
     res.status(400).json({ error: "Fecha es requerida (formato YYYY-MM-DD)" });
     return;
@@ -3241,7 +3302,7 @@ app.post("/api/harvest", async (req, res) => {
   }
 
   // Fetch real odds for the day
-  const realOddsData = await fetchRealBettingLines(date);
+  const realOddsData = await fetchRealBettingLines(date, refreshOdds === true, mlbMatches);
   const pitcherStrikeoutRows = await fetchDataStreakPitcherStrikeoutProps(date);
   const totalBasesRows = await fetchDataStreakTotalBasesProps(date);
 

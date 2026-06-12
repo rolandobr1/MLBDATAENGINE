@@ -9,7 +9,7 @@ import {
   Target, DollarSign, BarChart2, Trash2, PlusCircle, Users, User,
   Zap, ListChecks, RefreshCw, AlertTriangle, Download, ChevronLeft,
   BookOpen, StickyNote, Flame, Award, Percent, ArrowRight, Edit2,
-  ChevronDown, ChevronUp, X,
+  ChevronDown, ChevronUp, X, Eye, EyeOff
 } from "lucide-react";
 import { MLBGame } from "../types";
 import { syncBets, saveBetsDb, registerUserDb, syncUsers, deleteUserDb } from "../services/betService";
@@ -19,7 +19,7 @@ import { syncBets, saveBetsDb, registerUserDb, syncUsers, deleteUserDb } from ".
 // ════════════════════════════════════════════════════════════════════════════
 
 type BetCategory = "pitcher" | "batter" | "team";
-type BetStatus   = "pending" | "won" | "lost";
+type BetStatus   = "pending" | "won" | "lost" | "void";
 type BetTypeKey  = "pitcher_k" | "batter_tb" | "team_ml" | "team_f5";
 
 interface Bet {
@@ -183,6 +183,23 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
   const isLive  = LIVE_STATUSES.some(s => status.includes(s));
   const isFinal = FINAL_STATUSES.some(s => status.includes(s));
 
+  // Si el partido no ha comenzado (no está en vivo ni finalizado), forzar estado de espera a 0%
+  if (!isLive && !isFinal) {
+    return {
+      current: 0,
+      pct: 0,
+      display: bet.betTypeKey === "team_f5"
+        ? "0 - 0 (0/5 inn)"
+        : bet.betTypeKey === "team_ml"
+        ? "0 - 0"
+        : `0 / ${bet.line} ${bet.betTypeKey === "pitcher_k" ? "K's" : "bases"}`,
+      hint: "Esperando inicio",
+      isLive: false,
+      isFinal: false,
+      autoStatus: null
+    };
+  }
+
   if (bet.betTypeKey === "pitcher_k") {
     const pitchers = game.liveBoxscore?.[bet.teamSide]?.pitchers ?? [];
     const pitcher  = pitchers.find(p => p.name === bet.subject) ?? pitchers[0];
@@ -222,13 +239,41 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
     const innings = game.linescore?.innings ?? [];
     const first5  = innings.slice(0, 5);
     const cur5    = game.linescore?.currentInning ?? 0;
+    
+    // El F5 es oficial si ya se jugó el 6to inning (cur5 > 5) o si el juego terminó (isFinal) habiendo completado 5 innings
+    // Si el juego concluyó y no se completaron 5 innings (ej. suspendido en el 4to), es nulo (void/push).
+    const f5Completed = cur5 > 5 || (isFinal && cur5 >= 5);
+    const f5Void = isFinal && cur5 < 5;
+
     const myRuns  = first5.reduce((a, i) => a + ((bet.teamSide === "home" ? i.home : i.away)?.runs ?? 0), 0);
     const oppRuns = first5.reduce((a, i) => a + ((bet.teamSide === "home" ? i.away : i.home)?.runs ?? 0), 0);
-    const f5Done  = cur5 > 5 || isFinal;
     const winning = myRuns > oppRuns;
-    let pct = f5Done ? (winning ? 100 : 0) : Math.min(100, Math.round((Math.min(cur5, 5) / 5) * 100));
-    let autoStatus: BetStatus | null = f5Done ? (winning ? "won" : "lost") : null;
-    return { current: myRuns, pct, display: `${myRuns} - ${oppRuns} (${Math.min(cur5, 5)}/5 inn)`, hint: f5Done ? (winning ? "¡Ganó F5!" : "Perdió F5") : `Inning ${cur5}`, isLive, isFinal: f5Done, autoStatus };
+    const tied    = myRuns === oppRuns;
+
+    let autoStatus: BetStatus | null = null;
+    if (f5Void) {
+      autoStatus = "void";
+    } else if (f5Completed) {
+      if (tied) autoStatus = "void";
+      else autoStatus = winning ? "won" : "lost";
+    }
+
+    let pct = f5Completed ? 100 : Math.min(100, Math.round((Math.min(cur5, 5) / 5) * 100));
+    if (autoStatus === "won" || autoStatus === "void") pct = 100;
+
+    return { 
+      current: myRuns, 
+      pct, 
+      display: `${myRuns} - ${oppRuns} (${Math.min(cur5, 5)}/5 inn)`, 
+      hint: autoStatus === "void" 
+        ? "Push / Nula (Empate o suspendido)" 
+        : f5Completed 
+        ? (winning ? "¡Ganó F5!" : "Perdió F5") 
+        : `Inning ${cur5}`, 
+      isLive, 
+      isFinal: f5Completed || f5Void, 
+      autoStatus 
+    };
   }
 
   return NONE;
@@ -251,6 +296,7 @@ const StatusBadge: React.FC<{ status: BetStatus }> = ({ status }) => {
     pending: { cls: "bg-amber-100 text-amber-700 border-amber-200", label: "Pendiente", Icon: Clock },
     won:     { cls: "bg-emerald-100 text-emerald-700 border-emerald-200", label: "Ganada", Icon: CheckCircle2 },
     lost:    { cls: "bg-red-100 text-red-600 border-red-200", label: "Perdida", Icon: XCircle },
+    void:    { cls: "bg-slate-100 text-slate-600 border-slate-200", label: "Nula / Push", Icon: AlertTriangle },
   }[status];
   return <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full border ${cfg.cls}`}><cfg.Icon size={11} />{cfg.label}</span>;
 };
@@ -263,6 +309,7 @@ const LiveProgressBar: React.FC<{ progress: LiveProgress; betStatus: BetStatus; 
   let label = "Esperando";
   if (effectiveStatus === "won")  { bar = "from-emerald-400 to-emerald-600"; dot = <CheckCircle2 size={11} className="text-emerald-600" />; label = "¡Ganó!"; }
   else if (effectiveStatus === "lost") { bar = "from-red-400 to-red-500"; dot = <XCircle size={11} className="text-red-500" />; label = "Perdió"; }
+  else if (effectiveStatus === "void") { bar = "from-slate-300 to-slate-450"; dot = <AlertTriangle size={11} className="text-slate-500" />; label = "Push / Nula"; }
   else if (isLive)  { dot = <span className="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse" />; label = "En vivo"; }
   else if (isFinal) { bar = "from-slate-400 to-slate-500"; label = "Finalizado"; }
   return (
@@ -281,7 +328,7 @@ const LiveProgressBar: React.FC<{ progress: LiveProgress; betStatus: BetStatus; 
 
 // Analytics dashboard
 const AnalyticsDashboard: React.FC<{ bets: Bet[] }> = ({ bets }) => {
-  const closed = bets.filter(b => b.status !== "pending");
+  const closed = bets.filter(b => b.status !== "pending" && b.status !== "void");
   const wins   = closed.filter(b => b.status === "won");
   const winRate = closed.length > 0 ? Math.round((wins.length / closed.length) * 100) : 0;
   const totalRisk = closed.reduce((s, b) => s + b.amount, 0);
@@ -309,7 +356,7 @@ const AnalyticsDashboard: React.FC<{ bets: Bet[] }> = ({ bets }) => {
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 p-4 bg-slate-900 rounded-xl border border-slate-800">
       <div className="flex items-center gap-2">
         <div className="w-9 h-9 bg-violet-900/60 rounded-lg flex items-center justify-center"><Percent size={16} className="text-violet-400" /></div>
-        <div><p className="text-[10px] text-slate-500 font-semibold uppercase">Win Rate</p><p className="text-lg font-bold text-white">{winRate}%</p><p className="text-[10px] text-slate-500">{wins.length}/{closed.length} apuestas</p></div>
+        <div><p className="text-[10px] text-slate-500 font-semibold uppercase">Tasa de Acierto</p><p className="text-lg font-bold text-white">{winRate}%</p><p className="text-[10px] text-slate-500">{wins.length}/{closed.length} apuestas</p></div>
       </div>
       <div className="flex items-center gap-2">
         <div className="w-9 h-9 bg-emerald-900/60 rounded-lg flex items-center justify-center"><TrendingUp size={16} className="text-emerald-400" /></div>
@@ -326,7 +373,7 @@ const AnalyticsDashboard: React.FC<{ bets: Bet[] }> = ({ bets }) => {
       </div>
       <div className="flex items-center gap-2">
         <div className="w-9 h-9 bg-blue-900/60 rounded-lg flex items-center justify-center"><Award size={16} className="text-blue-400" /></div>
-        <div><p className="text-[10px] text-slate-500 font-semibold uppercase">Mejor tipo</p>
+        <div><p className="text-[10px] text-slate-500 font-semibold uppercase">Mejor Categoría</p>
           <p className="text-sm font-bold text-white">{catWinRates[0] ? CATEGORY_CFG[catWinRates[0].cat].label : "—"}</p>
           <p className="text-[10px] text-slate-500">{catWinRates[0] ? `${catWinRates[0].rate}% WR` : "sin datos"}</p>
         </div>
@@ -417,7 +464,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
   const [bets, setBets]               = useState<Bet[]>(() => loadBets(todayStr()));
   const [filter, setFilter]           = useState<"all" | BetStatus>("all");
   const [userFilter, setUserFilter]   = useState<string>("all");
-  const [collapsedBets, setCollapsedBets] = useState<Set<number>>(new Set());
+  const [expandedBets, setExpandedBets] = useState<Set<number>>(new Set());
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
   const [isRefreshingAll, setIsRefreshingAll] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
@@ -660,7 +707,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
   };
 
   const toggleCollapse = (id: number) => {
-    setCollapsedBets(prev => {
+    setExpandedBets(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
@@ -697,7 +744,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
           <button onClick={handleRefreshPending} disabled={isRefreshingAll || bets.filter(b => b.status === "pending").length === 0}
             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-violet-100 hover:bg-violet-200 text-violet-700 rounded-lg text-xs font-bold transition-colors disabled:opacity-40 shadow-sm border border-violet-200">
             <RefreshCw size={12} className={isRefreshingAll ? "animate-spin" : ""} />
-            Actualizar vivas
+            Actualizar Apuestas Activas
           </button>
 
           {/* User */}
@@ -874,8 +921,8 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                   <>
                     <div className="grid grid-cols-2 gap-2">
                       {[
-                        { key: category === "pitcher" ? "pitcher_k" : "batter_tb", label: category === "pitcher" ? "Over K's" : "Over Bases", over: true },
-                        { key: category === "pitcher" ? "pitcher_k" : "batter_tb", label: category === "pitcher" ? "Under K's" : "Under Bases", over: false },
+                        { key: category === "pitcher" ? "pitcher_k" : "batter_tb", label: category === "pitcher" ? "Más de (Over) K's" : "Más de (Over) Bases", over: true },
+                        { key: category === "pitcher" ? "pitcher_k" : "batter_tb", label: category === "pitcher" ? "Menos de (Under) K's" : "Menos de (Under) Bases", over: false },
                       ].map(opt => (
                         <button key={opt.label} type="button"
                           onClick={() => { setBetTypeKey(opt.key as BetTypeKey); setIsOver(opt.over); setBetLabel(opt.label); }}
@@ -1016,16 +1063,31 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
         {/* ── Bet list ──────────────────────────────────────────────────────────── */}
         <div className="lg:col-span-3 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg w-fit">
-              {(["all","pending","won","lost"] as const).map(f => (
-                <button key={f} onClick={() => setFilter(f)}
-                  className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${filter === f ? "bg-white shadow text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
-                  {f === "all" ? "Todas" : f === "pending" ? "Pendientes" : f === "won" ? "Ganadas" : "Perdidas"}
-                  <span className={`ml-1 text-[10px] px-1 rounded-full ${filter === f ? "bg-violet-100 text-violet-700" : "bg-slate-200 text-slate-500"}`}>
-                    {f === "all" ? allBets.length : allBets.filter(b => b.status === f).length}
-                  </span>
-                </button>
-              ))}
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg w-fit">
+                {(["all","pending","won","lost"] as const).map(f => (
+                  <button key={f} onClick={() => setFilter(f)}
+                    className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${filter === f ? "bg-white shadow text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
+                    {f === "all" ? "Todas" : f === "pending" ? "Pendientes" : f === "won" ? "Ganadas" : "Perdidas"}
+                    <span className={`ml-1 text-[10px] px-1 rounded-full ${filter === f ? "bg-violet-100 text-violet-700" : "bg-slate-200 text-slate-500"}`}>
+                      {f === "all" ? allBets.length : allBets.filter(b => b.status === f).length}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <button 
+                onClick={() => {
+                  if (expandedBets.size === filtered.length && filtered.length > 0) {
+                    setExpandedBets(new Set());
+                  } else {
+                    setExpandedBets(new Set(filtered.map(r => r.bet.id!)));
+                  }
+                }}
+                className="p-1.5 rounded-lg bg-slate-100 text-slate-500 hover:text-slate-800 transition border border-transparent hover:border-slate-300"
+                title={expandedBets.size === filtered.length && filtered.length > 0 ? "Contraer Todas" : "Expandir Todas"}
+              >
+                {expandedBets.size === filtered.length && filtered.length > 0 ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
             </div>
             
             {uniqueUsers.length > 0 && (
@@ -1054,7 +1116,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                   const isRefreshing = refreshingIds.has(bet.gameId);
 
                   let extraDetails = null;
-                  if (game && !collapsedBets.has(bet.id)) {
+                  if (game && expandedBets.has(bet.id)) {
                     const isLiveOrFinal = game.game_result?.gameStatus?.includes("In Progress") || game.game_result?.gameStatus?.includes("Live") || game.game_result?.gameStatus?.includes("Final");
                     if (isLiveOrFinal) {
                       const ls = game.linescore;
@@ -1086,7 +1148,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                     <div key={bet.id}
                       className={`bg-white border rounded-xl p-4 shadow-sm hover:shadow-md transition-all ${bet.status === "won" ? "border-emerald-200" : bet.status === "lost" ? "border-red-200" : "border-slate-200"}`}>
 
-                      {collapsedBets.has(bet.id) ? (
+                      {!expandedBets.has(bet.id) ? (
                         <div className="cursor-pointer group" onClick={() => toggleCollapse(bet.id)}>
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 truncate min-w-0">

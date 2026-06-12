@@ -101,7 +101,7 @@ export const Header: React.FC<HeaderProps> = ({
             className="bg-emerald-950/40 hover:bg-emerald-950/60 transition-all border border-emerald-900/40 px-3 py-1.5 rounded-md flex items-center gap-2 text-emerald-300 cursor-pointer"
           >
             <FileSpreadsheet size={14} className="text-emerald-400" />
-            <span>Sheets Export</span>
+            <span>Exportar Datasets</span>
           </button>
         </div>
       </div>
