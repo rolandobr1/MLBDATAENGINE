@@ -233,7 +233,17 @@ app.get("/api/games", (req, res) => {
 
   const db = readGamesDB();
   const dateGames = db[date] || [];
-  res.json({ games: dateGames });
+  
+  // Call Firestore to get the real cloud total
+  import('./src/services/firestoreService.ts').then(mod => {
+    mod.getTotalGamesCountFromFirestore().then(totalGames => {
+      res.json({ games: dateGames, totalGames });
+    }).catch(() => {
+      res.json({ games: dateGames, totalGames: 0 });
+    });
+  }).catch(() => {
+    res.json({ games: dateGames, totalGames: 0 });
+  });
 });
 
 // Helper function to flatten games for ML JSON endpoint

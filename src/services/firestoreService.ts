@@ -1,11 +1,31 @@
-import { db } from '../config/firebase';
-import { doc, collection, setDoc, getDocs } from 'firebase/firestore';
+import { db, app } from '../config/firebase';
+import { doc, collection, setDoc, getDocs, getCountFromServer } from 'firebase/firestore';
+import { getAuth, signInAnonymously } from 'firebase/auth';
+
+let authInitialized = false;
 
 export const saveGameData = async (gameId: string, gameData: any) => {
   try {
-    if (!db) {
+    if (!db || !app) {
       console.warn("Firestore db is not initialized. Skipping Firestore save.");
       return;
+    }
+
+    if (!authInitialized) {
+      try {
+        const auth = getAuth(app);
+        await signInAnonymously(auth);
+        authInitialized = true;
+      } catch (authErr: any) {
+        if (authErr.code === 'auth/configuration-not-found') {
+          console.error("\n❌ ERROR CRÍTICO DE FIREBASE: La Autenticación Anónima no está habilitada.");
+          console.error("👉 Ve a tu Consola de Firebase -> Authentication -> Sign-in method -> Habilita 'Anónimo'.");
+          console.error("El backend no puede guardar los juegos en la nube sin esto debido a tus reglas de seguridad.\n");
+        } else {
+          console.error("Error autenticando el backend:", authErr);
+        }
+        return; // Stop saving if auth fails
+      }
     }
 
     const now = new Date().toISOString();
@@ -88,3 +108,24 @@ export const loadAllGamesFromFirestore = async (): Promise<any[]> => {
   }
 };
 
+export const getTotalGamesCountFromFirestore = async (): Promise<number> => {
+  try {
+    if (!db || !app) return 0;
+    
+    if (!authInitialized) {
+      try {
+        const auth = getAuth(app);
+        await signInAnonymously(auth);
+        authInitialized = true;
+      } catch (e) {
+        // Ignorar
+      }
+    }
+
+    const snapshot = await getCountFromServer(collection(db, 'games'));
+    return snapshot.data().count;
+  } catch (error) {
+    console.error("Error al contar juegos en Firestore:", error);
+    return 0;
+  }
+};

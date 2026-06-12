@@ -33,6 +33,7 @@ function getLocalDateString(): string {
 export default function App() {
   const [selectedDate, setSelectedDate] = React.useState<string>(() => getLocalDateString());
   const [games, setGames] = React.useState<MLBGame[]>([]);
+  const [totalDatabaseGames, setTotalDatabaseGames] = React.useState<number>(0);
   const [errors, setErrors] = React.useState<LoggedError[]>([]);
   const [extractedDates, setExtractedDates] = React.useState<string[]>([]);
   const [isLoading, setIsLoading] = React.useState<boolean>(false);
@@ -69,6 +70,9 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setGames(data.games || []);
+        if (data.totalGames !== undefined) {
+          setTotalDatabaseGames(data.totalGames);
+        }
       }
     } catch (err) {
       console.error("Fallo al conectar con el servidor local para juegos:", err);
@@ -267,6 +271,7 @@ export default function App() {
       {/* Platform Header */}
       <Header
         gamesCount={games.length}
+        totalGamesCount={totalDatabaseGames}
         errorsCount={errors.length}
         onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
         onScrollToSheets={scrollToSheets}

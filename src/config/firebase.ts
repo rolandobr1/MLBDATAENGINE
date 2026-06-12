@@ -21,7 +21,7 @@ const firebaseConfig = {
 
 const hasFirebaseConfig = !!firebaseConfig.projectId;
 
-const app = hasFirebaseConfig
+export const app = hasFirebaseConfig
   ? (getApps().length === 0 ? initializeApp(firebaseConfig) : getApp())
   : null;
 

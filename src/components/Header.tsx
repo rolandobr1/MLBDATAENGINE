@@ -8,6 +8,7 @@ import { Activity, Database, AlertCircle, FileSpreadsheet } from "lucide-react";
 
 interface HeaderProps {
   gamesCount: number;
+  totalGamesCount: number;
   errorsCount: number;
   onOpenDiagnostics: () => void;
   onScrollToSheets: () => void;
@@ -15,6 +16,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   gamesCount,
+  totalGamesCount,
   errorsCount,
   onOpenDiagnostics,
   onScrollToSheets,
@@ -69,9 +71,15 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Database state indicator */}
-          <div className="bg-slate-950 px-3 py-1.5 rounded-md border border-slate-800 flex items-center gap-2 text-slate-300">
-            <Database size={14} className="text-blue-400" />
-            <span>Base de Datos: <strong className="text-white">{gamesCount}</strong> Juegos</span>
+          <div className="bg-slate-950 px-3 py-1.5 rounded-md border border-slate-800 flex items-center gap-3 text-slate-300">
+            <div className="flex items-center gap-2">
+              <Database size={14} className="text-blue-400" />
+              <span>Día Actual: <strong className="text-white">{gamesCount}</strong> Juegos</span>
+            </div>
+            <div className="w-px h-4 bg-slate-800"></div>
+            <div className="flex items-center gap-2" title="Total en la base de datos">
+              <span>Total BD: <strong className="text-white">{totalGamesCount}</strong></span>
+            </div>
           </div>
 
           {/* Verification Errors count triggers */}
