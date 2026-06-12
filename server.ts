@@ -74,13 +74,8 @@ function getGameTimestamp(game: any): number {
 }
 
 async function syncFirestoreToLocalDB(reason = "manual"): Promise<{ synced: boolean; games: number; dates: number }> {
-  const hasFirebase = !!process.env.FIREBASE_PROJECT_ID;
-  if (!hasFirebase) {
-    console.warn(`[Firestore Sync] FIREBASE_PROJECT_ID no configurado. Saltando sync (${reason}).`);
-    return { synced: false, games: 0, dates: 0 };
-  }
-
-  const firestoreGames = await loadAllGamesFromFirestore();
+  try {
+    const firestoreGames = await loadAllGamesFromFirestore();
   if (!firestoreGames || firestoreGames.length === 0) {
     console.log(`[Firestore Sync] No se encontraron juegos en Firestore (${reason}).`);
     return { synced: false, games: 0, dates: 0 };
@@ -111,6 +106,10 @@ async function syncFirestoreToLocalDB(reason = "manual"): Promise<{ synced: bool
   const dates = Object.keys(mergedDB).filter(date => Array.isArray(mergedDB[date]) && mergedDB[date].length > 0);
   console.log(`[Firestore Sync] Sync completado (${reason}): ${firestoreGames.length} juegos remotos, ${dates.length} fechas locales.`);
   return { synced: true, games: firestoreGames.length, dates: dates.length };
+  } catch (error) {
+    console.error(`[Firestore Sync] Error during sync:`, error);
+    return { synced: false, games: 0, dates: 0 };
+  }
 }
 
 function readErrorsDB(): any[] {
@@ -4035,9 +4034,8 @@ async function startServer() {
   try {
     const localDB = readGamesDB();
     const isLocalEmpty = Object.keys(localDB).length === 0;
-    const hasFirebase = !!process.env.FIREBASE_PROJECT_ID;
 
-    if (isLocalEmpty && hasFirebase) {
+    if (isLocalEmpty) {
       console.log("[Restaurador Firestore] La base de datos local está vacía. Restaurando desde Firestore...");
       const games = await loadAllGamesFromFirestore();
       if (games && games.length > 0) {
@@ -4057,8 +4055,6 @@ async function startServer() {
       } else {
         console.log("[Restaurador Firestore] No se encontraron juegos en Firestore o la colección está vacía.");
       }
-    } else if (isLocalEmpty && !hasFirebase) {
-      console.warn("[Restaurador Firestore] La base de datos local está vacía, pero FIREBASE_PROJECT_ID no está configurado. Saltando restauración.");
     }
   } catch (fsRestoreErr) {
     console.error("[Restaurador Firestore] Error general al intentar restaurar desde Firestore:", fsRestoreErr);
