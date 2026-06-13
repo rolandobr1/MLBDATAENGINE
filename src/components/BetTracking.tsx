@@ -202,13 +202,30 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
 
   if (bet.betTypeKey === "pitcher_k") {
     const pitchers = game.liveBoxscore?.[bet.teamSide]?.pitchers ?? [];
-    const pitcher  = pitchers.find(p => p.name === bet.subject) ?? pitchers[0];
+    const pitcherIndex = pitchers.findIndex(p => p.name === bet.subject);
+    const pitcher  = pitcherIndex >= 0 ? pitchers[pitcherIndex] : pitchers[0];
     const current  = pitcher?.k ?? 0;
     const exceeded = current >= bet.line;
+    const isPulled = (isLive || isFinal) && pitcherIndex >= 0 && pitcherIndex < pitchers.length - 1;
     const pct      = bet.line > 0 ? Math.min(100, Math.round((current / bet.line) * 100)) : 0;
+    
     let autoStatus: BetStatus | null = null;
-    if (isFinal || exceeded) autoStatus = bet.isOver ? (exceeded ? "won" : "lost") : (current < bet.line ? "won" : "lost");
-    return { current, pct: autoStatus === "won" ? 100 : pct, display: `${current} / ${bet.line} K's`, hint: exceeded ? "¡Línea superada!" : isFinal ? `Final — ${current} K's` : `Necesita ${Math.ceil(bet.line - current)} más`, isLive, isFinal, autoStatus };
+    if (isFinal || exceeded || isPulled) {
+      autoStatus = bet.isOver ? (exceeded ? "won" : "lost") : (current < bet.line ? "won" : "lost");
+    }
+
+    let hint = "";
+    if (exceeded) {
+      hint = "¡Línea superada!";
+    } else if (isFinal) {
+      hint = `Final — ${current} K's`;
+    } else if (isPulled) {
+      hint = `Pitcher relevado — ${current} K's`;
+    } else {
+      hint = `Necesita ${Math.ceil(bet.line - current)} más`;
+    }
+
+    return { current, pct: autoStatus === "won" ? 100 : pct, display: `${current} / ${bet.line} K's`, hint, isLive, isFinal, autoStatus };
   }
 
   if (bet.betTypeKey === "batter_tb") {

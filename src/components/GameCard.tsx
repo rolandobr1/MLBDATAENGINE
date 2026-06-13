@@ -24,6 +24,8 @@ interface GameCardProps {
   onRefresh?: () => Promise<void>;
   isPinned?: boolean;
   onTogglePin?: () => void;
+  globalExpandToggle?: number;
+  globalExpandTarget?: boolean;
 }
 
 const MLB_TEAM_ABBR: Record<string, string> = {
@@ -64,7 +66,7 @@ const getTeamAbbr = (teamName: string): string => {
   return MLB_TEAM_ABBR[teamName] || teamName;
 };
 
-export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, onTogglePin }) => {
+export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, onTogglePin, globalExpandToggle, globalExpandTarget }) => {
   const [expanded, setExpanded] = React.useState(false);
   const [isCardExpanded, setIsCardExpanded] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<"lineups" | "boxscore" | "splits" | "fatigue" | "sabermetrics">("lineups");
@@ -72,6 +74,12 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
   const [showAllPlays, setShowAllPlays] = React.useState(false);
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [expandedPlayer, setExpandedPlayer] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (globalExpandToggle !== undefined && globalExpandToggle > 0) {
+      setIsCardExpanded(!!globalExpandTarget);
+    }
+  }, [globalExpandToggle, globalExpandTarget]);
 
   const togglePlayerExpansion = (team: "home" | "away", idx: number) => {
     const key = `${team}-${idx}`;
@@ -603,7 +611,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
           <div className="p-6 bg-slate-50 font-sans text-slate-700 text-sm leading-relaxed border-t border-slate-200 border-dashed space-y-4">
 
             {/* Tab Selector */}
-            <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3 mb-2">
+            <div className="flex overflow-x-auto gap-2 border-b border-slate-200 pb-3 mb-2 whitespace-nowrap">
               <button
                 onClick={() => setActiveTab("lineups")}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${activeTab === "lineups" ? "bg-slate-900 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"}`}
@@ -646,7 +654,8 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
             {activeTab === "lineups" && game.lineups && (
               <div className="grid grid-cols-1 gap-6 mb-2">
                 {/* Away Lineup */}
-                <div className="bg-white rounded-lg border border-slate-200/60 overflow-hidden shadow-sm">
+                <div className="overflow-x-auto w-full">
+                  <div className="bg-white rounded-lg border border-slate-200/60 overflow-hidden shadow-sm min-w-[600px]">
                   <div className="bg-slate-800 text-white px-4 py-2.5 font-display font-bold text-xs md:text-sm uppercase tracking-wider flex justify-between">
                     <span>Alineación Visitante ({game.metadata.awayTeam})</span>
                     <div className="flex gap-2 text-right shrink-0 font-mono text-[10px] md:text-xs text-slate-300">
@@ -727,9 +736,11 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                     </div>
                   </div>
                 </div>
+                </div>
 
                 {/* Home Lineup */}
-                <div className="bg-white rounded-lg border border-slate-200/60 overflow-hidden shadow-sm">
+                <div className="overflow-x-auto w-full">
+                  <div className="bg-white rounded-lg border border-slate-200/60 overflow-hidden shadow-sm min-w-[600px]">
                   <div className="bg-red-950 text-white px-4 py-2.5 font-display font-bold text-xs md:text-sm uppercase tracking-wider flex justify-between">
                     <span>Alineación Local ({game.metadata.homeTeam})</span>
                     <div className="flex gap-2 text-right shrink-0 font-mono text-[10px] md:text-xs text-red-300">
@@ -809,6 +820,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       <span className="w-9 text-red-700">{(game.lineups.home.reduce((sum, p) => sum + (p.strikeout_pct ?? p.kPct ?? 0), 0) / game.lineups.home.length).toFixed(1)}%</span>
                     </div>
                   </div>
+                </div>
                 </div>
               </div>
             )}
@@ -1193,7 +1205,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                   <h5 className="font-display font-bold text-xs uppercase tracking-wider text-blue-900">
                     Splits Visitante ({game.metadata.awayTeam})
                   </h5>
-                  <div className="grid grid-cols-2 gap-4 text-xs font-mono">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
                     <div className="bg-blue-50/30 p-2.5 rounded border border-blue-100/50 space-y-1">
                       <div className="font-sans font-bold text-[10px] uppercase text-blue-800 mb-1">vs RHP</div>
                       <div className="flex justify-between"><span>AVG:</span> <strong>{game.offensive_splits.away.vsRhp.avg.toFixed(3).substring(1)}</strong></div>
@@ -1218,7 +1230,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                   <h5 className="font-display font-bold text-xs uppercase tracking-wider text-red-900">
                     Splits Local ({game.metadata.homeTeam})
                   </h5>
-                  <div className="grid grid-cols-2 gap-4 text-xs font-mono">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
                     <div className="bg-red-50/20 p-2.5 rounded border border-red-100/40 space-y-1">
                       <div className="font-sans font-bold text-[10px] uppercase text-red-800 mb-1">vs RHP</div>
                       <div className="flex justify-between"><span>AVG:</span> <strong>{game.offensive_splits.home.vsRhp.avg.toFixed(3).substring(1)}</strong></div>
@@ -1299,7 +1311,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                   <h5 className="font-display font-bold text-xs uppercase tracking-wider text-slate-850 border-b pb-1.5">
                     Ofensiva de Equipos - Sabermetría Real Calculada
                   </h5>
-                  <div className="grid grid-cols-2 gap-6 text-xs font-mono">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs font-mono">
                     <div className="space-y-1.5 bg-slate-50/50 p-2.5 rounded">
                       <div className="font-sans font-bold text-[10px] text-blue-900 uppercase mb-1">Ataque Visitante</div>
                       <div className="flex justify-between"><span>wOBA (Calculado):</span> <strong>{formatFloat(game.advanced_offense.away.wOba, 3)}</strong></div>

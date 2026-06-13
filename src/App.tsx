@@ -21,7 +21,9 @@ import {
   CheckCircle,
   FileCode,
   Search,
-  TrendingUp
+  TrendingUp,
+  Eye,
+  EyeOff
 } from "lucide-react";
 
 function getLocalDateString(): string {
@@ -49,6 +51,14 @@ export default function App() {
   const [searchQuery, setSearchQuery] = React.useState<string>("");
   const [pinnedGames, setPinnedGames] = React.useState<string[]>([]);
   const [showBetTracking, setShowBetTracking] = React.useState<boolean>(false);
+  const [globalExpandToggle, setGlobalExpandToggle] = React.useState<number>(0);
+  const [globalExpandTarget, setGlobalExpandTarget] = React.useState<boolean>(false);
+
+  const handleToggleExpandAll = () => {
+    const newTarget = !globalExpandTarget;
+    setGlobalExpandTarget(newTarget);
+    setGlobalExpandToggle(prev => prev + 1);
+  };
 
   React.useEffect(() => {
     localStorage.setItem("mlb_selected_date", selectedDate);
@@ -114,6 +124,41 @@ export default function App() {
     fetchErrorsDB();
     fetchExtractedDates();
   }, [selectedDate, fetchLocalDB, fetchErrorsDB, fetchExtractedDates]);
+
+  // Calculate total props extracted
+  const propsCount = React.useMemo(() => {
+    let ks = 0;
+    let tb = 0;
+    games.forEach(game => {
+      if (game.pitchers?.home?.strikeoutProp != null) ks++;
+      if (game.pitchers?.away?.strikeoutProp != null) ks++;
+      if (game.lineups?.home) {
+        game.lineups.home.forEach(batter => {
+          if (batter.totalBasesProp != null) tb++;
+        });
+      }
+      if (game.lineups?.away) {
+        game.lineups.away.forEach(batter => {
+          if (batter.totalBasesProp != null) tb++;
+        });
+      }
+    });
+    return { total: ks + tb, ks, tb };
+  }, [games]);
+
+  // Calculate missing pitchers for props tooltip
+  const missingPitchers = React.useMemo(() => {
+    const missing: { name: string, team: string }[] = [];
+    games.forEach(game => {
+      if (game.pitchers?.home && game.pitchers.home.strikeoutProp == null) {
+        missing.push({ name: game.pitchers.home.name, team: game.metadata.homeTeam });
+      }
+      if (game.pitchers?.away && game.pitchers.away.strikeoutProp == null) {
+        missing.push({ name: game.pitchers.away.name, team: game.metadata.awayTeam });
+      }
+    });
+    return missing;
+  }, [games]);
 
   // Hook de consulta periódica (polling) automático para juegos activos en progreso
   React.useEffect(() => {
@@ -273,8 +318,9 @@ export default function App() {
         gamesCount={games.length}
         totalGamesCount={totalDatabaseGames}
         errorsCount={errors.length}
+        propsCount={propsCount}
+        missingPitchers={missingPitchers}
         onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
-        onScrollToSheets={scrollToSheets}
       />
 
       <main className="flex-1 max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 w-full">
@@ -343,15 +389,33 @@ export default function App() {
               <h2 className="font-display font-bold text-2xl tracking-tight text-slate-800 flex items-center gap-2.5">
                 <Award className="text-baseball-blue" />
                 <span>Datos de Enfrentamientos Diarios</span>
+                {games.length > 0 && (
+                  <button
+                    onClick={handleToggleExpandAll}
+                    className="ml-4 flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 shadow-sm transition-colors"
+                  >
+                    {globalExpandTarget ? (
+                      <>
+                        <EyeOff size={14} className="text-slate-500" />
+                        Contraer todos
+                      </>
+                    ) : (
+                      <>
+                        <Eye size={14} className="text-slate-500" />
+                        Mostrar todos
+                      </>
+                    )}
+                  </button>
+                )}
               </h2>
               <p className="text-slate-500 text-xs mt-0.5">
                 Juegos registrados para la fecha: <strong className="text-slate-800">{selectedDate}</strong>
               </p>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto mt-3 sm:mt-0">
               {games.length > 0 && (
-                <div className="relative hidden sm:block">
+                <div className="relative w-full sm:w-auto">
                   <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
                     <Search size={14} className="text-slate-400" />
                   </div>
@@ -360,11 +424,11 @@ export default function App() {
                     placeholder="Buscar equipo..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-8 pr-3 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 w-48 transition-colors"
+                    className="pl-8 pr-3 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 w-full sm:w-48 transition-colors"
                   />
                 </div>
               )}
-              <div className="bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs font-mono font-medium text-slate-600 shadow-sm">
+              <div className="bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs font-mono font-medium text-slate-600 shadow-sm shrink-0">
                 Extracción: <strong className="text-slate-800 uppercase">{games.length > 0 ? "Completado" : "Pendiente"}</strong>
               </div>
             </div>
@@ -419,6 +483,8 @@ export default function App() {
                         onRefresh={() => handleRefreshGame(game.id, game.metadata.date)} 
                         isPinned={pinnedGames.includes(String(game.id))}
                         onTogglePin={() => togglePin(String(game.id))}
+                        globalExpandToggle={globalExpandToggle}
+                        globalExpandTarget={globalExpandTarget}
                       />
                     ))}
                   </div>
@@ -431,6 +497,8 @@ export default function App() {
                           onRefresh={() => handleRefreshGame(game.id, game.metadata.date)} 
                           isPinned={pinnedGames.includes(String(game.id))}
                           onTogglePin={() => togglePin(String(game.id))}
+                          globalExpandToggle={globalExpandToggle}
+                          globalExpandTarget={globalExpandTarget}
                         />
                       ))}
                     </div>
