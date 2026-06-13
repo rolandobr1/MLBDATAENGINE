@@ -473,9 +473,17 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
 
   // ── Date ─────────────────────────────────────────────────────────────────
   const [betDate, setBetDate]         = useState<string>(todayStr);
+  const [dateGames, setDateGames]     = useState<MLBGame[]>([]);
   const markedDates                   = useMemo(() => new Set(datesWithBets()), [betDate]);
   const [oddsFormat, setOddsFormat]   = useState<OddsFormat>(() => loadOddsFormat());
   const handleOddsFormat = (f: OddsFormat) => { setOddsFormat(f); saveOddsFormat(f); };
+
+  useEffect(() => {
+    fetch(`/api/games?date=${betDate}`)
+      .then(r => r.json())
+      .then(d => setDateGames(d.games || []))
+      .catch(e => console.error("Error al cargar dateGames para bets:", e));
+  }, [betDate]);
 
   // ── Bets ──────────────────────────────────────────────────────────────────
   const [bets, setBets]               = useState<Bet[]>(() => loadBets(todayStr()));
@@ -640,25 +648,33 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
 
   // Auto-resolve
   const resolvedBets = useMemo(() => bets.map(bet => {
-    const game     = games.find(g => String(g.id) === bet.gameId);
+    // Buscar en dateGames primero, y si no, en games (prop live)
+    const game     = dateGames.find(g => String(g.id) === bet.gameId) || games.find(g => String(g.id) === bet.gameId);
     const progress = resolveLiveProgress(bet, game);
     const status   = bet.status === "pending" && progress.autoStatus ? progress.autoStatus : bet.status;
     return { bet: { ...bet, status }, progress, game };
-  }), [bets, games]);
+  }), [bets, dateGames, games]);
 
   useEffect(() => {
-    setBets(prev => {
-      let changed = false;
-      const next = prev.map(b => {
-        const r = resolvedBets.find(r => r.bet.id === b.id);
-        if (r && r.bet.status !== b.status) {
-          changed = true;
-          return r.bet;
-        }
-        return b;
-      });
-      return changed ? next : prev;
+    const betsToUpdate = resolvedBets.filter(r => {
+      const original = bets.find(b => b.id === r.bet.id);
+      return original && original.status !== r.bet.status;
     });
+
+    if (betsToUpdate.length > 0) {
+      updateBets(prev => {
+        let changed = false;
+        const next = prev.map(b => {
+          const r = resolvedBets.find(res => res.bet.id === b.id);
+          if (r && r.bet.status !== b.status) {
+            changed = true;
+            return r.bet;
+          }
+          return b;
+        });
+        return changed ? next : prev;
+      });
+    }
   }, [resolvedBets]);
 
   const deleteBet = (id: number) => updateBets(prev => prev.filter(b => b.id !== id));
