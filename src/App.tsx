@@ -129,21 +129,60 @@ export default function App() {
   const propsCount = React.useMemo(() => {
     let ks = 0;
     let tb = 0;
+    let oddsApi = 0;
+    let dataStreak = 0;
+    let unknown = 0;
+
+    const countSource = (source?: string | null, book?: string | null) => {
+      const normalizedSource = String(source || "").toLowerCase();
+      const normalizedBook = String(book || "").toLowerCase();
+
+      if (normalizedSource.includes("odds_api") || normalizedSource.includes("odds api") || normalizedSource.includes("theoddsapi")) {
+        oddsApi++;
+        return;
+      }
+      if (normalizedSource.includes("datastreak") || normalizedSource.includes("data streak")) {
+        dataStreak++;
+        return;
+      }
+      if (normalizedBook.includes("oddsapi") || normalizedBook.includes("odds api")) {
+        oddsApi++;
+        return;
+      }
+      if (normalizedBook) {
+        dataStreak++;
+        return;
+      }
+      unknown++;
+    };
+
     games.forEach(game => {
-      if (game.pitchers?.home?.strikeoutProp != null) ks++;
-      if (game.pitchers?.away?.strikeoutProp != null) ks++;
+      if (game.pitchers?.home?.strikeoutProp != null) {
+        ks++;
+        countSource(game.pitchers.home.strikeoutPropSource);
+      }
+      if (game.pitchers?.away?.strikeoutProp != null) {
+        ks++;
+        countSource(game.pitchers.away.strikeoutPropSource);
+      }
       if (game.lineups?.home) {
         game.lineups.home.forEach(batter => {
-          if (batter.totalBasesProp != null) tb++;
+          if (batter.totalBasesProp != null) {
+            tb++;
+            countSource(batter.totalBasesPropSource, batter.totalBasesPropBook);
+          }
         });
       }
       if (game.lineups?.away) {
         game.lineups.away.forEach(batter => {
-          if (batter.totalBasesProp != null) tb++;
+          if (batter.totalBasesProp != null) {
+            tb++;
+            countSource(batter.totalBasesPropSource, batter.totalBasesPropBook);
+          }
         });
       }
     });
-    return { total: ks + tb, ks, tb };
+    return { total: ks + tb, ks, tb, oddsApi, dataStreak, unknown };
   }, [games]);
 
   // Calculate missing pitchers for props tooltip

@@ -436,6 +436,7 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
     diff_record_home_away: g.model_features?.diffRecordHomeAway ?? null,
     diff_starter_rest: g.model_features?.diffStarterRest ?? null,
     diff_bullpen_fatigue: g.model_features?.diffBullpenFatigue ?? null,
+    line_source: getBettingLineSource(g),
     resultado_carreras_local: g.game_result?.homeScore ?? null,
     resultado_carreras_visitante: g.game_result?.awayScore ?? null,
     resultado_ganador: g.game_result?.winner ?? null,
@@ -1017,6 +1018,16 @@ function hasRealBettingLines(game: any): boolean {
   ].some((value) => value !== null && value !== undefined);
 }
 
+function getBettingLineSource(game: any): string | null {
+  if (!hasRealBettingLines(game)) return null;
+  const explicitSource = game?.betting_lines?.lineSource;
+  if (explicitSource) return explicitSource;
+  const summary = String(game?.betting_lines?.lineMovementSummary || "").toLowerCase();
+  if (summary.includes("odds api")) return "the_odds_api";
+  if (summary.includes("datastreak") || summary.includes("data streak")) return "datastreak";
+  return null;
+}
+
 /** Fetch with an AbortController timeout (ms). Prevents indefinite hangs on MLB API. */
 function fetchWithTimeout(url: string, ms = 8000): Promise<Response> {
   const controller = new AbortController();
@@ -1206,6 +1217,7 @@ function enrichLineupWithTotalBasesProps(lineup: any[], rows: any[]) {
       totalBasesPropOverOdds: safeFloat(match.odds),
       totalBasesPropUnderOdds: safeFloat(match.under_odds),
       totalBasesPropBook: match.vendor || null,
+      totalBasesPropSource: match.source || (match.vendor === "TheOddsAPI" ? "the_odds_api" : "datastreak"),
       totalBasesPropHitRate: safeFloat(match.hit_rate_pct ?? match.hit_rate),
       totalBasesPropHitRateDisplay: match.hit_rate_display || null
     };
@@ -1237,7 +1249,8 @@ function findDataStreakPitcherKProp(rows: any[], pitcherName: string, pitcherTea
     point: safeFloat(match.line),
     overOdds: safeFloat(match.odds),
     underOdds: safeFloat(match.under_odds),
-    book: match.vendor || "datastreak"
+    book: match.vendor || "datastreak",
+    source: match.source || "datastreak"
   };
 }
 
@@ -3005,7 +3018,7 @@ function buildDirectGameData(
         for (const outcome of batterTotalBasesOutcomes) {
            const pName = outcome.description;
            if (!mappedBatterProps.has(pName)) {
-              mappedBatterProps.set(pName, { player_name: pName, vendor: 'TheOddsAPI' });
+              mappedBatterProps.set(pName, { player_name: pName, vendor: 'TheOddsAPI', source: 'the_odds_api' });
            }
            const pData = mappedBatterProps.get(pName);
            pData.line = outcome.point;
@@ -3032,7 +3045,7 @@ function buildDirectGameData(
            if (outcomes.length > 0) {
               const over = outcomes.find((o:any) => o.name === 'Over');
               const under = outcomes.find((o:any) => o.name === 'Under');
-              return { point: over?.point || under?.point || null, overOdds: over?.price || null, underOdds: under?.price || null };
+              return { point: over?.point || under?.point || null, overOdds: over?.price || null, underOdds: under?.price || null, book: "TheOddsAPI", source: "the_odds_api" };
            }
            return null;
         };
@@ -3052,6 +3065,7 @@ function buildDirectGameData(
         totalRuns: totals?.outcomes.find((o: any) => o.name === 'Over')?.point ?? totals?.outcomes.find((o: any) => o.name === 'Under')?.point ?? null,
         overOdds: totals?.outcomes.find((o: any) => o.name === 'Over')?.price ?? null,
         underOdds: totals?.outcomes.find((o: any) => o.name === 'Under')?.price ?? null,
+        lineSource: "the_odds_api",
         lineMovementSummary: "Líneas de cuotas provistas por The Odds API (Modo Directo)."
       };
     }
@@ -3077,6 +3091,7 @@ function buildDirectGameData(
       currentMoneylineHome: null, currentMoneylineAway: null,
       runLineHome: null, runLineHomeOdds: null, runLineAway: null, runLineAwayOdds: null,
       totalRuns: null, overOdds: null, underOdds: null,
+      lineSource: null,
       lineMovementSummary: "Sin lineas reales disponibles."
     };
   }
@@ -3101,6 +3116,7 @@ function buildDirectGameData(
         strikeoutProp: homeKPropData?.point ?? null,
         strikeoutPropOverOdds: homeKPropData?.overOdds ?? null,
         strikeoutPropUnderOdds: homeKPropData?.underOdds ?? null,
+        strikeoutPropSource: homeKPropData?.source ?? null,
         pitchHand: realMLBData?.pitchers?.home?.pitchHand || "R",
         pitcher_allowed_avg_vs_lhb: safeFloat(realMLBData?.pitchers?.home?.pitcher_allowed_avg_vs_lhb) ?? 0,
         pitcher_allowed_avg_vs_rhb: safeFloat(realMLBData?.pitchers?.home?.pitcher_allowed_avg_vs_rhb) ?? 0,
@@ -3122,6 +3138,7 @@ function buildDirectGameData(
         strikeoutProp: awayKPropData?.point ?? null,
         strikeoutPropOverOdds: awayKPropData?.overOdds ?? null,
         strikeoutPropUnderOdds: awayKPropData?.underOdds ?? null,
+        strikeoutPropSource: awayKPropData?.source ?? null,
         pitchHand: realMLBData?.pitchers?.away?.pitchHand || "R",
         pitcher_allowed_avg_vs_lhb: safeFloat(realMLBData?.pitchers?.away?.pitcher_allowed_avg_vs_lhb) ?? 0,
         pitcher_allowed_avg_vs_rhb: safeFloat(realMLBData?.pitchers?.away?.pitcher_allowed_avg_vs_rhb) ?? 0,
@@ -3211,6 +3228,7 @@ function buildDirectGameData(
         totalBasesPropOverOdds: safeFloat(p.totalBasesPropOverOdds),
         totalBasesPropUnderOdds: safeFloat(p.totalBasesPropUnderOdds),
         totalBasesPropBook: p.totalBasesPropBook ?? null,
+        totalBasesPropSource: p.totalBasesPropSource ?? null,
         totalBasesPropHitRate: safeFloat(p.totalBasesPropHitRate),
         totalBasesPropHitRateDisplay: p.totalBasesPropHitRateDisplay ?? null
       })),
@@ -3256,6 +3274,7 @@ function buildDirectGameData(
         totalBasesPropOverOdds: safeFloat(p.totalBasesPropOverOdds),
         totalBasesPropUnderOdds: safeFloat(p.totalBasesPropUnderOdds),
         totalBasesPropBook: p.totalBasesPropBook ?? null,
+        totalBasesPropSource: p.totalBasesPropSource ?? null,
         totalBasesPropHitRate: safeFloat(p.totalBasesPropHitRate),
         totalBasesPropHitRateDisplay: p.totalBasesPropHitRateDisplay ?? null
       }))

@@ -10,7 +10,7 @@ interface HeaderProps {
   gamesCount: number;
   totalGamesCount: number;
   errorsCount: number;
-  propsCount?: { total: number, ks: number, tb: number };
+  propsCount?: { total: number, ks: number, tb: number, oddsApi?: number, dataStreak?: number, unknown?: number };
   missingPitchers?: { name: string, team: string }[];
   onOpenDiagnostics: () => void;
 }
@@ -87,7 +87,7 @@ export const Header: React.FC<HeaderProps> = ({
               <>
                 <div className="w-px h-4 bg-slate-800"></div>
                 <div className={`flex items-center gap-2 ${propsCount.total === 0 ? "text-amber-400" : "text-slate-300"}`} title="Props extraídos de la API">
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <span className="font-semibold">Props:</span>
                     <span title="Ponches (Strikeouts) de Lanzadores" className="bg-slate-800 border border-slate-700 px-1.5 py-0.5 rounded text-[10px] font-mono">
                       <strong className={propsCount.ks === 0 ? "text-amber-400" : "text-blue-300"}>{propsCount.ks}</strong> Ks
@@ -95,6 +95,17 @@ export const Header: React.FC<HeaderProps> = ({
                     <span title="Bases Totales (Total Bases) de Bateadores" className="bg-slate-800 border border-slate-700 px-1.5 py-0.5 rounded text-[10px] font-mono">
                       <strong className={propsCount.tb === 0 ? "text-amber-400" : "text-emerald-300"}>{propsCount.tb}</strong> TB
                     </span>
+                    <span title="Props extraidos desde The Odds API" className="bg-blue-950/70 border border-blue-800/70 px-1.5 py-0.5 rounded text-[10px] font-mono text-blue-200">
+                      API <strong className="text-white">{propsCount.oddsApi ?? 0}</strong>
+                    </span>
+                    <span title="Props extraidos desde DataStreak" className="bg-emerald-950/70 border border-emerald-800/70 px-1.5 py-0.5 rounded text-[10px] font-mono text-emerald-200">
+                      DS <strong className="text-white">{propsCount.dataStreak ?? 0}</strong>
+                    </span>
+                    {(propsCount.unknown ?? 0) > 0 && (
+                      <span title="Props existentes sin identificador de fuente guardado" className="bg-amber-950/70 border border-amber-800/70 px-1.5 py-0.5 rounded text-[10px] font-mono text-amber-200">
+                        Sin ID <strong className="text-white">{propsCount.unknown}</strong>
+                      </span>
+                    )}
                   </div>
                   {propsCount.total === 0 && <AlertCircle size={12} className="animate-pulse" />}
                   {missingPitchers.length > 0 && (

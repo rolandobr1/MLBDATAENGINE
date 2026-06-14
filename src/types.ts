@@ -29,6 +29,7 @@ export interface PitcherStats {
   strikeoutProp?: number | null; // e.g. 5.5
   strikeoutPropOverOdds?: number | null; // e.g. -110
   strikeoutPropUnderOdds?: number | null; // e.g. -120
+  strikeoutPropSource?: string | null;
   pitchHand?: string; // "L" or "R"
   pitcher_allowed_avg_vs_lhb?: number;
   pitcher_allowed_avg_vs_rhb?: number;
@@ -70,6 +71,7 @@ export interface BettingLines {
   totalRuns: number | null; // Over/Under limit, e.g. 8.5
   overOdds: number | null;
   underOdds: number | null;
+  lineSource?: string | null;
   lineMovementSummary: string; // e.g., "Uptrend on Home"
 }
 
@@ -298,6 +300,7 @@ export interface BatterStats {
   totalBasesPropOverOdds?: number | null;
   totalBasesPropUnderOdds?: number | null;
   totalBasesPropBook?: string | null;
+  totalBasesPropSource?: string | null;
   totalBasesPropHitRate?: number | null;
   totalBasesPropHitRateDisplay?: string | null;
 
