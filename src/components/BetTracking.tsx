@@ -462,7 +462,7 @@ const STEPS = [
 
 interface BetTrackingProps {
   games: MLBGame[];
-  onRefreshGame: (gameId: string) => Promise<void>;
+  onRefreshGame: (gameId: string, date: string) => Promise<MLBGame | void>;
 }
 
 export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }) => {
@@ -679,9 +679,21 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
 
   const deleteBet = (id: number) => updateBets(prev => prev.filter(b => b.id !== id));
 
+  const replaceDateGame = (updatedGame: MLBGame | void) => {
+    if (!updatedGame) return;
+    setDateGames(prev => {
+      const exists = prev.some(g => String(g.id) === String(updatedGame.id));
+      if (!exists) return [...prev, updatedGame];
+      return prev.map(g => String(g.id) === String(updatedGame.id) ? updatedGame : g);
+    });
+  };
+
   const handleRefreshBet = async (gameId: string) => {
     setRefreshingIds(prev => new Set(prev).add(gameId));
-    try { await onRefreshGame(gameId); }
+    try {
+      const updatedGame = await onRefreshGame(gameId, betDate);
+      replaceDateGame(updatedGame);
+    }
     finally { setRefreshingIds(prev => { const n = new Set(prev); n.delete(gameId); return n; }); }
   };
 
@@ -693,7 +705,10 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     try {
       await Promise.all(pendingGameIds.map(async (gid) => {
         setRefreshingIds(prev => new Set(prev).add(gid));
-        try { await onRefreshGame(gid); }
+        try {
+          const updatedGame = await onRefreshGame(gid, betDate);
+          replaceDateGame(updatedGame);
+        }
         finally { setRefreshingIds(prev => { const n = new Set(prev); n.delete(gid); return n; }); }
       }));
     } finally {

@@ -312,6 +312,7 @@ export default function App() {
         if (data.success && data.game) {
           setGames(prevGames => prevGames.map(g => String(g.id) === String(gameId) ? data.game : g));
           fetchErrorsDB();
+          return data.game;
         } else {
           alert("Error al actualizar juego: " + (data.error || "Desconocido"));
         }
@@ -415,7 +416,7 @@ export default function App() {
             <div className="p-6">
               <BetTracking
                 games={games}
-                onRefreshGame={(gameId) => handleRefreshGame(gameId, selectedDate)}
+                onRefreshGame={handleRefreshGame}
               />
             </div>
           </section>
