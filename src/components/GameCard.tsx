@@ -5,6 +5,7 @@
 
 import React from "react";
 import { MLBGame } from "../types";
+import { getTeamLogo, getTeamColor, getTeamAbbr } from "../utils/teamLogos";
 import {
   TrendingUp,
   ShieldAlert,
@@ -29,43 +30,6 @@ interface GameCardProps {
   globalExpandTarget?: boolean;
 }
 
-const MLB_TEAM_ABBR: Record<string, string> = {
-  "Arizona Diamondbacks": "ARI",
-  "Atlanta Braves": "ATL",
-  "Baltimore Orioles": "BAL",
-  "Boston Red Sox": "BOS",
-  "Chicago Cubs": "CHC",
-  "Chicago White Sox": "CHW",
-  "Cincinnati Reds": "CIN",
-  "Cleveland Guardians": "CLE",
-  "Colorado Rockies": "COL",
-  "Detroit Tigers": "DET",
-  "Houston Astros": "HOU",
-  "Kansas City Royals": "KC",
-  "Los Angeles Angels": "LAA",
-  "Los Angeles Dodgers": "LAD",
-  "Miami Marlins": "MIA",
-  "Milwaukee Brewers": "MIL",
-  "Minnesota Twins": "MIN",
-  "New York Mets": "NYM",
-  "New York Yankees": "NYY",
-  "Oakland Athletics": "OAK",
-  "Athletics": "OAK",
-  "Philadelphia Phillies": "PHI",
-  "Pittsburgh Pirates": "PIT",
-  "San Diego Padres": "SD",
-  "San Francisco Giants": "SF",
-  "Seattle Mariners": "SEA",
-  "St. Louis Cardinals": "STL",
-  "Tampa Bay Rays": "TB",
-  "Texas Rangers": "TEX",
-  "Toronto Blue Jays": "TOR",
-  "Washington Nationals": "WSH"
-};
-
-const getTeamAbbr = (teamName: string): string => {
-  return MLB_TEAM_ABBR[teamName] || teamName;
-};
 
 export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, onTogglePin, globalExpandToggle, globalExpandTarget }) => {
   const [expanded, setExpanded] = React.useState(false);
@@ -384,7 +348,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
   };
 
   return (
-    <div className="rounded-xl overflow-hidden shadow-sm hover:shadow-md transition duration-200 font-sans bg-white border border-slate-200">
+    <div className="rounded-xl overflow-hidden shadow-sm hover:shadow-md transition duration-200 font-sans bg-white border border-slate-200 h-full flex flex-col">
       {selectedPitcherData && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" onClick={() => setSelectedPitcherSide(null)}>
           <div
@@ -422,81 +386,113 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
         </div>
       )}
 
-      {/* Game Card Header Block */}
-      <div className="bg-slate-900 text-white p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
+      {/* Game Card Header Block (Colorful Banner) */}
+      <div 
+        className="text-white flex flex-row justify-between items-stretch overflow-hidden rounded-t-xl border-b border-slate-200 h-[100px] sm:h-[160px]"
+        style={{
+          background: `linear-gradient(110deg, ${getTeamColor(game.metadata.awayTeam)} 0%, ${getTeamColor(game.metadata.awayTeam)} 49.5%, #ffffff30 49.5%, #ffffff30 50%, ${getTeamColor(game.metadata.homeTeam)} 50%, ${getTeamColor(game.metadata.homeTeam)} 100%)`
+        }}
+      >
+        <div className="w-full flex flex-row items-center justify-between px-3 sm:px-12 py-0 h-full">
+            {/* Away Team */}
+            <div className="flex items-center justify-start gap-2 sm:gap-4 w-1/2 pr-2">
+              {getTeamLogo(game.metadata.awayTeam) && (
+                <div className="w-12 h-12 sm:w-20 sm:h-20 bg-white rounded-full flex items-center justify-center p-1.5 sm:p-2 shadow-xl shrink-0 border-2 border-white/20">
+                  <img src={getTeamLogo(game.metadata.awayTeam) as string} alt={game.metadata.awayTeam} className="w-full h-full object-contain" />
+                </div>
+              )}
+              <div className="flex flex-col items-start">
+                <h3 className="font-display font-bold text-xl leading-tight drop-shadow-lg tracking-tight sm:hidden">
+                  {getTeamAbbr(game.metadata.awayTeam)}
+                </h3>
+                <h3 className="font-display font-bold text-3xl leading-tight drop-shadow-lg tracking-tight hidden sm:block">
+                  {game.metadata.awayTeam}
+                </h3>
+                <span className="text-[9px] sm:text-[11px] font-mono font-bold uppercase tracking-widest text-white/80 drop-shadow-md mt-1 bg-black/20 px-1.5 py-0.5 rounded backdrop-blur-sm">
+                  Visitante
+                </span>
+              </div>
+            </div>
+
+            {/* Home Team */}
+            <div className="flex items-center justify-end gap-2 sm:gap-4 w-1/2 pl-2">
+              <div className="flex flex-col items-end">
+                <h3 className="font-display font-bold text-xl leading-tight drop-shadow-lg tracking-tight sm:hidden text-right">
+                  {getTeamAbbr(game.metadata.homeTeam)}
+                </h3>
+                <h3 className="font-display font-bold text-3xl leading-tight drop-shadow-lg text-right tracking-tight hidden sm:block">
+                  {game.metadata.homeTeam}
+                </h3>
+                <span className="text-[9px] sm:text-[11px] font-mono font-bold uppercase tracking-widest text-white/80 drop-shadow-md mt-1 bg-black/20 px-1.5 py-0.5 rounded backdrop-blur-sm text-right">
+                  Local
+                </span>
+              </div>
+              {getTeamLogo(game.metadata.homeTeam) && (
+                <div className="w-12 h-12 sm:w-20 sm:h-20 bg-white rounded-full flex items-center justify-center p-1.5 sm:p-2 shadow-xl shrink-0 border-2 border-white/20">
+                  <img src={getTeamLogo(game.metadata.homeTeam) as string} alt={game.metadata.homeTeam} className="w-full h-full object-contain" />
+                </div>
+              )}
+            </div>
+        </div>
+      </div>
+
+      {/* Game Info & Actions Bar */}
+      <div className="bg-slate-50 border-b border-slate-200 px-4 py-3 flex flex-col lg:flex-row justify-between items-center gap-4">
+        {/* Left Side: Metadata */}
+        <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto justify-center lg:justify-start">
+          <span className="text-[10px] font-mono tracking-widest text-slate-500 uppercase">
+            Estadio: <strong className="text-slate-700">{game.metadata.venue}</strong>
+          </span>
+          <span className="text-slate-300 hidden sm:inline">•</span>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-mono tracking-widest text-slate-400 uppercase">
-              Estadio: {game.metadata.venue}
-            </span>
-            <span className="text-slate-500">•</span>
-            <span className="text-[10px] font-mono text-blue-400">ID: {game.id}</span>
-            <span className="text-slate-500">•</span>
+            <span className="text-[10px] font-mono text-slate-500">ID: {game.id}</span>
             {game.validation?.isValid ? (
-              <span className="bg-emerald-950/50 border border-emerald-500/20 text-emerald-400 text-[9px] font-bold px-2 py-0.5 rounded flex items-center gap-1">
+              <span className="bg-emerald-100 border border-emerald-200 text-emerald-700 text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
                 <CheckCircle size={10} />
                 <span>Validado</span>
               </span>
             ) : (
-              <span className="bg-amber-950/50 border border-amber-500/20 text-amber-400 text-[9px] font-bold px-2 py-0.5 rounded flex items-center gap-1">
+              <span className="bg-amber-100 border border-amber-200 text-amber-700 text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
                 <AlertTriangle size={10} />
-                <span>Error Verificación</span>
+                <span>Error</span>
               </span>
             )}
           </div>
-
-          <div className="font-display font-bold text-xl tracking-tight mt-1">
-            {game.metadata.awayTeam} <span className="text-slate-400 font-sans font-light">en</span> {game.metadata.homeTeam}
+          <span className="text-slate-300 hidden sm:inline">•</span>
+          <div className="text-slate-500 text-[10px] uppercase font-mono">
+            {game.metadata.date} • {game.metadata.time}
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 text-xs font-mono">
-          {game.weather && (
-            <div className="hidden lg:flex bg-slate-800 border border-slate-700/60 rounded px-2.5 py-1 text-slate-300 text-[10px] items-center gap-2">
-              <span className="font-bold text-slate-100">{game.weather.temp}°C</span>
-              <span className="text-slate-600">|</span>
-              <span>Humedad: {game.weather.humidity}%</span>
-              <span className="text-slate-600">|</span>
-              <span>Viento: {game.weather.windSpeed} km/h</span>
-              <span className="text-slate-600">|</span>
-              <span className="text-blue-400 font-medium">{game.weather.skyStatus}</span>
-            </div>
-          )}
-          <div className="text-right shrink-0 flex flex-col items-end justify-center">
-            <div className="text-slate-400 text-[10px] uppercase font-mono">
-              {game.metadata.date} • {game.metadata.time}
-            </div>
+        {/* Right Side: Score & Buttons */}
+        <div className="flex flex-wrap items-center justify-center lg:justify-end gap-4 w-full lg:w-auto">
+          {/* Score / Status */}
+          <div className="flex items-center gap-3">
             {game.game_result && !["Scheduled", "Pre-Game", "Warmup"].includes(game.game_result.gameStatus) ? (
-              <div className="flex items-center gap-2 mt-0.5">
-                <div className="text-white font-display font-bold text-lg bg-slate-800 px-2 py-0.5 rounded border border-slate-700 leading-none">
+              <>
+                <div className="font-display font-bold text-lg text-slate-800 leading-none">
                   {game.game_result.awayScore} - {game.game_result.homeScore}
                 </div>
-                <div className={`text-[10px] font-mono font-bold uppercase px-1.5 py-0.5 rounded ${game.game_result.gameStatus.includes("Final") || game.game_result.gameStatus === "Game Over"
-                    ? "bg-emerald-950 text-emerald-400 border border-emerald-800"
-                    : "bg-amber-950 text-amber-400 border border-amber-800 animate-pulse"
+                <div className={`text-[9px] font-mono font-bold uppercase px-2 py-1 rounded shadow-sm ${game.game_result.gameStatus.includes("Final") || game.game_result.gameStatus === "Game Over"
+                    ? "bg-slate-800 text-slate-100"
+                    : "bg-red-100 text-red-700 animate-pulse border border-red-200"
                   }`}>
                   {game.game_result.gameStatus}
                   {game.linescore?.currentInning && !game.game_result.gameStatus.includes("Final") && game.game_result.gameStatus !== "Game Over" && (
                     ` • ${game.linescore.inningHalf === "Top" ? "Alta" : "Baja"} ${game.linescore.currentInning}°`
                   )}
                 </div>
-              </div>
+              </>
             ) : (
-              <div className="text-slate-300 font-bold mt-0.5 text-xs">Por Jugar</div>
-            )}
-            {game.timestamp && (
-              <div className="text-[9px] text-slate-400 mt-1 font-mono tracking-tighter">
-                Act: {formatLastUpdate()}
-              </div>
+              <div className="text-slate-500 font-bold text-xs tracking-wide uppercase">Por Jugar</div>
             )}
           </div>
-          <div className="flex items-center gap-1.5 shrink-0">
+
+          {/* Buttons */}
+          <div className="flex items-center gap-2 border-l border-slate-200 pl-4">
             <button
               onClick={(e) => { e.stopPropagation(); setIsCardExpanded(!isCardExpanded); }}
-              className={`p-2 rounded-lg border transition duration-150 flex items-center justify-center shrink-0 cursor-pointer ${isCardExpanded
-                  ? "border-emerald-500 bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30"
-                  : "border-slate-700 bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-white"
-                }`}
+              className={`p-2 rounded-lg border transition duration-150 flex items-center justify-center shrink-0 cursor-pointer shadow-sm ${isCardExpanded ? "bg-emerald-100 border-emerald-200 text-emerald-700" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900"}`}
               title={isCardExpanded ? "Ocultar detalles del juego" : "Mostrar detalles del juego"}
             >
               {isCardExpanded ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -504,20 +500,17 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
             {onTogglePin && (
               <button
                 onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
-                className={`p-2 rounded-lg border transition duration-150 flex items-center justify-center shrink-0 cursor-pointer ${isPinned
-                    ? "border-blue-500 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30"
-                    : "border-slate-700 bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-white"
-                  }`}
+                className={`p-2 rounded-lg border transition duration-150 flex items-center justify-center shrink-0 cursor-pointer shadow-sm ${isPinned ? "bg-blue-100 border-blue-200 text-blue-700" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900"}`}
                 title={isPinned ? "Desfijar de la lista" : "Fijar arriba de la lista"}
               >
-                <Pin size={14} className={isPinned ? "fill-blue-400" : ""} />
+                <Pin size={14} className={isPinned ? "fill-blue-600" : ""} />
               </button>
             )}
             {onRefresh && (
               <button
                 onClick={handleRefreshClick}
                 disabled={isRefreshing}
-                className={`p-2 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white transition duration-150 flex items-center justify-center shrink-0 cursor-pointer disabled:opacity-50`}
+                className="p-2 rounded-lg border bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition duration-150 flex items-center justify-center shrink-0 cursor-pointer disabled:opacity-50 shadow-sm"
                 title="Actualizar datos de este encuentro"
               >
                 <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
@@ -525,7 +518,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
             )}
             <button
               onClick={handleExportGameClick}
-              className="p-2 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white transition duration-150 flex items-center justify-center shrink-0 cursor-pointer"
+              className="p-2 rounded-lg border bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition duration-150 flex items-center justify-center shrink-0 cursor-pointer shadow-sm"
               title="Exportar solo este juego"
             >
               <Download size={14} />
@@ -571,7 +564,12 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                   ({game.pitchers.away.pitchHand || "R"})
                 </span>
               </button>
-              <span className="text-[9px] font-bold font-mono tracking-wider bg-blue-100 uppercase text-blue-800 px-1.5 py-0.5 rounded">
+              <span className="text-[9px] font-bold font-mono tracking-wider bg-blue-100 uppercase text-blue-800 px-1.5 py-0.5 rounded flex items-center gap-1 w-fit">
+                {getTeamLogo(game.metadata.awayTeam) && (
+                  <div className="w-4 h-4 bg-white rounded-full flex items-center justify-center p-[2px] shadow-sm shrink-0">
+                    <img src={getTeamLogo(game.metadata.awayTeam) as string} alt={game.metadata.awayTeam} className="w-full h-full object-contain" />
+                  </div>
+                )}
                 Visitante
               </span>
 
@@ -617,7 +615,12 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                   ({game.pitchers.home.pitchHand || "R"})
                 </span>
               </button>
-              <span className="text-[9px] font-bold font-mono tracking-wider bg-red-100 uppercase text-red-800 px-1.5 py-0.5 rounded">
+              <span className="text-[9px] font-bold font-mono tracking-wider bg-red-100 uppercase text-red-800 px-1.5 py-0.5 rounded flex items-center gap-1 w-fit">
+                {getTeamLogo(game.metadata.homeTeam) && (
+                  <div className="w-4 h-4 bg-white rounded-full flex items-center justify-center p-[2px] shadow-sm shrink-0">
+                    <img src={getTeamLogo(game.metadata.homeTeam) as string} alt={game.metadata.homeTeam} className="w-full h-full object-contain" />
+                  </div>
+                )}
                 Local
               </span>
 

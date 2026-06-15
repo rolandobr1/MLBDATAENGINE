@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { MLBGame } from "../types";
 import { syncBets, saveBetsDb, registerUserDb, syncUsers, deleteUserDb } from "../services/betService";
+import { getTeamLogo, getTeamColor, getTeamAbbr } from "../utils/teamLogos";
 
 // ════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -478,6 +479,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
   // ── User ──────────────────────────────────────────────────────────────────
   const [userName, setUserName]       = useState<string>(() => loadUsername());
   const [showUserModal, setShowUserModal] = useState<boolean>(() => !loadUsername());
+  const [showGameModal, setShowGameModal] = useState<boolean>(false);
 
   // ── Date ─────────────────────────────────────────────────────────────────
   const [betDate, setBetDate]         = useState<string>(todayStr);
@@ -776,6 +778,71 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     <div className="space-y-4 font-sans">
       {showUserModal && <UserModal onSave={handleUserSave} onClose={() => setShowUserModal(false)} onDeleteUser={handleDeleteUser} globalUsers={globalUsers} />}
 
+      {showGameModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col max-h-[85vh] animate-fade-in">
+            <div className="flex justify-between items-center p-4 border-b border-slate-100 bg-slate-50">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                <Trophy size={16} className="text-violet-600" />
+                Selecciona un Juego
+              </h3>
+              <button onClick={() => setShowGameModal(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-md hover:bg-slate-200 transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+            
+            <div className="p-3 overflow-y-auto space-y-3 bg-slate-50/50">
+              {games.length === 0 ? (
+                <p className="text-sm text-slate-500 text-center py-6">No hay juegos cargados para este día.</p>
+              ) : (
+                games.map(g => (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedGameId(String(g.id));
+                      setSelectedTeamSide("");
+                      setShowGameModal(false);
+                    }}
+                    className="w-full rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all border border-slate-200 group text-left relative focus:outline-none focus:ring-2 focus:ring-violet-400"
+                  >
+                    <div className="absolute inset-0 opacity-10 group-hover:opacity-20 transition-opacity" style={{
+                      background: `linear-gradient(110deg, ${getTeamColor(g.metadata.awayTeam)} 0%, ${getTeamColor(g.metadata.awayTeam)} 50%, ${getTeamColor(g.metadata.homeTeam)} 50%, ${getTeamColor(g.metadata.homeTeam)} 100%)`
+                    }} />
+                    <div className="relative p-3 flex justify-between items-center bg-white/90 backdrop-blur-sm">
+                      {/* Away */}
+                      <div className="flex flex-col items-center gap-1 w-[40%]">
+                        <div className="w-12 h-12 bg-white rounded-full shadow-sm border border-slate-100 flex items-center justify-center p-1.5 shrink-0">
+                          <img src={getTeamLogo(g.metadata.awayTeam) as string} className="w-full h-full object-contain" alt="" />
+                        </div>
+                        <span className="text-xs font-bold text-slate-800 text-center leading-tight">
+                          {getTeamAbbr(g.metadata.awayTeam)}
+                        </span>
+                      </div>
+                      
+                      {/* @ */}
+                      <div className="text-xs font-black text-slate-300 italic shrink-0 w-[20%] text-center">
+                        @
+                      </div>
+
+                      {/* Home */}
+                      <div className="flex flex-col items-center gap-1 w-[40%]">
+                        <div className="w-12 h-12 bg-white rounded-full shadow-sm border border-slate-100 flex items-center justify-center p-1.5 shrink-0">
+                          <img src={getTeamLogo(g.metadata.homeTeam) as string} className="w-full h-full object-contain" alt="" />
+                        </div>
+                        <span className="text-xs font-bold text-slate-800 text-center leading-tight">
+                          {getTeamAbbr(g.metadata.homeTeam)}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Toolbar ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-200">
         {/* Date nav */}
@@ -897,11 +964,27 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Juego del día</label>
                   {games.length === 0
                     ? <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center gap-2"><AlertTriangle size={13} /> Extrae datos primero.</p>
-                    : <select value={selectedGameId} onChange={e => { setSelectedGameId(e.target.value); setSelectedTeamSide(""); }}
-                        className="w-full border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white">
-                        <option value="">— Selecciona el juego —</option>
-                        {games.map(g => <option key={g.id} value={String(g.id)}>{g.metadata.awayTeam} @ {g.metadata.homeTeam}</option>)}
-                      </select>}
+                    : (
+                      <button 
+                        type="button" 
+                        onClick={() => setShowGameModal(true)}
+                        className="w-full border border-slate-200 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white text-left flex justify-between items-center transition-shadow hover:shadow-sm"
+                      >
+                        {selectedGame ? (
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center">
+                              <img src={getTeamLogo(selectedGame.metadata.awayTeam) as string} className="w-6 h-6 object-contain" alt="" />
+                              <span className="mx-1.5 text-xs text-slate-400 font-bold italic">@</span>
+                              <img src={getTeamLogo(selectedGame.metadata.homeTeam) as string} className="w-6 h-6 object-contain" alt="" />
+                            </div>
+                            <span className="font-semibold text-slate-800">{getTeamAbbr(selectedGame.metadata.awayTeam)} @ {getTeamAbbr(selectedGame.metadata.homeTeam)}</span>
+                          </div>
+                        ) : (
+                          <span className="text-slate-500 font-medium">— Selecciona el juego —</span>
+                        )}
+                        <ChevronDown size={16} className="text-slate-400" />
+                      </button>
+                    )}
                 </div>
                 {selectedGame && (
                   <div>

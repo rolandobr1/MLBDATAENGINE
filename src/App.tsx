@@ -502,37 +502,19 @@ export default function App() {
                 );
               });
 
-              if (filteredGames.length === 0) {
+                if (filteredGames.length === 0) {
+                  return (
+                    <div className="text-center py-8 text-slate-500 text-sm italic border border-dashed border-slate-300 rounded-lg bg-slate-50">
+                      No se encontraron partidos que coincidan con "{searchQuery}".
+                    </div>
+                  );
+                }
+
                 return (
-                  <div className="text-center py-8 text-slate-500 text-sm italic border border-dashed border-slate-300 rounded-lg bg-slate-50">
-                    No se encontraron partidos que coincidan con "{searchQuery}".
-                  </div>
-                );
-              }
-
-              const leftCol = filteredGames.filter((_, i) => i % 2 === 0);
-              const rightCol = filteredGames.filter((_, i) => i % 2 === 1);
-
-              return (
-                <div className="flex flex-col xl:flex-row gap-6 items-start">
-                  <div className="flex-1 flex flex-col gap-6 w-full xl:w-1/2">
-                    {leftCol.map((game) => (
-                      <GameCard 
-                        key={game.id} 
-                        game={game} 
-                        onRefresh={() => handleRefreshGame(game.id, game.metadata.date)} 
-                        isPinned={pinnedGames.includes(String(game.id))}
-                        onTogglePin={() => togglePin(String(game.id))}
-                        globalExpandToggle={globalExpandToggle}
-                        globalExpandTarget={globalExpandTarget}
-                      />
-                    ))}
-                  </div>
-                  {rightCol.length > 0 && (
-                    <div className="flex-1 flex flex-col gap-6 w-full xl:w-1/2">
-                      {rightCol.map((game) => (
+                  <div className="columns-1 xl:columns-2 gap-6 space-y-6">
+                    {filteredGames.map((game) => (
+                      <div key={game.id} className="break-inside-avoid">
                         <GameCard 
-                          key={game.id} 
                           game={game} 
                           onRefresh={() => handleRefreshGame(game.id, game.metadata.date)} 
                           isPinned={pinnedGames.includes(String(game.id))}
@@ -540,12 +522,11 @@ export default function App() {
                           globalExpandToggle={globalExpandToggle}
                           globalExpandTarget={globalExpandTarget}
                         />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </>
           )}
         </section>

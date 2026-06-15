@@ -3091,10 +3091,12 @@ function buildDirectGameData(
 
   if (realOddsData && Array.isArray(realOddsData)) {
     const matchOdds = realOddsData.find((o: any) => {
-      const oHomeAbbr = getTeamAbbr(o.home_team) || o.home_team;
-      const oAwayAbbr = getTeamAbbr(o.away_team) || o.away_team;
-      return (oHomeAbbr === homeName || o.home_team.includes(homeName) || homeName.includes(o.home_team)) &&
-             (oAwayAbbr === awayName || o.away_team.includes(awayName) || awayName.includes(o.away_team));
+      const oHome = o.home_team.toLowerCase();
+      const oAway = o.away_team.toLowerCase();
+      const dbHome = homeName.toLowerCase();
+      const dbAway = awayName.toLowerCase();
+      return (oHome === dbHome || oHome.includes(dbHome) || dbHome.includes(oHome)) &&
+             (oAway === dbAway || oAway.includes(dbAway) || dbAway.includes(oAway));
     });
     if (matchOdds && matchOdds.bookmakers && matchOdds.bookmakers.length > 0) {
       const bookie = matchOdds.bookmakers.find((b: any) => b.key === 'draftkings' || b.key === 'fanduel') || matchOdds.bookmakers[0];
@@ -3156,17 +3158,17 @@ function buildDirectGameData(
       }
 
       odds = {
-        openingMoneylineHome: h2h?.outcomes.find((o: any) => o.name === matchOdds.home_team)?.price ?? null,
-        openingMoneylineAway: h2h?.outcomes.find((o: any) => o.name === matchOdds.away_team)?.price ?? null,
-        currentMoneylineHome: h2h?.outcomes.find((o: any) => o.name === matchOdds.home_team)?.price ?? null,
-        currentMoneylineAway: h2h?.outcomes.find((o: any) => o.name === matchOdds.away_team)?.price ?? null,
-        runLineHome: spreads?.outcomes.find((o: any) => o.name === matchOdds.home_team)?.point ?? null,
-        runLineHomeOdds: spreads?.outcomes.find((o: any) => o.name === matchOdds.home_team)?.price ?? null,
-        runLineAway: spreads?.outcomes.find((o: any) => o.name === matchOdds.away_team)?.point ?? null,
-        runLineAwayOdds: spreads?.outcomes.find((o: any) => o.name === matchOdds.away_team)?.price ?? null,
-        totalRuns: totals?.outcomes.find((o: any) => o.name === 'Over')?.point ?? totals?.outcomes.find((o: any) => o.name === 'Under')?.point ?? null,
-        overOdds: totals?.outcomes.find((o: any) => o.name === 'Over')?.price ?? null,
-        underOdds: totals?.outcomes.find((o: any) => o.name === 'Under')?.price ?? null,
+        openingMoneylineHome: h2h?.outcomes?.find((o: any) => o.name?.toLowerCase() === matchOdds.home_team?.toLowerCase())?.price ?? null,
+        openingMoneylineAway: h2h?.outcomes?.find((o: any) => o.name?.toLowerCase() === matchOdds.away_team?.toLowerCase())?.price ?? null,
+        currentMoneylineHome: h2h?.outcomes?.find((o: any) => o.name?.toLowerCase() === matchOdds.home_team?.toLowerCase())?.price ?? null,
+        currentMoneylineAway: h2h?.outcomes?.find((o: any) => o.name?.toLowerCase() === matchOdds.away_team?.toLowerCase())?.price ?? null,
+        runLineHome: spreads?.outcomes?.find((o: any) => o.name?.toLowerCase() === matchOdds.home_team?.toLowerCase())?.point ?? null,
+        runLineHomeOdds: spreads?.outcomes?.find((o: any) => o.name?.toLowerCase() === matchOdds.home_team?.toLowerCase())?.price ?? null,
+        runLineAway: spreads?.outcomes?.find((o: any) => o.name?.toLowerCase() === matchOdds.away_team?.toLowerCase())?.point ?? null,
+        runLineAwayOdds: spreads?.outcomes?.find((o: any) => o.name?.toLowerCase() === matchOdds.away_team?.toLowerCase())?.price ?? null,
+        totalRuns: totals?.outcomes?.find((o: any) => o.name?.toLowerCase() === 'over')?.point ?? totals?.outcomes?.find((o: any) => o.name?.toLowerCase() === 'under')?.point ?? null,
+        overOdds: totals?.outcomes?.find((o: any) => o.name?.toLowerCase() === 'over')?.price ?? null,
+        underOdds: totals?.outcomes?.find((o: any) => o.name?.toLowerCase() === 'under')?.price ?? null,
         lineSource: "the_odds_api",
         lineMovementSummary: "Líneas de cuotas provistas por The Odds API (Modo Directo)."
       };
