@@ -126,6 +126,27 @@ function getPropLineSource(source?: string | null, book?: string | null): string
   return "";
 }
 
+function calculateIpPerStart(ipStr: string | number | undefined | null, starts: string | number | undefined | null): string {
+  if (!ipStr || !starts) return "";
+  const ipStrVal = String(ipStr);
+  const startsNum = Number(starts);
+  if (startsNum <= 0) return "";
+
+  const parts = ipStrVal.split(".");
+  let fullInnings = Number(parts[0]) || 0;
+  let partialInnings = 0;
+  if (parts.length > 1) {
+    const fraction = Number(parts[1]);
+    if (fraction === 1) partialInnings = 1 / 3;
+    else if (fraction === 2) partialInnings = 2 / 3;
+  }
+  
+  const totalInnings = fullInnings + partialInnings;
+  const avg = totalInnings / startsNum;
+  return avg.toFixed(2);
+}
+
+
 // Generate CSV string representing MLB_MASTER_DATA format (Requisito 7)
 export function generateMLBDataCSV(games: MLBGame[]): string {
   const headers = [
@@ -143,6 +164,9 @@ export function generateMLBDataCSV(games: MLBGame[]): string {
     "local_pitcher_wins",
     "local_pitcher_losses",
     "local_pitcher_ip",
+    "local_pitcher_strikeouts",
+    "local_pitcher_starts",
+    "local_pitcher_avg_ip",
     "away_pitcher",
     "away_pitcher_era",
     "away_pitcher_whip",
@@ -151,6 +175,9 @@ export function generateMLBDataCSV(games: MLBGame[]): string {
     "away_pitcher_wins",
     "away_pitcher_losses",
     "away_pitcher_ip",
+    "away_pitcher_strikeouts",
+    "away_pitcher_starts",
+    "away_pitcher_avg_ip",
     "bullpen_era_local",
     "bullpen_ip_7d_local",
     "bullpen_era_away",
@@ -190,6 +217,9 @@ export function generateMLBDataCSV(games: MLBGame[]): string {
       g.pitchers.home.wins,
       g.pitchers.home.losses,
       g.pitchers.home.ip,
+      g.pitchers.home.totalStrikeouts ?? "",
+      g.pitchers.home.starts ?? "",
+      calculateIpPerStart(g.pitchers.home.ip, g.pitchers.home.starts),
       g.pitchers.away.name,
       g.pitchers.away.era,
       g.pitchers.away.whip,
@@ -198,6 +228,9 @@ export function generateMLBDataCSV(games: MLBGame[]): string {
       g.pitchers.away.wins,
       g.pitchers.away.losses,
       g.pitchers.away.ip,
+      g.pitchers.away.totalStrikeouts ?? "",
+      g.pitchers.away.starts ?? "",
+      calculateIpPerStart(g.pitchers.away.ip, g.pitchers.away.starts),
       g.bullpen.home.era,
       g.bullpen.home.ipLast7Days,
       g.bullpen.away.era,
@@ -230,8 +263,8 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
     // Metadata
     "game_id", "fecha", "hora", "equipo_local", "equipo_visitante", "estadio",
     // Pitchers standard
-    "local_pitcher", "local_pitcher_era", "local_pitcher_whip", "local_pitcher_kPct", "local_pitcher_bbPct", "local_pitcher_wins", "local_pitcher_losses", "local_pitcher_ip",
-    "away_pitcher", "away_pitcher_era", "away_pitcher_whip", "away_pitcher_kPct", "away_pitcher_bbPct", "away_pitcher_wins", "away_pitcher_losses", "away_pitcher_ip",
+    "local_pitcher", "local_pitcher_era", "local_pitcher_whip", "local_pitcher_kPct", "local_pitcher_bbPct", "local_pitcher_wins", "local_pitcher_losses", "local_pitcher_ip", "local_pitcher_strikeouts", "local_pitcher_starts", "local_pitcher_avg_ip",
+    "away_pitcher", "away_pitcher_era", "away_pitcher_whip", "away_pitcher_kPct", "away_pitcher_bbPct", "away_pitcher_wins", "away_pitcher_losses", "away_pitcher_ip", "away_pitcher_strikeouts", "away_pitcher_starts", "away_pitcher_avg_ip",
     // Bullpen standard
     "bullpen_era_local", "bullpen_usage_local", "bullpen_ip_7d_local",
     "bullpen_era_away", "bullpen_usage_away", "bullpen_ip_7d_away",
@@ -298,6 +331,9 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
       g.pitchers.home.wins ?? "",
       g.pitchers.home.losses ?? "",
       escapeStr(g.pitchers.home.ip),
+      g.pitchers.home.totalStrikeouts ?? "",
+      g.pitchers.home.starts ?? "",
+      calculateIpPerStart(g.pitchers.home.ip, g.pitchers.home.starts),
       escapeStr(g.pitchers.away.name),
       g.pitchers.away.era ?? "",
       g.pitchers.away.whip ?? "",
@@ -306,6 +342,9 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
       g.pitchers.away.wins ?? "",
       g.pitchers.away.losses ?? "",
       escapeStr(g.pitchers.away.ip),
+      g.pitchers.away.totalStrikeouts ?? "",
+      g.pitchers.away.starts ?? "",
+      calculateIpPerStart(g.pitchers.away.ip, g.pitchers.away.starts),
       // Bullpen standard
       g.bullpen.home.era ?? "",
       escapeStr(g.bullpen.home.usageLast3Days),
@@ -660,8 +699,8 @@ export function generateBattersCSV(games: MLBGame[]): string {
     // --- Game Context & Team Stats (72 columns) ---
     "hora", "equipo_local", "equipo_visitante", "estadio",
     // Pitchers standard
-    "local_pitcher", "local_pitcher_era", "local_pitcher_whip", "local_pitcher_kPct", "local_pitcher_bbPct", "local_pitcher_wins", "local_pitcher_losses", "local_pitcher_ip",
-    "away_pitcher", "away_pitcher_era", "away_pitcher_whip", "away_pitcher_kPct", "away_pitcher_bbPct", "away_pitcher_wins", "away_pitcher_losses", "away_pitcher_ip",
+    "local_pitcher", "local_pitcher_era", "local_pitcher_whip", "local_pitcher_kPct", "local_pitcher_bbPct", "local_pitcher_wins", "local_pitcher_losses", "local_pitcher_ip", "local_pitcher_strikeouts", "local_pitcher_starts", "local_pitcher_avg_ip",
+    "away_pitcher", "away_pitcher_era", "away_pitcher_whip", "away_pitcher_kPct", "away_pitcher_bbPct", "away_pitcher_wins", "away_pitcher_losses", "away_pitcher_ip", "away_pitcher_strikeouts", "away_pitcher_starts", "away_pitcher_avg_ip",
     // Bullpen standard
     "bullpen_era_local", "bullpen_usage_local", "bullpen_ip_7d_local",
     "bullpen_era_away", "bullpen_usage_away", "bullpen_ip_7d_away",
@@ -725,6 +764,9 @@ export function generateBattersCSV(games: MLBGame[]): string {
       game.pitchers.home.wins ?? "",
       game.pitchers.home.losses ?? "",
       escapeStr(game.pitchers.home.ip),
+      game.pitchers.home.totalStrikeouts ?? "",
+      game.pitchers.home.starts ?? "",
+      calculateIpPerStart(game.pitchers.home.ip, game.pitchers.home.starts),
       escapeStr(game.pitchers.away.name),
       game.pitchers.away.era ?? "",
       game.pitchers.away.whip ?? "",
@@ -733,6 +775,9 @@ export function generateBattersCSV(games: MLBGame[]): string {
       game.pitchers.away.wins ?? "",
       game.pitchers.away.losses ?? "",
       escapeStr(game.pitchers.away.ip),
+      game.pitchers.away.totalStrikeouts ?? "",
+      game.pitchers.away.starts ?? "",
+      calculateIpPerStart(game.pitchers.away.ip, game.pitchers.away.starts),
       // Bullpen standard
       game.bullpen.home.era ?? "",
       escapeStr(game.bullpen.home.usageLast3Days),
