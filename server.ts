@@ -78,6 +78,41 @@ function getGameTimestamp(game: any): number {
   return Number.isFinite(time) ? time : 0;
 }
 
+function getTheOddsApiPropsCount(game: any): number {
+  let count = 0;
+  for (const side of ["home", "away"]) {
+    if (game?.pitchers?.[side]?.strikeoutPropSource === "the_odds_api") count += 1;
+    for (const player of game?.lineups?.[side] || []) {
+      if (player?.totalBasesPropSource === "the_odds_api") count += 1;
+    }
+  }
+  return count;
+}
+
+function getPitcherLast3DetailsCount(game: any): number {
+  const fields = ["last3Ks1", "last3Ks2", "last3Ks3", "last3Ip1", "last3Ip2", "last3Ip3", "last3Bf1", "last3Bf2", "last3Bf3"];
+  let count = 0;
+  for (const side of ["home", "away"]) {
+    const pitching = game?.advanced_pitching?.[side] || {};
+    for (const field of fields) {
+      if (pitching[field] !== undefined && pitching[field] !== null && pitching[field] !== "") count += 1;
+    }
+  }
+  return count;
+}
+
+function pickSyncedGame(remoteGame: any, localGame: any) {
+  const remotePropsCount = getTheOddsApiPropsCount(remoteGame);
+  const localPropsCount = getTheOddsApiPropsCount(localGame);
+  if (localPropsCount > remotePropsCount) return localGame;
+  if (remotePropsCount > localPropsCount) return remoteGame;
+  const remoteLast3Count = getPitcherLast3DetailsCount(remoteGame);
+  const localLast3Count = getPitcherLast3DetailsCount(localGame);
+  if (localLast3Count > remoteLast3Count) return localGame;
+  if (remoteLast3Count > localLast3Count) return remoteGame;
+  return getGameTimestamp(remoteGame) >= getGameTimestamp(localGame) ? remoteGame : localGame;
+}
+
 async function syncFirestoreToLocalDB(reason = "manual"): Promise<{ synced: boolean; games: number; dates: number }> {
   try {
     const firestoreGames = await loadAllGamesFromFirestore();
@@ -101,7 +136,7 @@ async function syncFirestoreToLocalDB(reason = "manual"): Promise<{ synced: bool
       dateGames.push(game);
     } else {
       const localGame = dateGames[existingIndex];
-      dateGames[existingIndex] = getGameTimestamp(game) >= getGameTimestamp(localGame) ? game : localGame;
+      dateGames[existingIndex] = pickSyncedGame(game, localGame);
     }
 
     mergedDB[date] = dateGames;
@@ -371,6 +406,15 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
     home_pitcher_last5_ip_avg: g.advanced_pitching?.home?.last5IpAvg ?? null,
     home_pitcher_last5_bf_avg: g.advanced_pitching?.home?.last5BfAvg ?? null,
     home_pitcher_last5_pitch_count_avg: g.advanced_pitching?.home?.last5PitchCountAvg ?? null,
+    home_pitcher_last3_ks_1: g.advanced_pitching?.home?.last3Ks1 ?? null,
+    home_pitcher_last3_ks_2: g.advanced_pitching?.home?.last3Ks2 ?? null,
+    home_pitcher_last3_ks_3: g.advanced_pitching?.home?.last3Ks3 ?? null,
+    home_pitcher_last3_ip_1: g.advanced_pitching?.home?.last3Ip1 ?? null,
+    home_pitcher_last3_ip_2: g.advanced_pitching?.home?.last3Ip2 ?? null,
+    home_pitcher_last3_ip_3: g.advanced_pitching?.home?.last3Ip3 ?? null,
+    home_pitcher_last3_bf_1: g.advanced_pitching?.home?.last3Bf1 ?? null,
+    home_pitcher_last3_bf_2: g.advanced_pitching?.home?.last3Bf2 ?? null,
+    home_pitcher_last3_bf_3: g.advanced_pitching?.home?.last3Bf3 ?? null,
     home_pitcher_career_k_pct_vs_team: g.advanced_pitching?.home?.careerKPctVsTeam ?? null,
     home_pitcher_last3_vs_team_ks_avg: g.advanced_pitching?.home?.last3VsTeamKsAvg ?? null,
     home_pitcher_last3_vs_team_bf_avg: g.advanced_pitching?.home?.last3VsTeamBfAvg ?? null,
@@ -394,6 +438,15 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
     away_pitcher_last5_ip_avg: g.advanced_pitching?.away?.last5IpAvg ?? null,
     away_pitcher_last5_bf_avg: g.advanced_pitching?.away?.last5BfAvg ?? null,
     away_pitcher_last5_pitch_count_avg: g.advanced_pitching?.away?.last5PitchCountAvg ?? null,
+    away_pitcher_last3_ks_1: g.advanced_pitching?.away?.last3Ks1 ?? null,
+    away_pitcher_last3_ks_2: g.advanced_pitching?.away?.last3Ks2 ?? null,
+    away_pitcher_last3_ks_3: g.advanced_pitching?.away?.last3Ks3 ?? null,
+    away_pitcher_last3_ip_1: g.advanced_pitching?.away?.last3Ip1 ?? null,
+    away_pitcher_last3_ip_2: g.advanced_pitching?.away?.last3Ip2 ?? null,
+    away_pitcher_last3_ip_3: g.advanced_pitching?.away?.last3Ip3 ?? null,
+    away_pitcher_last3_bf_1: g.advanced_pitching?.away?.last3Bf1 ?? null,
+    away_pitcher_last3_bf_2: g.advanced_pitching?.away?.last3Bf2 ?? null,
+    away_pitcher_last3_bf_3: g.advanced_pitching?.away?.last3Bf3 ?? null,
     away_pitcher_career_k_pct_vs_team: g.advanced_pitching?.away?.careerKPctVsTeam ?? null,
     away_pitcher_last3_vs_team_ks_avg: g.advanced_pitching?.away?.last3VsTeamKsAvg ?? null,
     away_pitcher_last3_vs_team_bf_avg: g.advanced_pitching?.away?.last3VsTeamBfAvg ?? null,
@@ -2365,6 +2418,10 @@ async function fetchPitcherLast5Profile(pitcherId: number, season: string, targe
 
     const last5BfAvg = saneBattersFacedPerStart(average(bf, 1));
     const last5PitchCountAvg = saneAveragePitchCount(average(pitchCounts, 0));
+    const last3 = last5.slice(0, 3);
+    const last3Ks = last3.map((log: any) => parseInt(log.stat?.strikeOuts) || 0);
+    const last3Ip = last3.map((log: any) => outsToInnings(inningsToOuts(log.stat?.inningsPitched)));
+    const last3Bf = last3.map((log: any) => parseInt(log.stat?.battersFaced) || 0);
 
     return {
       last5KsAvg: average(ks, 2),
@@ -2372,6 +2429,15 @@ async function fetchPitcherLast5Profile(pitcherId: number, season: string, targe
       last5IpAvg: average(ip, 1),
       last5BfAvg,
       last5PitchCountAvg,
+      last3Ks1: last3Ks[0] ?? null,
+      last3Ks2: last3Ks[1] ?? null,
+      last3Ks3: last3Ks[2] ?? null,
+      last3Ip1: last3Ip[0] ?? null,
+      last3Ip2: last3Ip[1] ?? null,
+      last3Ip3: last3Ip[2] ?? null,
+      last3Bf1: last3Bf[0] || null,
+      last3Bf2: last3Bf[1] || null,
+      last3Bf3: last3Bf[2] || null,
       projectedPitchCount: last5PitchCountAvg,
       battersFacedPerStart: last5BfAvg
     };
@@ -3109,22 +3175,32 @@ function buildDirectGameData(
       for (const b of matchOdds.bookmakers) {
          const mPitcher = b.markets.find((mk: any) => mk.key === 'pitcher_strikeouts');
          if (mPitcher && mPitcher.outcomes) {
-            pitcherStrikeoutsOutcomes.push(...mPitcher.outcomes);
+            pitcherStrikeoutsOutcomes.push(...mPitcher.outcomes.map((outcome: any) => ({
+              ...outcome,
+              bookKey: b.key,
+              source: outcome.source || (b.key === "datastreak" ? "datastreak" : "the_odds_api")
+            })));
          }
          const mBatter = b.markets.find((mk: any) => mk.key === 'batter_total_bases');
          if (mBatter && mBatter.outcomes) {
-            batterTotalBasesOutcomes.push(...mBatter.outcomes);
+            batterTotalBasesOutcomes.push(...mBatter.outcomes.map((outcome: any) => ({
+              ...outcome,
+              bookKey: b.key,
+              source: outcome.source || (b.key === "datastreak" ? "datastreak" : "the_odds_api")
+            })));
          }
       }
 
       if (batterTotalBasesOutcomes.length > 0) {
         const mappedBatterProps = new Map<string, any>();
         for (const outcome of batterTotalBasesOutcomes) {
+           if (outcome.source === "datastreak" || outcome.bookKey === "datastreak") continue;
            const pName = outcome.description;
-           if (!mappedBatterProps.has(pName)) {
-              mappedBatterProps.set(pName, { player_name: pName, vendor: 'TheOddsAPI', source: 'the_odds_api' });
+           const rowKey = `${normalizeName(pName)}|${outcome.bookKey || "the_odds_api"}`;
+           if (!mappedBatterProps.has(rowKey)) {
+              mappedBatterProps.set(rowKey, { player_name: pName, vendor: outcome.bookKey || 'TheOddsAPI', source: 'the_odds_api' });
            }
-           const pData = mappedBatterProps.get(pName);
+           const pData = mappedBatterProps.get(rowKey);
            pData.line = outcome.point;
            if (outcome.name === 'Over') {
               pData.odds = outcome.price;
@@ -3144,12 +3220,17 @@ function buildDirectGameData(
            const lastName = parts[parts.length - 1];
            const outcomes = pitcherStrikeoutsOutcomes.filter((o: any) => {
                const description = normalizeName(o.description);
-               return description === normalizedPitcherName || description.includes(normalizedPitcherName) || description.split(" ").includes(lastName);
+               const isTheOddsApi = o.source !== "datastreak" && o.bookKey !== "datastreak";
+               return isTheOddsApi && (
+                 description === normalizedPitcherName ||
+                 description.includes(normalizedPitcherName) ||
+                 description.split(" ").includes(lastName)
+               );
            });
            if (outcomes.length > 0) {
               const over = outcomes.find((o:any) => o.name === 'Over');
               const under = outcomes.find((o:any) => o.name === 'Under');
-              return { point: over?.point || under?.point || null, overOdds: over?.price || null, underOdds: under?.price || null, book: "TheOddsAPI", source: "the_odds_api" };
+              return { point: over?.point || under?.point || null, overOdds: over?.price || null, underOdds: under?.price || null, book: over?.bookKey || under?.bookKey || "TheOddsAPI", source: "the_odds_api" };
            }
            return null;
         };

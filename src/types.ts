@@ -176,6 +176,15 @@ export interface AdvancedPitchingStats {
   last5IpAvg?: number | null;
   last5BfAvg?: number | null;
   last5PitchCountAvg?: number | null;
+  last3Ks1?: number | null;
+  last3Ks2?: number | null;
+  last3Ks3?: number | null;
+  last3Ip1?: number | null;
+  last3Ip2?: number | null;
+  last3Ip3?: number | null;
+  last3Bf1?: number | null;
+  last3Bf2?: number | null;
+  last3Bf3?: number | null;
   careerKPctVsTeam?: number | null;
   last3VsTeamKsAvg?: number | null;
   last3VsTeamBfAvg?: number | null;
