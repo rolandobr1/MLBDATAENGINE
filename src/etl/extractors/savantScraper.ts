@@ -210,6 +210,7 @@ export class SavantCache {
 
     // Arsenal Data for Batters (Whiff Pct by Pitch Type)
     const tempGroupWhiffs: Record<string, Record<string, {totalWhiff: number, count: number}>> = {};
+    const tempOverallWhiffs: Record<string, {totalWhiff: number, count: number}> = {};
 
     for (const row of arsenalData) {
       const playerId = String(row.player_id);
@@ -223,6 +224,9 @@ export class SavantCache {
         if (!tempGroupWhiffs[playerId][group]) tempGroupWhiffs[playerId][group] = { totalWhiff: 0, count: 0 };
         
         const pitches = this.parseNumber(row.pitches) || 1;
+        if (!tempOverallWhiffs[playerId]) tempOverallWhiffs[playerId] = { totalWhiff: 0, count: 0 };
+        tempOverallWhiffs[playerId].totalWhiff += (whiff * pitches);
+        tempOverallWhiffs[playerId].count += pitches;
         tempGroupWhiffs[playerId][group].totalWhiff += (whiff * pitches);
         tempGroupWhiffs[playerId][group].count += pitches;
       }
@@ -231,6 +235,10 @@ export class SavantCache {
     for (const [playerId, groups] of Object.entries(tempGroupWhiffs)) {
       const existing = this.batterStats.get(playerId);
       if (existing) {
+        const overall = tempOverallWhiffs[playerId];
+        if (existing.whiffPct === null && overall?.count > 0) {
+          existing.whiffPct = overall.totalWhiff / overall.count;
+        }
         if (groups["fastball"]) existing.whiffPctVsFastball = groups["fastball"].totalWhiff / groups["fastball"].count;
         if (groups["slider"]) existing.whiffPctVsSlider = groups["slider"].totalWhiff / groups["slider"].count;
         if (groups["curve"]) existing.whiffPctVsCurve = groups["curve"].totalWhiff / groups["curve"].count;

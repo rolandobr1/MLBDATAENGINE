@@ -16,7 +16,8 @@ import {
   Pin,
   Download,
   Eye,
-  EyeOff
+  EyeOff,
+  X
 } from "lucide-react";
 
 interface GameCardProps {
@@ -74,6 +75,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
   const [showAllPlays, setShowAllPlays] = React.useState(false);
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [expandedPlayer, setExpandedPlayer] = React.useState<string | null>(null);
+  const [selectedPitcherSide, setSelectedPitcherSide] = React.useState<"home" | "away" | null>(null);
 
   React.useEffect(() => {
     if (globalExpandToggle !== undefined && globalExpandToggle > 0) {
@@ -140,6 +142,98 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
   const formatPitcherValue = (value: any) => {
     if (value === null || value === undefined || value === "") return "N/D";
     return value;
+  };
+
+  const formatNumber = (value: any, decimals = 1, suffix = "") => {
+    if (value === null || value === undefined || value === "" || value === "N/A") return "N/D";
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return `${value}${suffix}`;
+    return `${numeric.toFixed(decimals).replace(/\.0$/, "")}${suffix}`;
+  };
+
+  const formatPct = (value: any) => formatNumber(value, 1, "%");
+
+  const getPitcherRoleLabel = (bfPerStart: any, projectedPitches: any) => {
+    const bf = Number(bfPerStart);
+    const projected = Number(projectedPitches);
+    if ((Number.isFinite(bf) && bf < 15) || (Number.isFinite(projected) && projected < 55)) return "Short role / Opener";
+    if (Number.isFinite(bf) && bf < 18) return "Limited starter";
+    if (Number.isFinite(bf) && bf < 21) return "Low volume starter";
+    if (Number.isFinite(bf) && bf < 24) return "Normal starter";
+    if (Number.isFinite(bf)) return "High volume starter";
+    return "N/D";
+  };
+
+  const getPitcherModalData = (side: "home" | "away") => {
+    const pitcher = game.pitchers[side];
+    const adv = game.advanced_pitching;
+    const seasonAdv = side === "home" ? adv?.home : adv?.away;
+    const last7 = side === "home" ? adv?.homeLast7 : adv?.awayLast7;
+    const vsOpp = side === "home" ? adv?.homeVsOpp : adv?.awayVsOpp;
+    const fatigue = game.fatigue_metrics?.pitchers?.[side];
+    const teamName = side === "home" ? game.metadata.homeTeam : game.metadata.awayTeam;
+    const opponentName = side === "home" ? game.metadata.awayTeam : game.metadata.homeTeam;
+    const projected = seasonAdv?.projectedPitchCount;
+    const bfPerStart = seasonAdv?.battersFacedPerStart;
+    const roleLabel = getPitcherRoleLabel(bfPerStart, projected);
+
+    const totals = [
+      ["Salidas", pitcher.starts],
+      ["IP temporada", pitcher.ip],
+      ["Ponches totales", pitcher.totalStrikeouts],
+      ["Boletos totales", pitcher.totalWalks],
+      ["Record", `${pitcher.wins ?? "N/D"}-${pitcher.losses ?? "N/D"}`],
+      ["Ks reales hoy", seasonAdv?.actualStrikeouts],
+    ];
+
+    const averages = [
+      ["ERA", typeof pitcher.era === "number" ? pitcher.era.toFixed(2) : pitcher.era],
+      ["WHIP", typeof pitcher.whip === "number" ? pitcher.whip.toFixed(2) : pitcher.whip],
+      ["K%", formatPct(pitcher.kPct)],
+      ["BB%", formatPct(pitcher.bbPct)],
+      ["K-BB%", calcKMinusBb(pitcher.kPct, pitcher.bbPct)],
+      ["K/IP", formatKPerIp(pitcher)],
+      ["FIP", formatNumber(seasonAdv?.fip, 2)],
+      ["xFIP", formatNumber(seasonAdv?.xFip, 2)],
+      ["SIERA", formatNumber(seasonAdv?.siera, 2)],
+      ["xERA", formatNumber(seasonAdv?.xEra, 2)],
+      ["SwStr%", formatPct(seasonAdv?.swingingStrikePct)],
+      ["CSW%", formatPct(seasonAdv?.cswPct)],
+      ["GB%", formatPct(seasonAdv?.groundBallPct)],
+      ["FB%", formatPct(seasonAdv?.flyBallPct)],
+      ["HardHit%", formatPct(seasonAdv?.hardHitPct)],
+      ["Barrel%", formatPct(seasonAdv?.barrelPct)],
+      ["Últ.5 K avg", formatNumber(seasonAdv?.last5KsAvg, 2)],
+      ["Últ.5 IP avg", formatNumber(seasonAdv?.last5IpAvg, 1)],
+      ["Últ.5 BF avg", formatNumber(seasonAdv?.last5BfAvg, 1)],
+      ["Últ.5 pitcheos avg", formatNumber(seasonAdv?.last5PitchCountAvg, 0)],
+      ["Vs rival K%", formatPct(vsOpp?.careerKPctVsTeam ?? vsOpp?.strikeoutRate)],
+      ["Últ.3 vs rival K avg", formatNumber(seasonAdv?.last3VsTeamKsAvg, 2)],
+      ["Últ.3 vs rival BF avg", formatNumber(seasonAdv?.last3VsTeamBfAvg, 1)],
+    ];
+
+    const projections = [
+      ["Pitcheos proyectados", projected],
+      ["Rol estimado", roleLabel],
+      ["BF/start", formatNumber(bfPerStart, 1)],
+      ["Descanso", fatigue?.daysSinceLastStart != null ? `${fatigue.daysSinceLastStart} días` : "N/D"],
+      ["Pitcheos última salida", fatigue?.pitchesLastStart],
+      ["Pitcheos últimas 3", fatigue?.pitchesLast3Starts],
+      ["Prom. últimas 3", fatigue?.pitchesLast3Starts != null ? formatNumber(Number(fatigue.pitchesLast3Starts) / 3, 1) : "N/D"],
+      ["Línea Ks", pitcher.strikeoutProp ?? "N/D"],
+      ["Odds Over Ks", formatOdds(pitcher.strikeoutPropOverOdds)],
+      ["Odds Under Ks", formatOdds(pitcher.strikeoutPropUnderOdds)],
+      ["Fuente línea Ks", pitcher.strikeoutPropSource || "N/D"],
+      ["Fastball%", formatPct(seasonAdv?.fastballPct)],
+      ["Slider%", formatPct(seasonAdv?.sliderPct)],
+      ["Curve%", formatPct(seasonAdv?.curvePct)],
+      ["Changeup%", formatPct(seasonAdv?.changeupPct)],
+      ["Splitter%", formatPct(seasonAdv?.splitterPct)],
+      ["Catcher", seasonAdv?.catcherName || "N/D"],
+      ["Framing runs", formatNumber(seasonAdv?.catcherFramingRuns, 1)],
+    ];
+
+    return { pitcher, teamName, opponentName, last7, totals, averages, projections };
   };
 
   const getPitcherDisplayStats = (pitcherTeam: 'away' | 'home') => {
@@ -252,6 +346,24 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
   const homeBattersTotals = game.liveBoxscore ? getBattersTotals(game.liveBoxscore.home.batters) : null;
   const homePitchersTotals = game.liveBoxscore ? getPitchersTotals(game.liveBoxscore.home.pitchers) : null;
 
+  const PitcherMetricSection: React.FC<{ title: string; rows: Array<[string, any]> }> = ({ title, rows }) => (
+    <section className="min-w-0">
+      <h4 className="text-[11px] font-display font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200 pb-1.5 mb-2">
+        {title}
+      </h4>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+        {rows.map(([label, value]) => (
+          <div key={`${title}-${label}`} className="flex justify-between gap-3 rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px]">
+            <span className="text-slate-500 truncate">{label}</span>
+            <strong className="text-slate-800 font-mono text-right">{formatPitcherValue(value)}</strong>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+
+  const selectedPitcherData = selectedPitcherSide ? getPitcherModalData(selectedPitcherSide) : null;
+
   const formatLastUpdate = () => {
     if (!game.timestamp) return "";
     try {
@@ -267,16 +379,48 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
     }
   };
 
-  const formatPct = (val: any) => {
-    return typeof val === 'number' ? `${val.toFixed(1)}%` : 'N/D';
-  };
-
   const formatFloat = (val: any, decimals: number = 2) => {
     return typeof val === 'number' ? val.toFixed(decimals) : 'N/D';
   };
 
   return (
     <div className="rounded-xl overflow-hidden shadow-sm hover:shadow-md transition duration-200 font-sans bg-white border border-slate-200">
+      {selectedPitcherData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" onClick={() => setSelectedPitcherSide(null)}>
+          <div
+            className="w-full max-w-5xl max-h-[88vh] overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
+              <div className="min-w-0">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  {selectedPitcherSide === "home" ? "Local" : "Visitante"} · {selectedPitcherData.teamName} vs {selectedPitcherData.opponentName}
+                </div>
+                <h3 className="truncate text-lg font-display font-bold text-slate-900">
+                  {selectedPitcherData.pitcher.name}
+                  <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 align-middle text-[11px] font-mono text-slate-600">
+                    {selectedPitcherData.pitcher.pitchHand || "R"}
+                  </span>
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedPitcherSide(null)}
+                className="shrink-0 rounded-md border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                aria-label="Cerrar detalles del pitcher"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-5 px-5 py-4">
+              <PitcherMetricSection title="Totales" rows={selectedPitcherData.totals} />
+              <PitcherMetricSection title="Promedios" rows={selectedPitcherData.averages} />
+              <PitcherMetricSection title="Proyecciones" rows={selectedPitcherData.projections} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Game Card Header Block */}
       <div className="bg-slate-900 text-white p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -416,12 +560,17 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
           <div className="grid grid-cols-2 gap-4 text-xs">
             {/* Away Pitcher */}
             <div className="space-y-1.5 border-r border-slate-200/60 pr-2">
-              <div className="text-blue-900 font-bold font-display truncate" title={game.pitchers.away.name}>
+              <button
+                type="button"
+                onClick={() => setSelectedPitcherSide("away")}
+                className="block max-w-full text-left text-blue-900 font-bold font-display truncate underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-300 rounded"
+                title={game.pitchers.away.name}
+              >
                 {game.pitchers.away.name}
                 <span className="ml-1 text-[9px] font-mono font-bold text-blue-700 bg-blue-100 px-1 rounded">
                   ({game.pitchers.away.pitchHand || "R"})
                 </span>
-              </div>
+              </button>
               <span className="text-[9px] font-bold font-mono tracking-wider bg-blue-100 uppercase text-blue-800 px-1.5 py-0.5 rounded">
                 Visitante
               </span>
@@ -457,12 +606,17 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
 
             {/* Home Pitcher */}
             <div className="space-y-1.5 pl-1">
-              <div className="text-red-900 font-bold font-display truncate" title={game.pitchers.home.name}>
+              <button
+                type="button"
+                onClick={() => setSelectedPitcherSide("home")}
+                className="block max-w-full text-left text-red-900 font-bold font-display truncate underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-red-300 rounded"
+                title={game.pitchers.home.name}
+              >
                 {game.pitchers.home.name}
                 <span className="ml-1 text-[9px] font-mono font-bold text-red-700 bg-red-100 px-1 rounded">
                   ({game.pitchers.home.pitchHand || "R"})
                 </span>
-              </div>
+              </button>
               <span className="text-[9px] font-bold font-mono tracking-wider bg-red-100 uppercase text-red-800 px-1.5 py-0.5 rounded">
                 Local
               </span>

@@ -50,6 +50,7 @@ interface LiveProgress {
   pct: number;
   display: string;
   hint: string;
+  startLabel?: string;
   isLive: boolean;
   isFinal: boolean;
   autoStatus: BetStatus | null;
@@ -176,6 +177,11 @@ function exportJSON(bets: Bet[], date: string): void {
 const FINAL_STATUSES = ["Final", "Game Over", "Postponed", "Cancelled"];
 const LIVE_STATUSES  = ["In Progress", "Live", "Delayed"];
 
+function getGameStartLabel(game: MLBGame | undefined): string {
+  const time = game?.metadata?.time?.trim();
+  return time && time !== "TBD" ? `Inicio ${time}` : "Inicio TBD";
+}
+
 function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress {
   const NONE: LiveProgress = { current: 0, pct: 0, display: "Sin datos", hint: "Esperando inicio", isLive: false, isFinal: false, autoStatus: null };
   if (!game) return NONE;
@@ -193,7 +199,8 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
         : bet.betTypeKey === "team_ml"
         ? "0 - 0"
         : `0 / ${bet.line} ${bet.betTypeKey === "pitcher_k" ? "K's" : "bases"}`,
-      hint: "Esperando inicio",
+      hint: getGameStartLabel(game),
+      startLabel: getGameStartLabel(game),
       isLive: false,
       isFinal: false,
       autoStatus: null
@@ -319,7 +326,7 @@ const StatusBadge: React.FC<{ status: BetStatus }> = ({ status }) => {
 };
 
 const LiveProgressBar: React.FC<{ progress: LiveProgress; betStatus: BetStatus; compact?: boolean }> = ({ progress, betStatus, compact }) => {
-  const { pct, display, hint, isLive, isFinal, autoStatus } = progress;
+  const { pct, display, hint, startLabel, isLive, isFinal, autoStatus } = progress;
   const effectiveStatus = betStatus !== "pending" ? betStatus : autoStatus;
   let bar = "from-violet-500 to-indigo-500";
   let dot: React.ReactNode = <Clock size={11} className="text-amber-500" />;
@@ -329,6 +336,7 @@ const LiveProgressBar: React.FC<{ progress: LiveProgress; betStatus: BetStatus; 
   else if (effectiveStatus === "void") { bar = "from-slate-300 to-slate-450"; dot = <AlertTriangle size={11} className="text-slate-500" />; label = "Push / Nula"; }
   else if (isLive)  { dot = <span className="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse" />; label = "En vivo"; }
   else if (isFinal) { bar = "from-slate-400 to-slate-500"; label = "Finalizado"; }
+  else if (startLabel) { label = startLabel; }
   return (
     <div className={`space-y-1.5 ${compact ? "mt-1.5" : "mt-3"}`}>
       <div className="flex justify-between items-center text-[11px]">

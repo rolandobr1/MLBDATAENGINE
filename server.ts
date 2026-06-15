@@ -563,7 +563,7 @@ app.get("/api/batters-dataset/csv", async (req, res) => {
         allGames.push(...games);
       }
     }
-    const enrichedGames = await enrichGamesWithTotalBasesProps(allGames);
+    const enrichedGames = await enrichGamesWithSavantBatterContact(await enrichGamesWithTotalBasesProps(allGames));
     const csvContent = generateBattersCSV(enrichedGames);
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=mlb_batters_dataset.csv");
@@ -903,6 +903,46 @@ function calculateLineupSavantAverages(lineup: any[]) {
   };
 }
 
+async function enrichGamesWithSavantBatterContact(games: MLBGame[]): Promise<MLBGame[]> {
+  const applyBatterSavant = (lineup: any[] | undefined) => {
+    for (const player of lineup || []) {
+      const savant = savantCache.getBatter(player.id ?? player.mlbId);
+      if (!savant) continue;
+      player.chase_pct = player.chase_pct ?? savant.chasePct;
+      player.whiff_pct = player.whiff_pct ?? savant.whiffPct;
+      if (savant.whiffPct !== null) {
+        const contactPct = roundNumber(100 - savant.whiffPct, 1);
+        player.contact_pct_vs_rhp = player.contact_pct_vs_rhp ?? contactPct;
+        player.contact_pct_vs_lhp = player.contact_pct_vs_lhp ?? contactPct;
+      }
+    }
+  };
+
+  const applyTeamSavant = (game: MLBGame, side: "home" | "away") => {
+    const lineup = game.lineups?.[side] || [];
+    const lineupSavant = calculateLineupSavantAverages(lineup);
+    const offense = game.advanced_offense?.[side];
+    if (!offense) return;
+    if (lineupSavant.chasePct !== null) offense.chasePct = offense.chasePct ?? lineupSavant.chasePct;
+    if (lineupSavant.whiffPct !== null) {
+      offense.projectedLineupWhiffPctVsHand = offense.projectedLineupWhiffPctVsHand ?? lineupSavant.whiffPct;
+      offense.contactPct = offense.contactPct ?? roundNumber(100 - lineupSavant.whiffPct, 1);
+      offense.projectedLineupContactPctVsHand = offense.projectedLineupContactPctVsHand ?? roundNumber(100 - lineupSavant.whiffPct, 1);
+    }
+  };
+
+  for (const game of games) {
+    const year = String(game?.metadata?.date || "").slice(0, 4);
+    await savantCache.load(/^\d{4}$/.test(year) ? parseInt(year, 10) : new Date().getFullYear());
+    applyBatterSavant(game.lineups?.home);
+    applyBatterSavant(game.lineups?.away);
+    applyTeamSavant(game, "home");
+    applyTeamSavant(game, "away");
+  }
+
+  return games;
+}
+
 
 
 function inningsToOuts(ipValue: any): number {
@@ -926,6 +966,68 @@ function saneAveragePitchCount(value: number | null): number | null {
 function saneBattersFacedPerStart(value: number | null): number | null {
   if (value === null || value <= 0) return null;
   return value > 40 ? null : roundNumber(value, 1);
+}
+
+type PitcherRoleFlag = "SHORT_ROLE_OR_OPENER" | "LIMITED_STARTER" | "LOW_VOLUME_STARTER" | "NORMAL_STARTER" | "HIGH_VOLUME_STARTER";
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function getPitcherRoleFromBfPerStart(bfPerStart: number): { roleFlag: PitcherRoleFlag; clusterAvg: number; min: number; max: number; roleAdjustment: number } {
+  if (bfPerStart < 15) return { roleFlag: "SHORT_ROLE_OR_OPENER", clusterAvg: 42, min: 15, max: 55, roleAdjustment: -8 };
+  if (bfPerStart < 18) return { roleFlag: "LIMITED_STARTER", clusterAvg: 68, min: 50, max: 78, roleAdjustment: -4 };
+  if (bfPerStart < 21) return { roleFlag: "LOW_VOLUME_STARTER", clusterAvg: 80, min: 65, max: 88, roleAdjustment: -2 };
+  if (bfPerStart < 24) return { roleFlag: "NORMAL_STARTER", clusterAvg: 88, min: 75, max: 98, roleAdjustment: 0 };
+  return { roleFlag: "HIGH_VOLUME_STARTER", clusterAvg: 94, min: 82, max: 108, roleAdjustment: 2 };
+}
+
+function calculateProjectedPitchCount(
+  pitching: Partial<AdvancedPitchingStats>,
+  fatigue: { daysSinceLastStart?: number; pitchesLastStart?: number; pitchesLast3Starts?: number } | undefined
+): number | null {
+  const last5PitchCountAvg = safeFloat(pitching.last5PitchCountAvg) ?? safeFloat(pitching.projectedPitchCount);
+  const pitchesLast3 = safeFloat(fatigue?.pitchesLast3Starts);
+  const pitchesLast = safeFloat(fatigue?.pitchesLastStart);
+  const bfPerStart = safeFloat(pitching.battersFacedPerStart);
+  const pitcherRest = safeFloat(fatigue?.daysSinceLastStart);
+
+  if (last5PitchCountAvg === null || bfPerStart === null) {
+    return saneAveragePitchCount(last5PitchCountAvg);
+  }
+
+  const pitchesLast3Avg = pitchesLast3 !== null && pitchesLast3 > 0 ? pitchesLast3 / 3 : last5PitchCountAvg;
+  const role = getPitcherRoleFromBfPerStart(bfPerStart);
+
+  const projectedPitchesBase =
+    (0.55 * last5PitchCountAvg) +
+    (0.25 * pitchesLast3Avg) +
+    (0.20 * role.clusterAvg);
+
+  let restAdjustment = 0;
+  if (pitcherRest !== null) {
+    if (pitcherRest <= 2) restAdjustment = -10;
+    else if (pitcherRest === 3) restAdjustment = -5;
+    else if (pitcherRest === 5) restAdjustment = 2;
+  }
+
+  let workloadAdjustment = 0;
+  if ((pitchesLast !== null && pitchesLast > 110) || (pitchesLast3 !== null && pitchesLast3 > 320)) {
+    workloadAdjustment = -6;
+  } else if ((pitchesLast !== null && pitchesLast > 100) || (pitchesLast3 !== null && pitchesLast3 > 295)) {
+    workloadAdjustment = -3;
+  } else if (pitchesLast !== null && pitchesLast < 65 && bfPerStart >= 18) {
+    workloadAdjustment = -4;
+  }
+
+  const raw = projectedPitchesBase + restAdjustment + workloadAdjustment + role.roleAdjustment;
+  let finalValue = Math.round(clampNumber(raw, role.min, role.max));
+
+  if (bfPerStart < 15 || finalValue < 55) {
+    finalValue = Math.round(clampNumber(raw, 15, 55));
+  }
+
+  return finalValue;
 }
 
 function isFinalGameStatus(status: any): boolean {
@@ -3548,8 +3650,9 @@ app.post("/api/harvest", async (req, res) => {
           p.chase_pct = savant.chasePct;
           p.whiff_pct = savant.whiffPct;
           if (savant.whiffPct !== null) {
-            p.contact_pct_vs_rhp = 100 - savant.whiffPct;
-            p.contact_pct_vs_lhp = 100 - savant.whiffPct;
+            const contactPct = roundNumber(100 - savant.whiffPct, 1);
+            p.contact_pct_vs_rhp = contactPct;
+            p.contact_pct_vs_lhp = contactPct;
           }
         }
       }
@@ -3559,8 +3662,9 @@ app.post("/api/harvest", async (req, res) => {
           p.chase_pct = savant.chasePct;
           p.whiff_pct = savant.whiffPct;
           if (savant.whiffPct !== null) {
-            p.contact_pct_vs_rhp = 100 - savant.whiffPct;
-            p.contact_pct_vs_lhp = 100 - savant.whiffPct;
+            const contactPct = roundNumber(100 - savant.whiffPct, 1);
+            p.contact_pct_vs_rhp = contactPct;
+            p.contact_pct_vs_lhp = contactPct;
           }
         }
       }
@@ -3598,6 +3702,8 @@ app.post("/api/harvest", async (req, res) => {
 
       Object.assign(homeAdvPitching, homeLast5Profile, homeLast3VsTeam);
       Object.assign(awayAdvPitching, awayLast5Profile, awayLast3VsTeam);
+      homeAdvPitching.projectedPitchCount = calculateProjectedPitchCount(homeAdvPitching, fatigue.pitchers?.home);
+      awayAdvPitching.projectedPitchCount = calculateProjectedPitchCount(awayAdvPitching, fatigue.pitchers?.away);
 
       gameDataParsed.advanced_pitching = {
         home: homeAdvPitching,
@@ -3904,8 +4010,9 @@ async function updateSingleGameData(gameId: string, date: string): Promise<any> 
       p.chase_pct = savant.chasePct;
       p.whiff_pct = savant.whiffPct;
       if (savant.whiffPct !== null) {
-        p.contact_pct_vs_rhp = 100 - savant.whiffPct;
-        p.contact_pct_vs_lhp = 100 - savant.whiffPct;
+        const contactPct = roundNumber(100 - savant.whiffPct, 1);
+        p.contact_pct_vs_rhp = contactPct;
+        p.contact_pct_vs_lhp = contactPct;
       }
     }
   }
@@ -3915,8 +4022,9 @@ async function updateSingleGameData(gameId: string, date: string): Promise<any> 
       p.chase_pct = savant.chasePct;
       p.whiff_pct = savant.whiffPct;
       if (savant.whiffPct !== null) {
-        p.contact_pct_vs_rhp = 100 - savant.whiffPct;
-        p.contact_pct_vs_lhp = 100 - savant.whiffPct;
+        const contactPct = roundNumber(100 - savant.whiffPct, 1);
+        p.contact_pct_vs_rhp = contactPct;
+        p.contact_pct_vs_lhp = contactPct;
       }
     }
   }
@@ -3954,6 +4062,8 @@ async function updateSingleGameData(gameId: string, date: string): Promise<any> 
 
   Object.assign(homeAdvPitching, homeLast5Profile, homeLast3VsTeam);
   Object.assign(awayAdvPitching, awayLast5Profile, awayLast3VsTeam);
+  homeAdvPitching.projectedPitchCount = calculateProjectedPitchCount(homeAdvPitching, fatigue.pitchers?.home);
+  awayAdvPitching.projectedPitchCount = calculateProjectedPitchCount(awayAdvPitching, fatigue.pitchers?.away);
 
   gameDataParsed.advanced_pitching = {
     home: homeAdvPitching,
