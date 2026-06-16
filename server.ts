@@ -46,6 +46,7 @@ const DB_PATH = path.join(process.cwd(), "mlb_database.json");
 const ERRORS_PATH = path.join(process.cwd(), "mlb_errors.json");
 let gamesDbCache: Record<string, any[]> | null = null;
 let gamesDbCacheMtime = 0;
+let latestFirestoreRestoreInFlight: Promise<void> | null = null;
 
 // Ensure files exist
 if (!fs.existsSync(DB_PATH)) {
@@ -85,6 +86,24 @@ function writeGamesDB(data: Record<string, any[]>) {
 
 function countLocalGames(db: Record<string, any[]>): number {
   return Object.values(db).reduce((total, games) => total + (Array.isArray(games) ? games.length : 0), 0);
+}
+
+function restoreLatestFromFirestoreInBackground(reason: string) {
+  if (latestFirestoreRestoreInFlight) return latestFirestoreRestoreInFlight;
+  latestFirestoreRestoreInFlight = loadLatestGamesFromFirestore()
+    .then((latestGames) => {
+      if (latestGames.length > 0) {
+        mergeGamesIntoLocalDB(latestGames);
+        console.log(`[Firestore Restore] Fecha reciente restaurada (${reason}): ${latestGames.length} juegos.`);
+      }
+    })
+    .catch((err) => {
+      console.error(`[Firestore Restore] Error restaurando fecha reciente (${reason}):`, err);
+    })
+    .finally(() => {
+      latestFirestoreRestoreInFlight = null;
+    });
+  return latestFirestoreRestoreInFlight;
 }
 
 function mergeGamesIntoLocalDB(games: any[]): { games: number; dates: number } {
@@ -523,12 +542,7 @@ app.get("/api/extracted-dates", async (req, res) => {
     let db = readGamesDB();
     let dates = Object.keys(db).filter(date => Array.isArray(db[date]) && db[date].length > 0);
     if (dates.length === 0) {
-      const latestGames = await loadLatestGamesFromFirestore();
-      if (latestGames.length > 0) {
-        mergeGamesIntoLocalDB(latestGames);
-      }
-      db = readGamesDB();
-      dates = Object.keys(db).filter(date => Array.isArray(db[date]) && db[date].length > 0);
+      restoreLatestFromFirestoreInBackground("extracted-dates-empty");
     }
     // Sort dates descending
     dates.sort((a, b) => new Date(b).getTime() - new Date(a).getTime());

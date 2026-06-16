@@ -3,6 +3,24 @@ import { doc, collection, setDoc, getDocs, getCountFromServer, query, where, ord
 import { getAuth, signInAnonymously } from 'firebase/auth';
 
 let authInitialized = false;
+const FIRESTORE_READ_TIMEOUT_MS = Number(process.env.FIRESTORE_READ_TIMEOUT_MS || 6000);
+
+async function withFirestoreReadTimeout<T>(promise: Promise<T>, fallback: T, label: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timeout = setTimeout(() => {
+          console.warn(`[Firestore] Timeout leyendo ${label} despues de ${FIRESTORE_READ_TIMEOUT_MS}ms.`);
+          resolve(fallback);
+        }, FIRESTORE_READ_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 export const saveGameData = async (gameId: string, gameData: any) => {
   try {
@@ -93,7 +111,8 @@ export const loadAllGamesFromFirestore = async (): Promise<any[]> => {
 
     console.log("Cargando juegos desde Firestore...");
     const gamesColl = collection(db, 'games');
-    const snapshot = await getDocs(gamesColl);
+    const snapshot = await withFirestoreReadTimeout(getDocs(gamesColl), null, 'todos los juegos');
+    if (!snapshot) return [];
     
     const games: any[] = [];
     snapshot.forEach((doc) => {
@@ -116,7 +135,8 @@ export const loadGamesByDateFromFirestore = async (date: string): Promise<any[]>
     }
 
     const gamesQuery = query(collection(db, 'games'), where('metadata.date', '==', date));
-    const snapshot = await getDocs(gamesQuery);
+    const snapshot = await withFirestoreReadTimeout(getDocs(gamesQuery), null, `juegos de ${date}`);
+    if (!snapshot) return [];
     const games: any[] = [];
     snapshot.forEach((doc) => {
       games.push(doc.data());
@@ -137,7 +157,8 @@ export const loadLatestGamesFromFirestore = async (): Promise<any[]> => {
     }
 
     const latestQuery = query(collection(db, 'games'), orderBy('metadata.date', 'desc'), limit(1));
-    const latestSnapshot = await getDocs(latestQuery);
+    const latestSnapshot = await withFirestoreReadTimeout(getDocs(latestQuery), null, 'fecha mas reciente');
+    if (!latestSnapshot) return [];
     const latestDate = latestSnapshot.docs[0]?.data()?.metadata?.date;
     if (!latestDate) return [];
     return loadGamesByDateFromFirestore(latestDate);
@@ -161,7 +182,8 @@ export const getTotalGamesCountFromFirestore = async (): Promise<number> => {
       }
     }
 
-    const snapshot = await getCountFromServer(collection(db, 'games'));
+    const snapshot = await withFirestoreReadTimeout(getCountFromServer(collection(db, 'games')), null, 'conteo de juegos');
+    if (!snapshot) return 0;
     return snapshot.data().count;
   } catch (error) {
     console.error("Error al contar juegos en Firestore:", error);
