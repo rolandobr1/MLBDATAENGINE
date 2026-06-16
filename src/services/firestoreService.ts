@@ -1,5 +1,5 @@
 import { db, app } from '../config/firebase';
-import { doc, collection, setDoc, getDocs, getCountFromServer } from 'firebase/firestore';
+import { doc, collection, setDoc, getDocs, getCountFromServer, query, where, orderBy, limit } from 'firebase/firestore';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 
 let authInitialized = false;
@@ -104,6 +104,45 @@ export const loadAllGamesFromFirestore = async (): Promise<any[]> => {
     return games;
   } catch (error) {
     console.error("Error al cargar juegos de Firestore:", error);
+    return [];
+  }
+};
+
+export const loadGamesByDateFromFirestore = async (date: string): Promise<any[]> => {
+  try {
+    if (!db) {
+      console.warn("Firestore db is not initialized. Skipping Firestore date load.");
+      return [];
+    }
+
+    const gamesQuery = query(collection(db, 'games'), where('metadata.date', '==', date));
+    const snapshot = await getDocs(gamesQuery);
+    const games: any[] = [];
+    snapshot.forEach((doc) => {
+      games.push(doc.data());
+    });
+    console.log(`Se cargaron ${games.length} juegos desde Firestore para ${date}.`);
+    return games;
+  } catch (error) {
+    console.error(`Error al cargar juegos de Firestore para ${date}:`, error);
+    return [];
+  }
+};
+
+export const loadLatestGamesFromFirestore = async (): Promise<any[]> => {
+  try {
+    if (!db) {
+      console.warn("Firestore db is not initialized. Skipping Firestore latest load.");
+      return [];
+    }
+
+    const latestQuery = query(collection(db, 'games'), orderBy('metadata.date', 'desc'), limit(1));
+    const latestSnapshot = await getDocs(latestQuery);
+    const latestDate = latestSnapshot.docs[0]?.data()?.metadata?.date;
+    if (!latestDate) return [];
+    return loadGamesByDateFromFirestore(latestDate);
+  } catch (error) {
+    console.error("Error al cargar la fecha mÃ¡s reciente desde Firestore:", error);
     return [];
   }
 };

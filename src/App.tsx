@@ -33,7 +33,7 @@ function getLocalDateString(): string {
 }
 
 export default function App() {
-  const [selectedDate, setSelectedDate] = React.useState<string>(() => getLocalDateString());
+  const [selectedDate, setSelectedDate] = React.useState<string>("");
   const [games, setGames] = React.useState<MLBGame[]>([]);
   const [totalDatabaseGames, setTotalDatabaseGames] = React.useState<number>(0);
   const [errors, setErrors] = React.useState<LoggedError[]>([]);
@@ -62,6 +62,7 @@ export default function App() {
   };
 
   React.useEffect(() => {
+    if (!selectedDate) return;
     localStorage.setItem("mlb_selected_date", selectedDate);
   }, [selectedDate]);
 
@@ -76,6 +77,7 @@ export default function App() {
 
   // Fetch games and diagnostics logs on mount & date change
   const fetchLocalDB = React.useCallback(async (dateToFetch: string) => {
+    if (!dateToFetch) return;
     setIsFetchingDB(true);
     try {
       const res = await fetch(`/api/games?date=${dateToFetch}&_=${Date.now()}`);
@@ -124,10 +126,28 @@ export default function App() {
   }, []);
 
   React.useEffect(() => {
+    let cancelled = false;
+
+    const loadInitialDate = async () => {
+      setIsFetchingDB(true);
+      const dates = await fetchExtractedDates();
+      if (cancelled) return;
+      setSelectedDate(dates[0] || getLocalDateString());
+    };
+
+    loadInitialDate();
+    fetchErrorsDB();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchErrorsDB, fetchExtractedDates]);
+
+  React.useEffect(() => {
+    if (!selectedDate) return;
     fetchLocalDB(selectedDate);
     fetchErrorsDB();
-    fetchExtractedDates();
-  }, [selectedDate, fetchLocalDB, fetchErrorsDB, fetchExtractedDates]);
+  }, [selectedDate, fetchLocalDB, fetchErrorsDB]);
 
   // Calculate total props extracted
   const propsCount = React.useMemo(() => {
@@ -361,6 +381,7 @@ export default function App() {
       <Header
         gamesCount={games.length}
         totalGamesCount={totalDatabaseGames}
+        isDatabaseLoading={isFetchingDB}
         errorsCount={errors.length}
         propsCount={propsCount}
         missingPitchers={missingPitchers}

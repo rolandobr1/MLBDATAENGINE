@@ -579,18 +579,17 @@ export function generateDailyPlayerResultsCSV(games: MLBGame[]): string {
     "away_team",
     "home_team",
     "team",
+    "opponent",
     "home_away",
     "pitcher",
-    "player_type",
     "position",
-    "ab",
-    "r",
-    "h",
-    "rbi",
     "bb",
-    "ponches",
-    "ip",
+    "h",
+    "r",
     "er",
+    "ip",
+    "actual_ks",
+    "actual_bf",
     "pitches",
     "game_status",
     "away_score",
@@ -599,37 +598,42 @@ export function generateDailyPlayerResultsCSV(games: MLBGame[]): string {
 
   const rows: any[][] = [];
 
-  const pushBatterRows = (game: MLBGame, players: any[] | undefined, team: string, homeAway: "home" | "away") => {
-    for (const player of players || []) {
-      rows.push([
-        game.id,
-        game.metadata.date,
-        game.metadata.time,
-        game.metadata.awayTeam,
-        game.metadata.homeTeam,
-        team,
-        homeAway,
-        player.name,
-        "batter",
-        player.position,
-        player.ab ?? "",
-        player.r ?? "",
-        player.h ?? "",
-        player.rbi ?? "",
-        player.bb ?? "",
-        player.k ?? "",
-        "",
-        "",
-        "",
-        game.game_result?.gameStatus ?? "",
-        game.game_result?.awayScore ?? "",
-        game.game_result?.homeScore ?? ""
-      ]);
-    }
+  const parsePitchingOuts = (ip: any): number | null => {
+    if (ip === undefined || ip === null || ip === "") return null;
+    const [wholeRaw, outsRaw = "0"] = String(ip).split(".");
+    const whole = Number.parseInt(wholeRaw, 10);
+    const outs = Number.parseInt(outsRaw, 10);
+    if (!Number.isFinite(whole) || !Number.isFinite(outs) || outs < 0 || outs > 2) return null;
+    return whole * 3 + outs;
+  };
+
+  const getActualBf = (player: any): number | string => {
+    const exact = player.bf ?? player.battersFaced;
+    if (exact !== undefined && exact !== null && exact !== "") return exact;
+    const outs = parsePitchingOuts(player.ip);
+    if (outs === null) return "";
+    return outs + (Number(player.h) || 0) + (Number(player.bb) || 0);
+  };
+
+  const hasPitchingActivity = (player: any): boolean => {
+    const actualBf = Number(getActualBf(player)) || 0;
+    const outs = parsePitchingOuts(player.ip) || 0;
+    return [
+      actualBf,
+      outs,
+      Number(player.pitches) || 0,
+      Number(player.h) || 0,
+      Number(player.bb) || 0,
+      Number(player.k) || 0,
+      Number(player.r) || 0,
+      Number(player.er) || 0,
+    ].some((value) => value > 0);
   };
 
   const pushPitcherRows = (game: MLBGame, players: any[] | undefined, team: string, homeAway: "home" | "away") => {
+    const opponent = homeAway === "home" ? game.metadata.awayTeam : game.metadata.homeTeam;
     for (const player of players || []) {
+      if (!hasPitchingActivity(player)) continue;
       rows.push([
         game.id,
         game.metadata.date,
@@ -637,18 +641,17 @@ export function generateDailyPlayerResultsCSV(games: MLBGame[]): string {
         game.metadata.awayTeam,
         game.metadata.homeTeam,
         team,
+        opponent,
         homeAway,
         player.name,
-        "pitcher",
         player.position,
-        "",
-        "",
-        player.h ?? "",
-        "",
         player.bb ?? "",
-        player.k ?? "",
-        player.ip ?? "",
+        player.h ?? "",
+        player.r ?? "",
         player.er ?? "",
+        player.ip ?? "",
+        player.k ?? "",
+        getActualBf(player),
         player.pitches ?? "",
         game.game_result?.gameStatus ?? "",
         game.game_result?.awayScore ?? "",
@@ -658,9 +661,7 @@ export function generateDailyPlayerResultsCSV(games: MLBGame[]): string {
   };
 
   for (const game of games) {
-    pushBatterRows(game, game.liveBoxscore?.away?.batters, game.metadata.awayTeam, "away");
     pushPitcherRows(game, game.liveBoxscore?.away?.pitchers, game.metadata.awayTeam, "away");
-    pushBatterRows(game, game.liveBoxscore?.home?.batters, game.metadata.homeTeam, "home");
     pushPitcherRows(game, game.liveBoxscore?.home?.pitchers, game.metadata.homeTeam, "home");
   }
 

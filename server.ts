@@ -8,7 +8,7 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
-import { saveGameData, loadAllGamesFromFirestore } from "./src/services/firestoreService";
+import { saveGameData, loadAllGamesFromFirestore, loadGamesByDateFromFirestore, loadLatestGamesFromFirestore } from "./src/services/firestoreService";
 import {
   WeatherData,
   LineMovement,
@@ -41,9 +41,11 @@ app.get("/favicon.ico", (req, res) => {
   res.sendFile(path.join(process.cwd(), "src", "favicon.svg"));
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = Number(process.env.PORT || 3001);
 const DB_PATH = path.join(process.cwd(), "mlb_database.json");
 const ERRORS_PATH = path.join(process.cwd(), "mlb_errors.json");
+let gamesDbCache: Record<string, any[]> | null = null;
+let gamesDbCacheMtime = 0;
 
 // Ensure files exist
 if (!fs.existsSync(DB_PATH)) {
@@ -56,8 +58,14 @@ if (!fs.existsSync(ERRORS_PATH)) {
 // DB Helper Functions
 function readGamesDB(): Record<string, any[]> {
   try {
+    const stat = fs.statSync(DB_PATH);
+    if (gamesDbCache && stat.mtimeMs === gamesDbCacheMtime) {
+      return gamesDbCache;
+    }
     const raw = fs.readFileSync(DB_PATH, "utf-8");
-    return JSON.parse(raw);
+    gamesDbCache = JSON.parse(raw);
+    gamesDbCacheMtime = stat.mtimeMs;
+    return gamesDbCache || {};
   } catch (err) {
     console.error("Error reading database:", err);
     return {};
@@ -67,9 +75,43 @@ function readGamesDB(): Record<string, any[]> {
 function writeGamesDB(data: Record<string, any[]>) {
   try {
     fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+    const stat = fs.statSync(DB_PATH);
+    gamesDbCache = data;
+    gamesDbCacheMtime = stat.mtimeMs;
   } catch (err) {
     console.error("Error writing database:", err);
   }
+}
+
+function countLocalGames(db: Record<string, any[]>): number {
+  return Object.values(db).reduce((total, games) => total + (Array.isArray(games) ? games.length : 0), 0);
+}
+
+function mergeGamesIntoLocalDB(games: any[]): { games: number; dates: number } {
+  const localDB = readGamesDB();
+  const mergedDB: Record<string, any[]> = { ...localDB };
+
+  for (const game of games) {
+    const date = game?.metadata?.date;
+    const id = String(game?.id || game?.metadata?.id || "");
+    if (!date || !id) continue;
+
+    const dateGames = Array.isArray(mergedDB[date]) ? [...mergedDB[date]] : [];
+    const existingIndex = dateGames.findIndex((g: any) => String(g?.id || g?.metadata?.id || "") === id);
+
+    if (existingIndex === -1) {
+      dateGames.push(game);
+    } else {
+      const localGame = dateGames[existingIndex];
+      dateGames[existingIndex] = pickSyncedGame(game, localGame);
+    }
+
+    mergedDB[date] = dateGames;
+  }
+
+  writeGamesDB(mergedDB);
+  const dates = Object.keys(mergedDB).filter(date => Array.isArray(mergedDB[date]) && mergedDB[date].length > 0);
+  return { games: games.length, dates: dates.length };
 }
 
 function getGameTimestamp(game: any): number {
@@ -121,31 +163,9 @@ async function syncFirestoreToLocalDB(reason = "manual"): Promise<{ synced: bool
     return { synced: false, games: 0, dates: 0 };
   }
 
-  const localDB = readGamesDB();
-  const mergedDB: Record<string, any[]> = { ...localDB };
-
-  for (const game of firestoreGames) {
-    const date = game?.metadata?.date;
-    const id = String(game?.id || game?.metadata?.id || "");
-    if (!date || !id) continue;
-
-    const dateGames = Array.isArray(mergedDB[date]) ? [...mergedDB[date]] : [];
-    const existingIndex = dateGames.findIndex((g: any) => String(g?.id || g?.metadata?.id || "") === id);
-
-    if (existingIndex === -1) {
-      dateGames.push(game);
-    } else {
-      const localGame = dateGames[existingIndex];
-      dateGames[existingIndex] = pickSyncedGame(game, localGame);
-    }
-
-    mergedDB[date] = dateGames;
-  }
-
-  writeGamesDB(mergedDB);
-  const dates = Object.keys(mergedDB).filter(date => Array.isArray(mergedDB[date]) && mergedDB[date].length > 0);
-  console.log(`[Firestore Sync] Sync completado (${reason}): ${firestoreGames.length} juegos remotos, ${dates.length} fechas locales.`);
-  return { synced: true, games: firestoreGames.length, dates: dates.length };
+  const { dates } = mergeGamesIntoLocalDB(firestoreGames);
+  console.log(`[Firestore Sync] Sync completado (${reason}): ${firestoreGames.length} juegos remotos, ${dates} fechas locales.`);
+  return { synced: true, games: firestoreGames.length, dates };
   } catch (error) {
     console.error(`[Firestore Sync] Error during sync:`, error);
     return { synced: false, games: 0, dates: 0 };
@@ -264,26 +284,24 @@ function validateGamePayload(game: any, errorsLog: any[]): any {
 // --------------------------------------------------------------------
 
 // Get games schedule for a specific date
-app.get("/api/games", (req, res) => {
+app.get("/api/games", async (req, res) => {
   const { date } = req.query;
   if (!date || typeof date !== "string") {
     res.status(400).json({ error: "Parámetro 'date' es requerido (formato YYYY-MM-DD)" });
     return;
   }
 
-  const db = readGamesDB();
-  const dateGames = db[date] || [];
-  
-  // Call Firestore to get the real cloud total
-  import('./src/services/firestoreService.ts').then(mod => {
-    mod.getTotalGamesCountFromFirestore().then(totalGames => {
-      res.json({ games: dateGames, totalGames });
-    }).catch(() => {
-      res.json({ games: dateGames, totalGames: 0 });
-    });
-  }).catch(() => {
-    res.json({ games: dateGames, totalGames: 0 });
-  });
+  let db = readGamesDB();
+  let dateGames = db[date] || [];
+  if (dateGames.length === 0) {
+    const firestoreGames = await loadGamesByDateFromFirestore(date);
+    if (firestoreGames.length > 0) {
+      mergeGamesIntoLocalDB(firestoreGames);
+      db = readGamesDB();
+      dateGames = db[date] || [];
+    }
+  }
+  res.json({ games: dateGames, totalGames: countLocalGames(db) });
 });
 
 // Helper function to flatten games for ML JSON endpoint
@@ -505,7 +523,10 @@ app.get("/api/extracted-dates", async (req, res) => {
     let db = readGamesDB();
     let dates = Object.keys(db).filter(date => Array.isArray(db[date]) && db[date].length > 0);
     if (dates.length === 0) {
-      await syncFirestoreToLocalDB("extracted-dates-fallback");
+      const latestGames = await loadLatestGamesFromFirestore();
+      if (latestGames.length > 0) {
+        mergeGamesIntoLocalDB(latestGames);
+      }
       db = readGamesDB();
       dates = Object.keys(db).filter(date => Array.isArray(db[date]) && db[date].length > 0);
     }
@@ -1794,6 +1815,7 @@ async function fetchRealMLBGameData(
             er: s.earnedRuns || 0,
             bb: s.baseOnBalls || 0,
             k: s.strikeOuts || 0,
+            bf: s.battersFaced ?? "",
             pitches: s.numberOfPitches || 0
           });
         });
@@ -4311,30 +4333,18 @@ function startLiveGamesAutoupdater() {
   }, INTERVAL_MS);
 }
 
-// Serve static assets in production or connect Vite in development
-async function startServer() {
+async function runStartupFirestoreSync() {
   // Intentar restaurar base de datos local desde Firestore si está vacía
   try {
     const localDB = readGamesDB();
     const isLocalEmpty = Object.keys(localDB).length === 0;
 
     if (isLocalEmpty) {
-      console.log("[Restaurador Firestore] La base de datos local está vacía. Restaurando desde Firestore...");
-      const games = await loadAllGamesFromFirestore();
+      console.log("[Restaurador Firestore] La base de datos local está vacía. Restaurando solo la fecha más reciente desde Firestore...");
+      const games = await loadLatestGamesFromFirestore();
       if (games && games.length > 0) {
-        const restoredDB: Record<string, any[]> = {};
-        for (const game of games) {
-          const date = game.metadata?.date;
-          if (date) {
-            if (!restoredDB[date]) {
-              restoredDB[date] = [];
-            }
-            const { timestamp, ...cleanGame } = game;
-            restoredDB[date].push(cleanGame);
-          }
-        }
-        writeGamesDB(restoredDB);
-        console.log(`[Restaurador Firestore] Base de datos restaurada exitosamente con ${games.length} juegos en total.`);
+        mergeGamesIntoLocalDB(games);
+        console.log(`[Restaurador Firestore] Fecha más reciente restaurada exitosamente con ${games.length} juegos.`);
       } else {
         console.log("[Restaurador Firestore] No se encontraron juegos en Firestore o la colección está vacía.");
       }
@@ -4343,12 +4353,17 @@ async function startServer() {
     console.error("[Restaurador Firestore] Error general al intentar restaurar desde Firestore:", fsRestoreErr);
   }
 
-  try {
-    await syncFirestoreToLocalDB("startup");
-  } catch (fsSyncErr) {
-    console.error("[Firestore Sync] Error general al sincronizar desde Firestore:", fsSyncErr);
+  if (process.env.FULL_FIRESTORE_STARTUP_SYNC === "true") {
+    try {
+      await syncFirestoreToLocalDB("startup");
+    } catch (fsSyncErr) {
+      console.error("[Firestore Sync] Error general al sincronizar desde Firestore:", fsSyncErr);
+    }
   }
+}
 
+// Serve static assets in production or connect Vite in development
+async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -4366,6 +4381,9 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
     startLiveGamesAutoupdater();
+    runStartupFirestoreSync().catch((err) => {
+      console.error("[Firestore Sync] Error en sincronizaciÃ³n de arranque en segundo plano:", err);
+    });
   });
 }
 

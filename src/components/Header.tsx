@@ -4,11 +4,12 @@
  */
 
 import React from "react";
-import { Activity, Database, AlertCircle, FileSpreadsheet, Info, X } from "lucide-react";
+import { Activity, Database, AlertCircle, FileSpreadsheet, Info, X, Loader2 } from "lucide-react";
 
 interface HeaderProps {
   gamesCount: number;
   totalGamesCount: number;
+  isDatabaseLoading?: boolean;
   errorsCount: number;
   propsCount?: { total: number, ks: number, tb: number, oddsApi?: number, dataStreak?: number, unknown?: number };
   missingPitchers?: { name: string, team: string }[];
@@ -18,6 +19,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   gamesCount,
   totalGamesCount,
+  isDatabaseLoading = false,
   errorsCount,
   propsCount,
   missingPitchers = [],
@@ -77,6 +79,9 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="bg-slate-950 px-3 py-1.5 rounded-md border border-slate-800 flex items-center gap-3 text-slate-300">
             <div className="flex items-center gap-2">
               <Database size={14} className="text-blue-400" />
+              {isDatabaseLoading && (
+                <Loader2 size={12} className="text-blue-300 animate-spin" aria-label="Cargando base de datos" />
+              )}
               <span>Día Actual: <strong className="text-white">{gamesCount}</strong> Juegos</span>
             </div>
             <div className="w-px h-4 bg-slate-800"></div>
