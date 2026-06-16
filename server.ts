@@ -1250,10 +1250,16 @@ async function retryGeminiCall(
 }
 
 /** Fetch real betting lines for the given date from The Odds API */
-async function fetchDataStreakSheetRows(date: string, statKey: string, cachePrefix: string) {
-  const cacheFile = path.join(process.cwd(), `${cachePrefix}_${date}.json`);
+async function fetchDataStreakSheetRows(
+  date: string,
+  statKey: string,
+  cachePrefix: string,
+  forceRefresh = false,
+  excludeInjured = true
+) {
+  const cacheFile = path.join(process.cwd(), `${cachePrefix}${excludeInjured ? "" : "_all"}_${date}.json`);
 
-  if (fs.existsSync(cacheFile)) {
+  if (!forceRefresh && fs.existsSync(cacheFile)) {
     try {
       return JSON.parse(fs.readFileSync(cacheFile, "utf-8"));
     } catch (e) {
@@ -1262,7 +1268,7 @@ async function fetchDataStreakSheetRows(date: string, statKey: string, cachePref
   }
 
   try {
-    const url = `https://thedatastreak.com/api/v1/hit-rates/mlb/sheets-fast/${statKey}?target_date=${encodeURIComponent(date)}&sample_size=20&min_games=5&exclude_injured=true`;
+    const url = `https://thedatastreak.com/api/v1/hit-rates/mlb/sheets-fast/${statKey}?target_date=${encodeURIComponent(date)}&sample_size=20&min_games=5&exclude_injured=${excludeInjured ? "true" : "false"}`;
     const res = await fetchWithTimeout(url, 10000);
     if (!res.ok) {
       console.warn(`DataStreak ${statKey} respondio con error: ${res.status}`);
@@ -1278,12 +1284,12 @@ async function fetchDataStreakSheetRows(date: string, statKey: string, cachePref
   }
 }
 
-async function fetchDataStreakPitcherStrikeoutProps(date: string) {
-  return fetchDataStreakSheetRows(date, "mlb_pitcher_ks", "datastreak_pitcher_ks");
+async function fetchDataStreakPitcherStrikeoutProps(date: string, forceRefresh = false) {
+  return fetchDataStreakSheetRows(date, "mlb_pitcher_ks", "datastreak_pitcher_ks", forceRefresh, false);
 }
 
-async function fetchDataStreakTotalBasesProps(date: string) {
-  return fetchDataStreakSheetRows(date, "mlb_total_bases", "datastreak_total_bases");
+async function fetchDataStreakTotalBasesProps(date: string, forceRefresh = false) {
+  return fetchDataStreakSheetRows(date, "mlb_total_bases", "datastreak_total_bases", forceRefresh, true);
 }
 
 function mergeDataStreakPitcherStrikeouts(events: any[], rows: any[]) {
@@ -1525,7 +1531,7 @@ async function fetchRealBettingLines(date: string, forceRefreshOdds: boolean = f
       return event;
     }));
 
-    const dataStreakPitcherKs = await fetchDataStreakPitcherStrikeoutProps(date);
+    const dataStreakPitcherKs = await fetchDataStreakPitcherStrikeoutProps(date, forceRefreshOdds);
     const eventsWithDataStreakProps = mergeDataStreakPitcherStrikeouts(eventsWithProps, dataStreakPitcherKs);
 
     // Save to Cache
@@ -3529,8 +3535,8 @@ app.post("/api/harvest", async (req, res) => {
 
   // Fetch real odds for the day
   const realOddsData = await fetchRealBettingLines(date, refreshOdds === true, mlbMatches);
-  const pitcherStrikeoutRows = await fetchDataStreakPitcherStrikeoutProps(date);
-  const totalBasesRows = await fetchDataStreakTotalBasesProps(date);
+  const pitcherStrikeoutRows = await fetchDataStreakPitcherStrikeoutProps(date, refreshOdds === true);
+  const totalBasesRows = await fetchDataStreakTotalBasesProps(date, refreshOdds === true);
 
   // Pre-cargar Baseball Savant (una sola descarga para toda la sesión)
   const season = date.substring(0, 4);

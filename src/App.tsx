@@ -474,7 +474,7 @@ export default function App() {
                 )}
               </h2>
               <p className="text-slate-500 text-xs mt-0.5">
-                Juegos registrados para la fecha: <strong className="text-slate-800">{selectedDate}</strong>
+                Juegos registrados para la fecha: <strong className="text-slate-800">{selectedDate || "detectando fecha reciente..."}</strong>
               </p>
             </div>
 
@@ -499,7 +499,23 @@ export default function App() {
             </div>
           </div>
 
-          {games.length === 0 ? (
+          {isFetchingDB ? (
+            <div className="bg-white border border-blue-100 rounded-xl p-16 text-center space-y-4 shadow-sm animate-fade-in">
+              <div className="relative w-16 h-16 mx-auto">
+                <div className="absolute inset-0 rounded-full border-4 border-slate-100"></div>
+                <div className="absolute inset-0 rounded-full border-4 border-blue-500 border-t-transparent animate-spin"></div>
+                <Database size={24} className="absolute inset-0 m-auto text-blue-600" />
+              </div>
+              <div className="max-w-md mx-auto space-y-2">
+                <h3 className="font-display font-semibold text-slate-800 text-base">
+                  Cargando base de datos
+                </h3>
+                <p className="text-slate-500 text-xs leading-relaxed">
+                  Estamos detectando la fecha más reciente y cargando únicamente los juegos necesarios para abrir la vista.
+                </p>
+              </div>
+            </div>
+          ) : games.length === 0 ? (
             /* No games yet container */
             <div className="bg-white border border-slate-200 rounded-xl p-16 text-center space-y-4 shadow-sm animate-fade-in">
               <div className="w-16 h-16 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mx-auto">
@@ -526,19 +542,6 @@ export default function App() {
                   g.metadata.awayTeam.toLowerCase().includes(searchLower)
                 );
               });
-
-                if (isFetchingDB) {
-                  return (
-                    <div className="flex flex-col items-center justify-center py-16 px-4">
-                      <div className="relative w-16 h-16 mb-4">
-                        <div className="absolute inset-0 rounded-full border-4 border-slate-100"></div>
-                        <div className="absolute inset-0 rounded-full border-4 border-violet-500 border-t-transparent animate-spin"></div>
-                      </div>
-                      <h3 className="text-lg font-bold text-slate-700">Cargando base de datos</h3>
-                      <p className="text-sm text-slate-400 mt-1">Sincronizando juegos e información...</p>
-                    </div>
-                  );
-                }
 
                 if (filteredGames.length === 0) {
                   return (
