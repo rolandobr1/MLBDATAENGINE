@@ -599,6 +599,46 @@ app.get("/api/extracted-dates", async (req, res) => {
   }
 });
 
+app.get("/api/diagnostics/render", async (req, res) => {
+  try {
+    const db = readGamesDB();
+    const localDates = Object.keys(db).filter(date => Array.isArray(db[date]) && db[date].length > 0);
+    let firestoreDates: string[] = [];
+    try {
+      firestoreDates = await loadExtractedDatesFromFirestore();
+    } catch (fsErr) {
+      console.error("Diagnostics Firestore dates error:", fsErr);
+    }
+
+    const latestDate = [...localDates, ...firestoreDates]
+      .filter(Boolean)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || null;
+    const latestGames = latestDate ? (db[latestDate] || []) : [];
+
+    res.json({
+      ok: true,
+      environment: {
+        nodeEnv: process.env.NODE_ENV || null,
+        hasOddsApiKey: !!process.env.ODDS_API_KEY,
+        hasFirebaseProjectId: !!process.env.FIREBASE_PROJECT_ID,
+        fullFirestoreStartupSync: process.env.FULL_FIRESTORE_STARTUP_SYNC === "true",
+        firestoreReadTimeoutMs: process.env.FIRESTORE_READ_TIMEOUT_MS || "6000",
+      },
+      database: {
+        localDates: localDates.length,
+        firestoreDates: firestoreDates.length,
+        totalLocalGames: countLocalGames(db),
+        latestDate,
+        latestLocalGames: latestGames.length,
+        latestTheOddsApiProps: getTheOddsApiPropsCountForGames(latestGames),
+      },
+    });
+  } catch (err) {
+    console.error("Diagnostics endpoint error:", err);
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 // Get ML consolidation dataset (wide flat JSON)
 app.get("/api/ml-dataset", (req, res) => {
   try {
