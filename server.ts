@@ -47,6 +47,7 @@ const ERRORS_PATH = path.join(process.cwd(), "mlb_errors.json");
 let gamesDbCache: Record<string, any[]> | null = null;
 let gamesDbCacheMtime = 0;
 let latestFirestoreRestoreInFlight: Promise<void> | null = null;
+const oddsApiBackfillsInFlight = new Set<string>();
 
 // Ensure files exist
 if (!fs.existsSync(DB_PATH)) {
@@ -148,6 +149,42 @@ function getTheOddsApiPropsCount(game: any): number {
     }
   }
   return count;
+}
+
+function getTheOddsApiPropsCountForGames(games: any[]): number {
+  return (games || []).reduce((total, game) => total + getTheOddsApiPropsCount(game), 0);
+}
+
+function maybeBackfillTheOddsApiForDate(date: string, dateGames: any[]) {
+  if (!date || !Array.isArray(dateGames) || dateGames.length === 0) return;
+  if (!process.env.ODDS_API_KEY) return;
+  if (oddsApiBackfillsInFlight.has(date)) return;
+
+  const cacheFile = path.join(process.cwd(), `odds_cache_${date}.json`);
+  const hasOddsCache = fs.existsSync(cacheFile);
+  const apiPropsCount = getTheOddsApiPropsCountForGames(dateGames);
+  if (hasOddsCache && apiPropsCount > 0) return;
+
+  oddsApiBackfillsInFlight.add(date);
+  const forceFirstOddsFetch = !hasOddsCache || apiPropsCount === 0;
+  console.log(`[Odds Backfill] Iniciando verificacion de The Odds API para ${date}. Cache=${hasOddsCache}, apiProps=${apiPropsCount}.`);
+
+  (async () => {
+    try {
+      let forceRefreshOdds = forceFirstOddsFetch;
+      for (const game of dateGames) {
+        const gameId = String(game?.id || game?.metadata?.id || "");
+        if (!gameId) continue;
+        await updateSingleGameData(gameId, date, forceRefreshOdds);
+        forceRefreshOdds = false;
+      }
+      console.log(`[Odds Backfill] Completado para ${date}.`);
+    } catch (err) {
+      console.error(`[Odds Backfill] Error actualizando cuotas para ${date}:`, err);
+    } finally {
+      oddsApiBackfillsInFlight.delete(date);
+    }
+  })();
 }
 
 function getPitcherLast3DetailsCount(game: any): number {
@@ -320,6 +357,7 @@ app.get("/api/games", async (req, res) => {
       dateGames = db[date] || [];
     }
   }
+  maybeBackfillTheOddsApiForDate(date, dateGames);
   res.json({ games: dateGames, totalGames: countLocalGames(db) });
 });
 
@@ -3964,7 +4002,7 @@ app.post("/api/harvest", async (req, res) => {
 });
 
 // Reusable helper to update data for a single game and persist it
-async function updateSingleGameData(gameId: string, date: string): Promise<any> {
+async function updateSingleGameData(gameId: string, date: string, forceRefreshOdds = false): Promise<any> {
   console.log(`Actualizando juego individual ${gameId} para la fecha ${date}...`);
 
   // 1. Fetch MLB Schedule for the date to find the match details
@@ -3987,9 +4025,9 @@ async function updateSingleGameData(gameId: string, date: string): Promise<any> 
   const matchTime = formatGameTime(match.gameDate);
 
   // 2. Fetch real odds
-  const realOddsData = await fetchRealBettingLines(date);
-  const pitcherStrikeoutRows = await fetchDataStreakPitcherStrikeoutProps(date);
-  const totalBasesRows = await fetchDataStreakTotalBasesProps(date);
+  const realOddsData = await fetchRealBettingLines(date, forceRefreshOdds);
+  const pitcherStrikeoutRows = await fetchDataStreakPitcherStrikeoutProps(date, forceRefreshOdds);
+  const totalBasesRows = await fetchDataStreakTotalBasesProps(date, forceRefreshOdds);
 
   // 3. Fetch real MLB game data
   const realMLBData = await fetchRealMLBGameData(gameId, homeTeamId, awayTeamId, date);
@@ -4287,14 +4325,14 @@ async function updateSingleGameData(gameId: string, date: string): Promise<any> 
 
 // Harvester endpoint for individual game updates
 app.post("/api/harvest-game", async (req, res) => {
-  const { gameId, date } = req.body;
+  const { gameId, date, refreshOdds } = req.body;
   if (!gameId || !date || typeof gameId !== "string" || typeof date !== "string") {
     res.status(400).json({ error: "gameId y date son requeridos" });
     return;
   }
 
   try {
-    const updatedGame = await updateSingleGameData(gameId, date);
+    const updatedGame = await updateSingleGameData(gameId, date, refreshOdds === true);
     res.json({ success: true, game: updatedGame });
   } catch (err) {
     console.error(`Error al actualizar juego individual ${gameId}:`, err);

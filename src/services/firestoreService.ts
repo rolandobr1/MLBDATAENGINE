@@ -5,6 +5,26 @@ import { getAuth, signInAnonymously } from 'firebase/auth';
 let authInitialized = false;
 const FIRESTORE_READ_TIMEOUT_MS = Number(process.env.FIRESTORE_READ_TIMEOUT_MS || 6000);
 
+async function ensureAnonymousAuth(): Promise<boolean> {
+  if (!app) return false;
+  if (authInitialized) return true;
+
+  try {
+    const auth = getAuth(app);
+    await signInAnonymously(auth);
+    authInitialized = true;
+    return true;
+  } catch (authErr: any) {
+    if (authErr.code === 'auth/configuration-not-found') {
+      console.error("\nERROR CRITICO DE FIREBASE: La Autenticacion Anonima no esta habilitada.");
+      console.error("Ve a Firebase Console -> Authentication -> Sign-in method -> habilita 'Anonimo'.\n");
+    } else {
+      console.error("Error autenticando Firebase:", authErr);
+    }
+    return false;
+  }
+}
+
 async function withFirestoreReadTimeout<T>(promise: Promise<T>, fallback: T, label: string): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -108,6 +128,8 @@ export const loadAllGamesFromFirestore = async (): Promise<any[]> => {
       console.warn("Firestore db is not initialized. Skipping Firestore load.");
       return [];
     }
+    const isAuthed = await ensureAnonymousAuth();
+    if (!isAuthed) return [];
 
     console.log("Cargando juegos desde Firestore...");
     const gamesColl = collection(db, 'games');
@@ -133,6 +155,8 @@ export const loadGamesByDateFromFirestore = async (date: string): Promise<any[]>
       console.warn("Firestore db is not initialized. Skipping Firestore date load.");
       return [];
     }
+    const isAuthed = await ensureAnonymousAuth();
+    if (!isAuthed) return [];
 
     const gamesQuery = query(collection(db, 'games'), where('metadata.date', '==', date));
     const snapshot = await withFirestoreReadTimeout(getDocs(gamesQuery), null, `juegos de ${date}`);
@@ -155,6 +179,8 @@ export const loadLatestGamesFromFirestore = async (): Promise<any[]> => {
       console.warn("Firestore db is not initialized. Skipping Firestore latest load.");
       return [];
     }
+    const isAuthed = await ensureAnonymousAuth();
+    if (!isAuthed) return [];
 
     const latestQuery = query(collection(db, 'games'), orderBy('metadata.date', 'desc'), limit(1));
     const latestSnapshot = await withFirestoreReadTimeout(getDocs(latestQuery), null, 'fecha mas reciente');
@@ -171,16 +197,8 @@ export const loadLatestGamesFromFirestore = async (): Promise<any[]> => {
 export const getTotalGamesCountFromFirestore = async (): Promise<number> => {
   try {
     if (!db || !app) return 0;
-    
-    if (!authInitialized) {
-      try {
-        const auth = getAuth(app);
-        await signInAnonymously(auth);
-        authInitialized = true;
-      } catch (e) {
-        // Ignorar
-      }
-    }
+    const isAuthed = await ensureAnonymousAuth();
+    if (!isAuthed) return 0;
 
     const snapshot = await withFirestoreReadTimeout(getCountFromServer(collection(db, 'games')), null, 'conteo de juegos');
     if (!snapshot) return 0;

@@ -304,6 +304,29 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
   return NONE;
 }
 
+function hasResultDataForBet(bet: Bet, game: MLBGame | undefined): boolean {
+  if (!game) return false;
+  const status = game.game_result?.gameStatus ?? "";
+  const isLiveOrFinal = LIVE_STATUSES.some(s => status.includes(s)) || FINAL_STATUSES.some(s => status.includes(s));
+  if (!isLiveOrFinal) return false;
+
+  if (bet.betTypeKey === "pitcher_k") {
+    const pitchers = game.liveBoxscore?.[bet.teamSide]?.pitchers ?? [];
+    return pitchers.some(p => p.name === bet.subject) || pitchers.length > 0;
+  }
+
+  if (bet.betTypeKey === "batter_tb") {
+    const batters = game.liveBoxscore?.[bet.teamSide]?.batters ?? [];
+    return batters.some(b => b.name === bet.subject);
+  }
+
+  if (bet.betTypeKey === "team_f5") {
+    return Array.isArray(game.linescore?.innings) && game.linescore.innings.length > 0;
+  }
+
+  return game.game_result?.homeScore !== undefined && game.game_result?.awayScore !== undefined;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // SUB-COMPONENTS
 // ════════════════════════════════════════════════════════════════════════════
@@ -502,6 +525,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
   const [expandedBets, setExpandedBets] = useState<Set<number>>(new Set());
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
   const [isRefreshingAll, setIsRefreshingAll] = useState(false);
+  const autoHydratedResultGamesRef = React.useRef<Set<string>>(new Set());
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
 
@@ -687,8 +711,6 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     }
   }, [resolvedBets]);
 
-  const deleteBet = (id: number) => updateBets(prev => prev.filter(b => b.id !== id));
-
   const replaceDateGame = (updatedGame: MLBGame | void) => {
     if (!updatedGame) return;
     setDateGames(prev => {
@@ -697,6 +719,40 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
       return prev.map(g => String(g.id) === String(updatedGame.id) ? updatedGame : g);
     });
   };
+
+  useEffect(() => {
+    const missingResultGameIds = Array.from(new Set(
+      bets
+        .filter(b => b.status !== "pending")
+        .filter(b => {
+          const game = dateGames.find(g => String(g.id) === b.gameId) || games.find(g => String(g.id) === b.gameId);
+          return !hasResultDataForBet(b, game);
+        })
+        .map(b => b.gameId)
+        .filter(gameId => !autoHydratedResultGamesRef.current.has(`${betDate}:${gameId}`))
+    ));
+
+    if (missingResultGameIds.length === 0) return;
+
+    missingResultGameIds.forEach(gameId => autoHydratedResultGamesRef.current.add(`${betDate}:${gameId}`));
+    missingResultGameIds.forEach(async (gameId) => {
+      setRefreshingIds(prev => new Set(prev).add(gameId));
+      try {
+        const updatedGame = await onRefreshGame(gameId, betDate);
+        replaceDateGame(updatedGame);
+      } catch (error) {
+        console.error("Error hidratando resultados de apuesta cerrada:", error);
+      } finally {
+        setRefreshingIds(prev => {
+          const next = new Set(prev);
+          next.delete(gameId);
+          return next;
+        });
+      }
+    });
+  }, [betDate, bets, dateGames, games, onRefreshGame]);
+
+  const deleteBet = (id: number) => updateBets(prev => prev.filter(b => b.id !== id));
 
   const handleRefreshBet = async (gameId: string) => {
     setRefreshingIds(prev => new Set(prev).add(gameId));
