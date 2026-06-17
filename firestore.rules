@@ -54,5 +54,25 @@ service cloud.firestore {
         
       allow delete: if isSignedIn() && isValidId(gameId);
     }
+
+    // Bet tracking data grouped by date, for example mlb_bets/2026-06-17.
+    match /mlb_bets/{dateId} {
+      allow read: if isSignedIn() && dateId.matches('^\\d{4}-\\d{2}-\\d{2}$');
+      allow create, update: if isSignedIn()
+        && dateId.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && incoming().bets is list
+        && incoming().bets.size() <= 500;
+      allow delete: if isSignedIn() && dateId.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    // Registered bet-tracking users live in mlb_users/registered.
+    match /mlb_users/{userDoc} {
+      allow read: if isSignedIn() && userDoc == 'registered';
+      allow create, update: if isSignedIn()
+        && userDoc == 'registered'
+        && incoming().list is list
+        && incoming().list.size() <= 200;
+      allow delete: if isSignedIn() && userDoc == 'registered';
+    }
   }
 }

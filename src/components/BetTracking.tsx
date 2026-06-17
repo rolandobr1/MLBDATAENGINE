@@ -576,7 +576,9 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
       // Avoid overwriting if db is empty and we have local bets (migration)
       const currentLocal = loadBets(betDate);
       if (dbBets.length === 0 && currentLocal.length > 0) {
-        saveBetsDb(betDate, currentLocal);
+        void saveBetsDb(betDate, currentLocal).catch(error => {
+          console.error("Error migrando apuestas locales a Firestore:", error);
+        });
       } else {
         setBets(dbBets);
         saveBets(betDate, dbBets);
@@ -596,7 +598,9 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     setBets(prev => {
       const next = updater(prev);
       saveBets(betDate, next); // local
-      saveBetsDb(betDate, next); // firestore
+      void saveBetsDb(betDate, next).catch(error => {
+        console.error("Error guardando apuestas en Firestore:", error);
+      });
       return next;
     });
   };
@@ -834,16 +838,20 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
 
   const filtered = filter === "all" ? filteredByUser : filteredByUser.filter(r => r.bet.status === filter);
 
-  const handleUserSave = (name: string) => { 
+  const handleUserSave = (name: string) => {
     saveUsername(name); 
     setUserName(name); 
     setShowUserModal(false); 
-    registerUserDb(name);
+    void registerUserDb(name).catch(error => {
+      console.error("Error registrando usuario de apuestas en Firestore:", error);
+    });
   };
 
   const handleDeleteUser = (name: string) => {
     if (window.confirm(`¿Estás seguro de que deseas eliminar al usuario "${name}"? Esto no borrará sus apuestas existentes, solo lo quitará de la lista.`)) {
-      deleteUserDb(name);
+      void deleteUserDb(name).catch(error => {
+        console.error("Error eliminando usuario de apuestas en Firestore:", error);
+      });
       if (userName === name) {
         saveUsername("");
         setUserName("");
