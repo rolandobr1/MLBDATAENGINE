@@ -12,6 +12,9 @@ export default defineConfig(() => {
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: ['icon.svg'],
+        workbox: {
+          navigateFallbackDenylist: [/^\/api\//],
+        },
         manifest: {
           name: 'MLB Data Engine',
           short_name: 'MLBDATA',

@@ -27,9 +27,16 @@ import { generateMLDatasetCSV, generateBattersCSV, generateSingleGameCSV, genera
 import { savantCache } from "./src/etl/extractors/savantScraper";
 
 
-const envLocalPath = path.join(process.cwd(), ".env.local");
-if (fs.existsSync(envLocalPath)) {
-  dotenv.config({ path: envLocalPath });
+const envPaths = [
+  path.join(process.cwd(), ".env.local"),
+  path.join(process.cwd(), "env.local"),
+  path.join("/etc", "secrets", ".env.local"),
+  path.join("/etc", "secrets", "env.local"),
+];
+for (const envPath of envPaths) {
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath });
+  }
 }
 dotenv.config();
 
