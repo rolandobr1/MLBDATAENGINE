@@ -128,10 +128,47 @@ function todayStr(): string {
 type OddsFormat = "american" | "decimal";
 const ODDS_FORMAT_KEY = "mlb_bet_odds_format";
 function loadOddsFormat(): OddsFormat {
-  return (localStorage.getItem(ODDS_FORMAT_KEY) as OddsFormat) ?? "american";
+  return (localStorage.getItem(ODDS_FORMAT_KEY) as OddsFormat) ?? "decimal";
 }
 function saveOddsFormat(f: OddsFormat): void {
   localStorage.setItem(ODDS_FORMAT_KEY, f);
+}
+
+function americanOddsToDecimal(odds: number): number | null {
+  if (!Number.isFinite(odds) || odds === 0) return null;
+  return odds > 0 ? 1 + odds / 100 : 1 + 100 / Math.abs(odds);
+}
+
+function decimalOddsToAmerican(decimal: number): number | null {
+  if (!Number.isFinite(decimal) || decimal <= 1) return null;
+  return decimal >= 2 ? Math.round((decimal - 1) * 100) : Math.round(-100 / (decimal - 1));
+}
+
+function isAmericanOddsString(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "—") return false;
+  return /^[-+]\d+$/.test(trimmed) || (/^-?\d+$/.test(trimmed) && Math.abs(Number(trimmed)) >= 100);
+}
+
+function formatOddsDisplay(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "—") return "—";
+  if (isAmericanOddsString(trimmed)) {
+    const decimal = americanOddsToDecimal(Number(trimmed.replace("+", "")));
+    return decimal ? decimal.toFixed(2) : trimmed;
+  }
+  const decimal = Number(trimmed);
+  return Number.isFinite(decimal) && decimal > 1 ? decimal.toFixed(2) : trimmed;
+}
+
+function oddsForFormat(value: string, format: OddsFormat): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "—") return "";
+  if (format === "decimal") return formatOddsDisplay(trimmed);
+  if (isAmericanOddsString(trimmed)) return trimmed.startsWith("+") || trimmed.startsWith("-") ? trimmed : `+${trimmed}`;
+  const decimal = Number(trimmed);
+  const american = decimalOddsToAmerican(decimal);
+  return american === null ? trimmed : american > 0 ? `+${american}` : String(american);
 }
 
 function calcPotentialWin(amount: number, oddsStr: string, format: OddsFormat): number {
@@ -153,7 +190,7 @@ function exportCSV(bets: Bet[], date: string): void {
   const headers = ["Fecha","Usuario","Casa","Equipo","vs","Jugador","Tipo","Línea","Odds","Monto($)","Ganancia Pot.($)","Nota","Estado"];
   const rows = bets.map(b => [
     b.date, b.userName, b.bookmaker, b.teamName, b.opponentName,
-    b.subject, b.betLabel, b.line || "—", b.odds, b.amount, b.potentialWin, `"${b.note}"`, b.status
+    b.subject, b.betLabel, b.line || "—", formatOddsDisplay(b.odds), b.amount, b.potentialWin, `"${b.note}"`, b.status
   ]);
   const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
   const a = Object.assign(document.createElement("a"), {
@@ -675,7 +712,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     setLine(bet.line ? String(bet.line) : "");
     setBookmaker(bet.bookmaker || "");
     setAmount(bet.amount ? String(bet.amount) : "");
-    setOdds(bet.odds !== "—" ? bet.odds : "");
+    setOdds(oddsForFormat(bet.odds, oddsFormat));
     setNote(bet.note || "");
     setStep(5);
   };
@@ -1387,7 +1424,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                               {bet.potentialWin > 0 && (
                                 <p className="text-[11px] font-bold text-emerald-600">+${bet.potentialWin.toFixed(2)}</p>
                               )}
-                              <p className={`text-xs font-semibold ${bet.odds.startsWith("+") ? "text-emerald-600" : "text-slate-500"}`}>{bet.odds}</p>
+                              <p className="text-xs font-semibold text-slate-500">{formatOddsDisplay(bet.odds)}</p>
                               <p className="text-[10px] text-slate-400">{bet.createdAt}</p>
                               <div className="flex items-center justify-end gap-2 mt-1">
                                 <button onClick={(e) => { e.stopPropagation(); handleRefreshBet(bet.gameId); }} disabled={isRefreshing}

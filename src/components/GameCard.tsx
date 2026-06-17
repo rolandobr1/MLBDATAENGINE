@@ -85,7 +85,10 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
 
   const formatOdds = (value: number | null | undefined) => {
     if (value === null || value === undefined) return "N/D";
-    return value > 0 ? `+${value}` : String(value);
+    if (value > 1 && value < 20) return value.toFixed(2);
+    if (value > 0) return (1 + value / 100).toFixed(2);
+    if (value < 0) return (1 + 100 / Math.abs(value)).toFixed(2);
+    return "N/D";
   };
 
   const inningsToDecimal = (ip: string | number | undefined) => {
@@ -591,7 +594,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                   <div className="flex justify-between items-center text-indigo-900 bg-indigo-50/50 -mx-1 px-1 rounded"><span title="Línea de Ponches de Las Vegas." className="cursor-help font-bold">Línea Ks:</span> 
                     <div className="text-right leading-tight">
                        <strong>{game.pitchers.away.strikeoutProp}</strong>
-                       <div className="text-[8px] text-indigo-600 font-mono -mt-0.5">O:{game.pitchers.away.strikeoutPropOverOdds} U:{game.pitchers.away.strikeoutPropUnderOdds}</div>
+                       <div className="text-[8px] text-indigo-600 font-mono -mt-0.5">O:{formatOdds(game.pitchers.away.strikeoutPropOverOdds)} U:{formatOdds(game.pitchers.away.strikeoutPropUnderOdds)}</div>
                     </div>
                   </div>
                 )}
@@ -642,7 +645,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                   <div className="flex justify-between items-center text-indigo-900 bg-indigo-50/50 -mx-1 px-1 rounded"><span title="Línea de Ponches de Las Vegas." className="cursor-help font-bold">Línea Ks:</span> 
                     <div className="text-right leading-tight">
                        <strong>{game.pitchers.home.strikeoutProp}</strong>
-                       <div className="text-[8px] text-indigo-600 font-mono -mt-0.5">O:{game.pitchers.home.strikeoutPropOverOdds} U:{game.pitchers.home.strikeoutPropUnderOdds}</div>
+                       <div className="text-[8px] text-indigo-600 font-mono -mt-0.5">O:{formatOdds(game.pitchers.home.strikeoutPropOverOdds)} U:{formatOdds(game.pitchers.home.strikeoutPropUnderOdds)}</div>
                     </div>
                   </div>
                 )}

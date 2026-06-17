@@ -76,9 +76,11 @@ export default function App() {
   }, []);
 
   // Fetch games and diagnostics logs on mount & date change
-  const fetchLocalDB = React.useCallback(async (dateToFetch: string) => {
+  const fetchLocalDB = React.useCallback(async (dateToFetch: string, options?: { silent?: boolean }) => {
     if (!dateToFetch) return;
-    setIsFetchingDB(true);
+    if (!options?.silent) {
+      setIsFetchingDB(true);
+    }
     try {
       const res = await fetch(`/api/games?date=${dateToFetch}&_=${Date.now()}`);
       if (res.ok) {
@@ -91,7 +93,9 @@ export default function App() {
     } catch (err) {
       console.error("Fallo al conectar con el servidor local para juegos:", err);
     } finally {
-      setIsFetchingDB(false);
+      if (!options?.silent) {
+        setIsFetchingDB(false);
+      }
     }
   }, []);
 
@@ -234,8 +238,9 @@ export default function App() {
 
     // Ejecuta consulta cada 60 segundos si hay juegos en vivo en pantalla
     const interval = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       console.log("[Auto-Polling] Refrescando partidos en vivo de la fecha seleccionada...");
-      fetchLocalDB(selectedDate);
+      fetchLocalDB(selectedDate, { silent: true });
       fetchErrorsDB();
     }, 60000);
 

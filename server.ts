@@ -4064,12 +4064,27 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
   const mlbRes = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${date}`);
   const mlbData = await mlbRes.json();
   let match: any = null;
+  let actualDate = date;
   if (mlbData.dates && mlbData.dates[0] && mlbData.dates[0].games) {
     match = mlbData.dates[0].games.find((g: any) => String(g.gamePk) === String(gameId));
   }
 
   if (!match) {
-    throw new Error(`Juego ${gameId} no encontrado en el calendario de la fecha ${date}`);
+    const byGamePkRes = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&gamePk=${gameId}`);
+    const byGamePkData = await byGamePkRes.json();
+    for (const scheduleDate of byGamePkData.dates || []) {
+      const found = (scheduleDate.games || []).find((g: any) => String(g.gamePk) === String(gameId));
+      if (found) {
+        match = found;
+        actualDate = scheduleDate.date || String(found.gameDate || "").split("T")[0] || date;
+        console.warn(`Juego ${gameId} no pertenece a ${date}; usando fecha real ${actualDate}.`);
+        break;
+      }
+    }
+  }
+
+  if (!match) {
+    throw new Error(`Juego ${gameId} no encontrado en el calendario de MLB`);
   }
 
   const homeName = match.teams.home.team.name;
@@ -4080,18 +4095,18 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
   const matchTime = formatGameTime(match.gameDate);
 
   // 2. Fetch real odds
-  const realOddsData = await fetchRealBettingLines(date, forceRefreshOdds);
-  const pitcherStrikeoutRows = await fetchDataStreakPitcherStrikeoutProps(date, forceRefreshOdds);
-  const totalBasesRows = await fetchDataStreakTotalBasesProps(date, forceRefreshOdds);
+  const realOddsData = await fetchRealBettingLines(actualDate, forceRefreshOdds);
+  const pitcherStrikeoutRows = await fetchDataStreakPitcherStrikeoutProps(actualDate, forceRefreshOdds);
+  const totalBasesRows = await fetchDataStreakTotalBasesProps(actualDate, forceRefreshOdds);
 
   // 3. Fetch real MLB game data
-  const realMLBData = await fetchRealMLBGameData(gameId, homeTeamId, awayTeamId, date);
+  const realMLBData = await fetchRealMLBGameData(gameId, homeTeamId, awayTeamId, actualDate);
 
   // 4. Build game data
-  const gameDataParsed: any = buildDirectGameData(gameId, homeName, awayName, venueName, date, matchTime, realMLBData, realOddsData, pitcherStrikeoutRows, totalBasesRows);
+  const gameDataParsed: any = buildDirectGameData(gameId, homeName, awayName, venueName, actualDate, matchTime, realMLBData, realOddsData, pitcherStrikeoutRows, totalBasesRows);
 
   // 5. Fetch advanced stats
-  const season = date.substring(0, 4);
+  const season = actualDate.substring(0, 4);
   await Promise.all([
     savantCache.load(parseInt(season)),
 
@@ -4117,22 +4132,22 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
     awayAdvOffense,
     fatigue
   ] = await Promise.all([
-    fetchWeatherData(venueName, date, match.gameDate || new Date().toISOString()),
+    fetchWeatherData(venueName, actualDate, match.gameDate || new Date().toISOString()),
     fetchOffensiveSplits(homeTeamId, season),
     fetchOffensiveSplits(awayTeamId, season),
     fetchAdvancedPitching(homePitcherId, season),
     fetchAdvancedPitching(awayPitcherId, season),
-    fetchAdvancedPitchingLast7(homePitcherId, season, date),
-    fetchAdvancedPitchingLast7(awayPitcherId, season, date),
-    fetchPitcherLast5Profile(homePitcherId, season, date),
-    fetchPitcherLast5Profile(awayPitcherId, season, date),
+    fetchAdvancedPitchingLast7(homePitcherId, season, actualDate),
+    fetchAdvancedPitchingLast7(awayPitcherId, season, actualDate),
+    fetchPitcherLast5Profile(homePitcherId, season, actualDate),
+    fetchPitcherLast5Profile(awayPitcherId, season, actualDate),
     fetchAdvancedPitchingVsOpp(homePitcherId, awayTeamId),
     fetchAdvancedPitchingVsOpp(awayPitcherId, homeTeamId),
-    fetchPitcherLast3VsTeamProfile(homePitcherId, awayTeamId, season, date),
-    fetchPitcherLast3VsTeamProfile(awayPitcherId, homeTeamId, season, date),
+    fetchPitcherLast3VsTeamProfile(homePitcherId, awayTeamId, season, actualDate),
+    fetchPitcherLast3VsTeamProfile(awayPitcherId, homeTeamId, season, actualDate),
     fetchAdvancedOffense(homeTeamId, season),
     fetchAdvancedOffense(awayTeamId, season),
-    fetchFatigueMetrics(homePitcherId, awayPitcherId, homeTeamId, awayTeamId, date)
+    fetchFatigueMetrics(homePitcherId, awayPitcherId, homeTeamId, awayTeamId, actualDate)
   ]);
 
   // Populate advanced fields
@@ -4311,7 +4326,7 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
 
   // Line Movements
   const currentDB = readGamesDB();
-  const existingGamesForDate = currentDB[date] || [];
+  const existingGamesForDate = currentDB[actualDate] || [];
   const existingGame = existingGamesForDate.find((g: any) => String(g.id) === String(gameId));
   const lineMovements: LineMovement[] = existingGame?.line_movements || [];
 
@@ -4371,7 +4386,7 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
     updatedGames.push(gameDataParsed);
   }
 
-  currentDB[date] = updatedGames;
+  currentDB[actualDate] = updatedGames;
   writeGamesDB(currentDB);
   writeErrorsDB(errorsCollection);
 
