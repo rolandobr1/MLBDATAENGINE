@@ -8,7 +8,7 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
-import { saveGameData, loadAllGamesFromFirestore, loadGamesByDateFromFirestore, loadLatestGamesFromFirestore } from "./src/services/firestoreService";
+import { saveGameData, loadAllGamesFromFirestore, loadGamesByDateFromFirestore, loadLatestGamesFromFirestore, loadExtractedDatesFromFirestore } from "./src/services/firestoreService";
 import {
   WeatherData,
   LineMovement,
@@ -578,8 +578,16 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
 app.get("/api/extracted-dates", async (req, res) => {
   try {
     let db = readGamesDB();
-    let dates = Object.keys(db).filter(date => Array.isArray(db[date]) && db[date].length > 0);
-    if (dates.length === 0) {
+    const localDates = Object.keys(db).filter(date => Array.isArray(db[date]) && db[date].length > 0);
+    let firestoreDates: string[] = [];
+    try {
+      firestoreDates = await loadExtractedDatesFromFirestore();
+    } catch (fsErr) {
+      console.error("Error retrieving extracted dates from Firestore:", fsErr);
+    }
+
+    let dates = Array.from(new Set([...localDates, ...firestoreDates]));
+    if (localDates.length === 0) {
       restoreLatestFromFirestoreInBackground("extracted-dates-empty");
     }
     // Sort dates descending

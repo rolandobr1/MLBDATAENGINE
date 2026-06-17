@@ -194,6 +194,32 @@ export const loadLatestGamesFromFirestore = async (): Promise<any[]> => {
   }
 };
 
+export const loadExtractedDatesFromFirestore = async (): Promise<string[]> => {
+  try {
+    if (!db) {
+      console.warn("Firestore db is not initialized. Skipping Firestore dates load.");
+      return [];
+    }
+    const isAuthed = await ensureAnonymousAuth();
+    if (!isAuthed) return [];
+
+    const datesQuery = query(collection(db, 'games'), orderBy('metadata.date', 'desc'));
+    const snapshot = await withFirestoreReadTimeout(getDocs(datesQuery), null, 'fechas extraidas');
+    if (!snapshot) return [];
+
+    const dates = new Set<string>();
+    snapshot.forEach((doc) => {
+      const date = doc.data()?.metadata?.date;
+      if (typeof date === 'string' && date) dates.add(date);
+    });
+
+    return Array.from(dates);
+  } catch (error) {
+    console.error("Error al cargar fechas extraidas desde Firestore:", error);
+    return [];
+  }
+};
+
 export const getTotalGamesCountFromFirestore = async (): Promise<number> => {
   try {
     if (!db || !app) return 0;
