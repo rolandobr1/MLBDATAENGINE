@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -1766,7 +1766,7 @@ async function fetchRealMLBGameData(
           wins: parseInt(s.wins) || 0,
           losses: parseInt(s.losses) || 0,
           ip: s.inningsPitched || "0.0",
-          starts: parseInt(s.gamesStarted) || 0,
+          starts: parseInt(s.gamesPitched) || parseInt(s.gamesPlayed) || parseInt(s.gamesStarted) || 0,
           totalStrikeouts: parseInt(s.strikeOuts) || 0,
           totalWalks: parseInt(s.baseOnBalls) || 0,
           pitchHand,
@@ -2431,7 +2431,7 @@ async function fetchAdvancedPitching(pitcherId: number, season: string): Promise
     const pitches = stdStat.numberOfPitches ? parseInt(stdStat.numberOfPitches) : (bf && advStat.pitchesPerPlateAppearance ? Math.round(bf * parseFloat(advStat.pitchesPerPlateAppearance)) : 0);
     const swingingStrikePct = pitches > 0 && advStat.swingAndMisses ? Math.round((parseInt(advStat.swingAndMisses) / pitches) * 1000) / 10 : null;
 
-    const gs = parseInt(stdStat.gamesStarted) || 0;
+    const gs = parseInt(stdStat.gamesPitched) || parseInt(stdStat.gamesPlayed) || parseInt(stdStat.gamesStarted) || 0;
     const projectedPitchCount = saneAveragePitchCount(gs > 0 ? Math.round((parseInt(stdStat.numberOfPitches) || 0) / gs) : null);
     const battersFacedPerStart = saneBattersFacedPerStart(gs > 0 ? Math.round(((parseInt(stdStat.battersFaced) || 0) / gs) * 10) / 10 : null);
 
