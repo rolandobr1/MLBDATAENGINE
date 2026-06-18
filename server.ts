@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -1559,7 +1559,7 @@ async function enrichGamesWithTotalBasesProps(games: MLBGame[]): Promise<MLBGame
 
     return {
       ...game,
-      lineups: {
+  lineups: {
         home: enrichLineupWithTotalBasesProps(game.lineups?.home || [], rows),
         away: enrichLineupWithTotalBasesProps(game.lineups?.away || [], rows)
       }
@@ -1569,7 +1569,7 @@ async function enrichGamesWithTotalBasesProps(games: MLBGame[]): Promise<MLBGame
 
 async function fetchRealBettingLines(date: string, forceRefreshOdds: boolean = false, gamesList: any[] = []) {
   const cacheFile = path.join(process.cwd(), `odds_cache_${date}.json`);
-  
+
   // Check Cache first
   if (!forceRefreshOdds && fs.existsSync(cacheFile)) {
     try {
@@ -1581,28 +1581,54 @@ async function fetchRealBettingLines(date: string, forceRefreshOdds: boolean = f
     }
   }
 
-  const apiKey = process.env.ODDS_API_KEY;
-  if (!apiKey) {
+  // Build ordered list of API keys (primary + backups)
+  const apiKeys = [
+    process.env.ODDS_API_KEY,
+    process.env.ODDS_API_KEY_2,
+    process.env.ODDS_API_KEY_3,
+  ].filter(Boolean) as string[];
+
+  if (apiKeys.length === 0) {
     console.warn("ODDS_API_KEY no configurada. No se obtendrán líneas de apuesta reales.");
     return null;
   }
 
-  try {
-    const url = `https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey=${apiKey}&regions=us&markets=h2h,spreads,totals&oddsFormat=american`;
-    console.log(`Obteniendo líneas de apuestas reales de The Odds API...`);
-    const res = await fetchWithTimeout(url, 10000);
-    if (!res.ok) {
-      console.warn(`The Odds API respondió con error: ${res.status}`);
-      return null;
+  // Try each key until one works
+  let activeKey: string | null = null;
+  let data: any[] | null = null;
+
+  for (let i = 0; i < apiKeys.length; i++) {
+    const key = apiKeys[i];
+    const label = i === 0 ? "principal" : `respaldo ${i}`;
+    const url = `https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey=${key}&regions=us&markets=h2h,spreads,totals&oddsFormat=american`;
+    console.log(`[Odds API] Intentando con key ${label} (${key.substring(0, 8)}...)...`);
+    try {
+      const res = await fetchWithTimeout(url, 10000);
+      if (res.ok) {
+        data = await res.json();
+        activeKey = key;
+        console.log(`[Odds API] Key ${label} funcionó. ${data?.length ?? 0} eventos recibidos.`);
+        break;
+      }
+      const errBody = await res.text();
+      console.warn(`[Odds API] Key ${label} respondió con error ${res.status}: ${errBody}`);
+    } catch (err) {
+      console.warn(`[Odds API] Key ${label} falló con excepción:`, err);
     }
-    const data = await res.json();
-    
+  }
+
+  if (!activeKey || !data) {
+    console.error("[Odds API] Todas las keys de The Odds API agotaron su cuota o fallaron.");
+    return null;
+  }
+
+  try {
     // Fetch pitcher strikeouts for each event to support K Props
     // We do this concurrently to speed up the process
     const eventsWithProps = await Promise.all(data.map(async (event: any) => {
       try {
         // Skip fetching lines if game has started
-        const mlbGame = gamesList.find(g => 
+        const mlbGame = gamesList.find(g =>
            (event.home_team.includes(g.teams.home.team.name) || g.teams.home.team.name.includes(event.home_team)) &&
            (event.away_team.includes(g.teams.away.team.name) || g.teams.away.team.name.includes(event.away_team))
         );
@@ -1616,7 +1642,7 @@ async function fetchRealBettingLines(date: string, forceRefreshOdds: boolean = f
            }
         }
 
-        const propsUrl = `https://api.the-odds-api.com/v4/sports/baseball_mlb/events/${event.id}/odds?apiKey=${apiKey}&regions=us&markets=pitcher_strikeouts,batter_total_bases&oddsFormat=american`;
+        const propsUrl = `https://api.the-odds-api.com/v4/sports/baseball_mlb/events/${event.id}/odds?apiKey=${activeKey}&regions=us&markets=pitcher_strikeouts,batter_total_bases&oddsFormat=american`;
         const propsRes = await fetchWithTimeout(propsUrl, 10000);
         if (propsRes.ok) {
           const propsData = await propsRes.json();
@@ -1644,14 +1670,14 @@ async function fetchRealBettingLines(date: string, forceRefreshOdds: boolean = f
     // Save to Cache
     try {
       fs.writeFileSync(cacheFile, JSON.stringify(eventsWithDataStreakProps, null, 2));
-      console.log(`Cuotas guardadas en caché: odds_cache_${date}.json`);
+      console.log(`Cuotas guardadas en cache: odds_cache_${date}.json`);
     } catch (e) {
-      console.warn("No se pudo guardar el caché de cuotas.", e);
+      console.warn("No se pudo guardar el cache de cuotas.", e);
     }
 
     return eventsWithDataStreakProps;
   } catch (err) {
-    console.error("Error al obtener líneas de apuestas reales:", err);
+    console.error("Error al obtener lineas de apuestas reales:", err);
     return null;
   }
 }
@@ -1675,7 +1701,6 @@ async function fetchRealMLBGameData(
     playByPlay: null,
     injuries: { home: [], away: [] }
   };
-
   try {
     // 1. Probable pitchers from schedule with hydration
     const schedRes = await fetchWithTimeout(

@@ -1,3 +1,9 @@
+import { db, app } from '../config/firebase';
+import { getCountFromServer, collection } from 'firebase/firestore';
+import { getAuth, signInAnonymously } from 'firebase/auth';
+
+let authInitialized = false;
+
 export const getTotalGamesCountFromFirestore = async (): Promise<number> => {
   try {
     if (!db || !app) return 0;
