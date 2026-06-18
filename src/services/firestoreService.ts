@@ -3,7 +3,7 @@ import { doc, collection, setDoc, getDocs, getCountFromServer, query, where, ord
 import { getAuth, signInAnonymously } from 'firebase/auth';
 
 let authInitialized = false;
-const FIRESTORE_READ_TIMEOUT_MS = Number(process.env.FIRESTORE_READ_TIMEOUT_MS || 6000);
+const FIRESTORE_READ_TIMEOUT_MS = Number(process.env.FIRESTORE_READ_TIMEOUT_MS || 3000);
 
 async function ensureAnonymousAuth(): Promise<boolean> {
   if (!app) return false;

@@ -356,13 +356,20 @@ app.get("/api/games", async (req, res) => {
 
   let db = readGamesDB();
   let dateGames = db[date] || [];
-  if (dateGames.length === 0) {
-    const firestoreGames = await loadGamesByDateFromFirestore(date);
-    if (firestoreGames.length > 0) {
-      mergeGamesIntoLocalDB(firestoreGames);
-      db = readGamesDB();
-      dateGames = db[date] || [];
-    }
+
+  // Si hay datos locales, respondemos INMEDIATAMENTE sin esperar a Firestore
+  if (dateGames.length > 0) {
+    maybeBackfillTheOddsApiForDate(date, dateGames);
+    res.json({ games: dateGames, totalGames: countLocalGames(db) });
+    return;
+  }
+
+  // Solo si no hay datos locales, consultamos Firestore (bloqueante)
+  const firestoreGames = await loadGamesByDateFromFirestore(date);
+  if (firestoreGames.length > 0) {
+    mergeGamesIntoLocalDB(firestoreGames);
+    db = readGamesDB();
+    dateGames = db[date] || [];
   }
   maybeBackfillTheOddsApiForDate(date, dateGames);
   res.json({ games: dateGames, totalGames: countLocalGames(db) });
@@ -584,22 +591,36 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
 // Get list of extracted dates
 app.get("/api/extracted-dates", async (req, res) => {
   try {
-    let db = readGamesDB();
+    const db = readGamesDB();
     const localDates = Object.keys(db).filter(date => Array.isArray(db[date]) && db[date].length > 0);
-    let firestoreDates: string[] = [];
-    try {
-      firestoreDates = await loadExtractedDatesFromFirestore();
-    } catch (fsErr) {
-      console.error("Error retrieving extracted dates from Firestore:", fsErr);
+
+    if (localDates.length === 0) {
+      // Sin datos locales: disparamos restore en background y esperamos las fechas de Firestore
+      restoreLatestFromFirestoreInBackground("extracted-dates-empty");
+      let firestoreDates: string[] = [];
+      try {
+        firestoreDates = await loadExtractedDatesFromFirestore();
+      } catch (fsErr) {
+        console.error("Error retrieving extracted dates from Firestore:", fsErr);
+      }
+      const dates = Array.from(new Set([...firestoreDates])).sort(
+        (a, b) => new Date(b).getTime() - new Date(a).getTime()
+      );
+      res.json({ dates });
+      return;
     }
 
-    let dates = Array.from(new Set([...localDates, ...firestoreDates]));
-    if (localDates.length === 0) {
-      restoreLatestFromFirestoreInBackground("extracted-dates-empty");
-    }
-    // Sort dates descending
-    dates.sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
-    res.json({ dates });
+    // Hay datos locales: respondemos INMEDIATAMENTE sin bloquear
+    const sortedLocal = [...localDates].sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+    res.json({ dates: sortedLocal });
+
+    // En segundo plano, actualizamos fechas de Firestore sin bloquear la respuesta
+    loadExtractedDatesFromFirestore().then(firestoreDates => {
+      const merged = Array.from(new Set([...localDates, ...firestoreDates]));
+      if (merged.length > localDates.length) {
+        console.log(`[Dates] Firestore aporta ${merged.length - localDates.length} fecha(s) adicional(es) no presentes localmente.`);
+      }
+    }).catch(() => {});
   } catch (err) {
     console.error("Error retrieving extracted dates:", err);
     res.status(500).json({ error: "Fallo al obtener fechas extraídas" });
@@ -3632,7 +3653,8 @@ function buildDirectGameData(
 
 // Harvester endpoint (SSE streaming)
 app.post("/api/harvest", async (req, res) => {
-  const { date, refreshOdds } = req.body;
+  const { date, refreshOdds, force } = req.body;
+  const forceRebuild = force === true;
   if (!date || typeof date !== "string") {
     res.status(400).json({ error: "Fecha es requerida (formato YYYY-MM-DD)" });
     return;
@@ -3708,6 +3730,10 @@ app.post("/api/harvest", async (req, res) => {
     // pct layout: 5% schedule | 5–92% games (each game = 87/N %) | 92–100% save
     const pctPerGame = Math.floor(87 / totalGames);
 
+    // Pre-leer la DB local una sola vez antes del loop (evita N lecturas de disco)
+    const currentDBSnapshot = readGamesDB();
+    const existingGamesForDate = currentDBSnapshot[date] || [];
+
     for (let gi = 0; gi < matchesToHarvest.length; gi++) {
       const match = matchesToHarvest[gi];
       const homeName = match.teams.home.team.name;
@@ -3719,6 +3745,25 @@ app.post("/api/harvest", async (req, res) => {
       const gameId = String(match.gamePk);
       const gameLabel = `${awayName} @ ${homeName}`;
       const basePct = 5 + gi * pctPerGame; // starting pct for this game
+
+      // CACHÉ INTELIGENTE: Si el juego ya está en la DB local y terminó, no hacemos ninguna llamada a APIs
+      if (!forceRebuild) {
+        const cachedGame = existingGamesForDate.find((g: any) => String(g.id) === String(gameId));
+        if (cachedGame && isFinalGameStatus(cachedGame.game_result?.gameStatus)) {
+          console.log(`[Caché] Juego ${gameId} (${gameLabel}) ya FINALIZADO — cargando desde DB local.`);
+          harvestedGames.push(cachedGame);
+          emit({
+            phase: "game_done",
+            step: `✓ ${gameLabel} (sin cambios — juego finalizado)`,
+            gameLabel,
+            gameIndex: gi + 1,
+            totalGames,
+            pct: basePct + pctPerGame,
+            cached: true,
+          });
+          continue;
+        }
+      }
 
       // Step 1 of 2 for this game: Fetch REAL MLB data
       emit({
@@ -3978,9 +4023,7 @@ app.post("/api/harvest", async (req, res) => {
         gameDataParsed.bullpen.away.usageLast3Days = getUsage(fatigue.bullpen.away.ipLast3Days);
       }
 
-      // Handle Line Movements timeline
-      const currentDB = readGamesDB();
-      const existingGamesForDate = currentDB[date] || [];
+      // Handle Line Movements timeline (usamos el snapshot pre-leído antes del loop)
       const existingGame = existingGamesForDate.find((g: any) => String(g.id) === String(gameId));
       const lineMovements: LineMovement[] = existingGame?.line_movements || [];
 
