@@ -600,39 +600,24 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
   };
 }
 
-// Get list of extracted dates
 app.get("/api/extracted-dates", async (req, res) => {
   try {
     const db = readGamesDB();
     const localDates = Object.keys(db).filter(date => Array.isArray(db[date]) && db[date].length > 0);
 
-    if (localDates.length === 0) {
-      // Sin datos locales: disparamos restore en background y esperamos las fechas de Firestore
-      restoreLatestFromFirestoreInBackground("extracted-dates-empty");
-      let firestoreDates: string[] = [];
-      try {
-        firestoreDates = await loadExtractedDatesFromFirestore();
-      } catch (fsErr) {
-        console.error("Error retrieving extracted dates from Firestore:", fsErr);
-      }
-      const dates = Array.from(new Set([...firestoreDates])).sort(
-        (a, b) => new Date(b).getTime() - new Date(a).getTime()
-      );
-      res.json({ dates });
-      return;
+    let firestoreDates: string[] = [];
+    try {
+      firestoreDates = await loadExtractedDatesFromFirestore();
+    } catch (fsErr) {
+      console.error("Error retrieving extracted dates from Firestore:", fsErr);
     }
 
-    // Hay datos locales: respondemos INMEDIATAMENTE sin bloquear
-    const sortedLocal = [...localDates].sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
-    res.json({ dates: sortedLocal });
+    // Combinar fechas locales y de Firestore, eliminar duplicados y ordenar descendente
+    const mergedDates = Array.from(new Set([...localDates, ...firestoreDates]))
+      .filter(Boolean)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
 
-    // En segundo plano, actualizamos fechas de Firestore sin bloquear la respuesta
-    loadExtractedDatesFromFirestore().then(firestoreDates => {
-      const merged = Array.from(new Set([...localDates, ...firestoreDates]));
-      if (merged.length > localDates.length) {
-        console.log(`[Dates] Firestore aporta ${merged.length - localDates.length} fecha(s) adicional(es) no presentes localmente.`);
-      }
-    }).catch(() => {});
+    res.json({ dates: mergedDates });
   } catch (err) {
     console.error("Error retrieving extracted dates:", err);
     res.status(500).json({ error: "Fallo al obtener fechas extraídas" });
