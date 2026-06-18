@@ -1,5 +1,5 @@
 import { db, app } from '../config/firebase';
-import { doc, collection, setDoc, getDocs, getCountFromServer, query, where, orderBy, limit } from 'firebase/firestore';
+import { doc, collection, setDoc, getDoc, getDocs, getCountFromServer, query, where, orderBy, limit, arrayUnion } from 'firebase/firestore';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 
 let authInitialized = false;
@@ -115,6 +115,15 @@ export const saveGameData = async (gameId: string, gameData: any) => {
     const snapshotRef = doc(collection(gameRef, 'snapshots'), now);
     await setDoc(snapshotRef, dataWithTimestamp);
 
+    // Registrar la fecha en el documento de metadatos ligero de forma atómica
+    const date = gameData?.metadata?.date;
+    if (date) {
+      const metadataRef = doc(db, 'metadata', 'extracted_dates');
+      await setDoc(metadataRef, {
+        dates: arrayUnion(date)
+      }, { merge: true });
+    }
+
     console.log(`Successfully saved game ${gameId} and snapshot to Firestore.`);
   } catch (error) {
     console.error(`Error saving game ${gameId} to Firestore:`, error);
@@ -203,6 +212,17 @@ export const loadExtractedDatesFromFirestore = async (): Promise<string[]> => {
     const isAuthed = await ensureAnonymousAuth();
     if (!isAuthed) return [];
 
+    // Intentar leer el documento de metadatos ligero primero
+    const metadataRef = doc(db, 'metadata', 'extracted_dates');
+    const metaSnapshot = await withFirestoreReadTimeout(getDoc(metadataRef), null, 'metadatos de fechas');
+    if (metaSnapshot && metaSnapshot.exists()) {
+      const dates = metaSnapshot.data()?.dates || [];
+      // Ordenar descendente por fecha
+      return [...dates].sort((a: string, b: string) => new Date(b).getTime() - new Date(a).getTime());
+    }
+
+    // Fallback: si no existe el documento de metadatos, hacemos la consulta pesada
+    console.log("[Firestore] Documento metadata/extracted_dates no encontrado. Usando fallback pesado...");
     const datesQuery = query(collection(db, 'games'), orderBy('metadata.date', 'desc'));
     const snapshot = await withFirestoreReadTimeout(getDocs(datesQuery), null, 'fechas extraidas');
     if (!snapshot) return [];
