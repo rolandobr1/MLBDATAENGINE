@@ -3,7 +3,10 @@ import { getFirestore, initializeFirestore } from 'firebase/firestore';
 
 const getProcessEnv = (key: string) => {
   if (typeof process !== 'undefined' && process.env) {
-    return process.env[key];
+    const value = process.env[key];
+    if (value) {
+      return value.trim().replace(/[\r\n]/g, '');
+    }
   }
   return undefined;
 };

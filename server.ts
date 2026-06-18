@@ -3,11 +3,37 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import express from "express";
-import path from "path";
-import fs from "fs";
-import { createServer as createViteServer } from "vite";
+// ─── CARGAR VARIABLES DE ENTORNO PRIMERO ─────────────────────────────────────
+// CRÍTICO: dotenv debe cargarse ANTES de importar firebase.ts y otros módulos
+// que leen process.env en su inicialización.
 import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
+
+const envPaths = [
+  path.join(process.cwd(), ".env.local"),
+  path.join(process.cwd(), "env.local"),
+  path.join("/etc", "secrets", ".env.local"),
+  path.join("/etc", "secrets", "env.local"),
+];
+for (const envPath of envPaths) {
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath });
+    console.log(`[ENV] Cargado desde: ${envPath}`);
+  }
+}
+dotenv.config(); // fallback a .env si existe
+
+// Sanitizar process.env para eliminar retornos de carro (\r), saltos de línea (\n) y espacios al inicio/final
+for (const key in process.env) {
+  if (typeof process.env[key] === "string") {
+    process.env[key] = process.env[key]!.trim().replace(/[\r\n]/g, "");
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+import express from "express";
+import { createServer as createViteServer } from "vite";
 import { saveGameData, loadAllGamesFromFirestore, loadGamesByDateFromFirestore, loadLatestGamesFromFirestore, loadExtractedDatesFromFirestore } from "./src/services/firestoreService";
 import {
   WeatherData,
@@ -25,20 +51,6 @@ import {
 } from "./src/types";
 import { generateMLDatasetCSV, generateBattersCSV, generateSingleGameCSV, generateDailyPlayerResultsCSV, generateKPropsLinesCSV, generateBatterTotalBasesLinesCSV } from "./src/utils";
 import { savantCache } from "./src/etl/extractors/savantScraper";
-
-
-const envPaths = [
-  path.join(process.cwd(), ".env.local"),
-  path.join(process.cwd(), "env.local"),
-  path.join("/etc", "secrets", ".env.local"),
-  path.join("/etc", "secrets", "env.local"),
-];
-for (const envPath of envPaths) {
-  if (fs.existsSync(envPath)) {
-    dotenv.config({ path: envPath });
-  }
-}
-dotenv.config();
 
 const app = express();
 app.use(express.json());
