@@ -113,10 +113,11 @@ export default function App() {
 
   // References for scrolling
   const sheetsRef = React.useRef<HTMLDivElement>(null);
+  const abortControllerRef = React.useRef<AbortController | null>(null);
 
-  const fetchExtractedDates = React.useCallback(async () => {
+  const fetchExtractedDates = React.useCallback(async (remote = false) => {
     try {
-      const res = await fetch(`/api/extracted-dates?_=${Date.now()}`);
+      const res = await fetch(`/api/extracted-dates?remote=${remote}&_=${Date.now()}`);
       if (res.ok) {
         const data = await res.json();
         const dates = data.dates || [];
@@ -133,10 +134,14 @@ export default function App() {
     let cancelled = false;
 
     const loadInitialDate = async () => {
-      setIsFetchingDB(true);
-      const dates = await fetchExtractedDates();
+      const today = getLocalDateString();
+      setSelectedDate(today);
+      // Fetch local extracted dates instantly
+      const dates = await fetchExtractedDates(false);
       if (cancelled) return;
-      setSelectedDate(dates[0] || getLocalDateString());
+      if (dates.length > 0 && !dates.includes(today) && localStorage.getItem("mlb_selected_date") === dates[0]) {
+        setSelectedDate(dates[0]); // fallback if today has no data and user preferred another
+      }
     };
 
     loadInitialDate();
@@ -159,6 +164,7 @@ export default function App() {
     let tb = 0;
     let oddsApi = 0;
     let dataStreak = 0;
+    let rotowire = 0;
     let unknown = 0;
 
     const countSource = (source?: string | null, book?: string | null) => {
@@ -171,6 +177,10 @@ export default function App() {
       }
       if (normalizedSource.includes("datastreak") || normalizedSource.includes("data streak")) {
         dataStreak++;
+        return;
+      }
+      if (normalizedSource.includes("rotowire")) {
+        rotowire++;
         return;
       }
       if (normalizedBook.includes("oddsapi") || normalizedBook.includes("odds api")) {
@@ -210,7 +220,7 @@ export default function App() {
         });
       }
     });
-    return { total: ks + tb, ks, tb, oddsApi, dataStreak, unknown };
+    return { total: ks + tb, ks, tb, oddsApi, dataStreak, rotowire, unknown };
   }, [games]);
 
   // Calculate missing pitchers for props tooltip
@@ -253,12 +263,14 @@ export default function App() {
     userHasSelectedDate.current = true;
     setIsLoading(true);
     setHarvestProgress({ pct: 2, step: "Iniciando conexión con MLB Stats API..." });
+    abortControllerRef.current = new AbortController();
 
     try {
       const res = await fetch("/api/harvest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ date, refreshOdds }),
+        signal: abortControllerRef.current.signal,
       });
 
       if (!res.ok || !res.body) {
@@ -310,11 +322,21 @@ export default function App() {
       await fetchLocalDB(date);
       await fetchErrorsDB();
       await fetchExtractedDates();
-    } catch (err) {
-      alert("Error en la recolección: " + (err instanceof Error ? err.message : String(err)));
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log('Harvest abortado por el usuario.');
+      } else {
+        alert("Error en la recolección: " + (err.message || String(err)));
+      }
     } finally {
       setIsLoading(false);
       setHarvestProgress({ pct: 0, step: "" });
+    }
+  };
+
+  const handleCancelHarvest = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
     }
   };
 
@@ -417,6 +439,8 @@ export default function App() {
               setSelectedDate={handleSetSelectedDate}
               harvestProgress={harvestProgress}
               extractedDates={extractedDates}
+              onCancel={handleCancelHarvest}
+              syncRemoteDates={() => fetchExtractedDates(true)}
             />
           </div>
 

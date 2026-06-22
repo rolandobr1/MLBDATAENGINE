@@ -35,6 +35,7 @@ for (const key in process.env) {
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import { saveGameData, loadAllGamesFromFirestore, loadGamesByDateFromFirestore, loadLatestGamesFromFirestore, loadExtractedDatesFromFirestore } from "./src/services/firestoreService";
+import { scrapeStrikeoutProps } from "./src/etl/extractors/rotowireScraper";
 import {
   WeatherData,
   LineMovement,
@@ -602,14 +603,17 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
 
 app.get("/api/extracted-dates", async (req, res) => {
   try {
+    const { remote } = req.query;
     const db = readGamesDB();
     const localDates = Object.keys(db).filter(date => Array.isArray(db[date]) && db[date].length > 0);
 
     let firestoreDates: string[] = [];
-    try {
-      firestoreDates = await loadExtractedDatesFromFirestore();
-    } catch (fsErr) {
-      console.error("Error retrieving extracted dates from Firestore:", fsErr);
+    if (remote === "true") {
+      try {
+        firestoreDates = await loadExtractedDatesFromFirestore();
+      } catch (fsErr) {
+        console.error("Error retrieving extracted dates from Firestore:", fsErr);
+      }
     }
 
     // Combinar fechas locales y de Firestore, eliminar duplicados y ordenar descendente
@@ -1410,11 +1414,29 @@ async function fetchDataStreakSheetRows(
 }
 
 async function fetchDataStreakPitcherStrikeoutProps(date: string, forceRefresh = false) {
-  return fetchDataStreakSheetRows(date, "mlb_pitcher_ks", "datastreak_pitcher_ks", forceRefresh, false);
+  const dataStreakKs = await fetchDataStreakSheetRows(date, "mlb_pitcher_ks", "datastreak_pitcher_ks", forceRefresh, false);
+  
+  let rotowireKs: any[] = [];
+  try {
+    const rwData = await scrapeStrikeoutProps();
+    rotowireKs = rwData.map(p => ({
+      player_name: p.playerName,
+      line: String(p.line),
+      odds: p.overOdds !== null ? String(p.overOdds) : null,
+      under_odds: p.underOdds !== null ? String(p.underOdds) : null,
+      vendor: p.sportsbook || "rotowire",
+      source: "rotowire"
+    }));
+  } catch(e) {
+    console.warn("No se pudo obtener Rotowire Ks:", e);
+  }
+
+  return [...rotowireKs, ...dataStreakKs];
 }
 
 async function fetchDataStreakTotalBasesProps(date: string, forceRefresh = false) {
-  return fetchDataStreakSheetRows(date, "mlb_total_bases", "datastreak_total_bases", forceRefresh, true);
+  // Omit total bases as requested by user
+  return [];
 }
 
 function mergeDataStreakPitcherStrikeouts(events: any[], rows: any[]) {
@@ -1545,7 +1567,7 @@ function findDataStreakPitcherKProp(rows: any[], pitcherName: string, pitcherTea
     const rowTeam = String(row.team_abbr || row.team || "").toUpperCase();
     const rowOpponent = String(row.opponent || "").toUpperCase();
     const nameMatches = rowName === normalizedPitcherName || rowName.includes(normalizedPitcherName) || normalizedPitcherName.includes(rowName);
-    const teamMatches = !pitcherTeamAbbr || rowTeam === pitcherTeamAbbr;
+    const teamMatches = !pitcherTeamAbbr || !rowTeam || rowTeam === pitcherTeamAbbr;
     const opponentMatches = !opponentTeamAbbr || !rowOpponent || rowOpponent === opponentTeamAbbr;
     return nameMatches && teamMatches && opponentMatches;
   });
@@ -1660,7 +1682,7 @@ async function fetchRealBettingLines(date: string, forceRefreshOdds: boolean = f
            }
         }
 
-        const propsUrl = `https://api.the-odds-api.com/v4/sports/baseball_mlb/events/${event.id}/odds?apiKey=${activeKey}&regions=us&markets=pitcher_strikeouts,batter_total_bases&oddsFormat=american`;
+        const propsUrl = `https://api.the-odds-api.com/v4/sports/baseball_mlb/events/${event.id}/odds?apiKey=${activeKey}&regions=us&markets=pitcher_strikeouts&oddsFormat=american`;
         const propsRes = await fetchWithTimeout(propsUrl, 10000);
         if (propsRes.ok) {
           const propsData = await propsRes.json();
@@ -3669,6 +3691,12 @@ app.post("/api/harvest", async (req, res) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
+  let isCancelled = false;
+  req.on('close', () => {
+    isCancelled = true;
+    console.log(`[ETL] Conexión cerrada por el cliente. Cancelando proceso para ${date}...`);
+  });
+
   console.log(`Iniciando recolección MLB para fecha: ${date}`);
   emit({ phase: "schedule", step: "Conectando con MLB Stats API...", pct: 2 });
 
@@ -3732,6 +3760,11 @@ app.post("/api/harvest", async (req, res) => {
     const existingGamesForDate = currentDBSnapshot[date] || [];
 
     for (let gi = 0; gi < matchesToHarvest.length; gi++) {
+      if (isCancelled) {
+        console.log(`[ETL] Abortando bucle de juegos. Proceso cancelado.`);
+        emit({ phase: "done", step: "Extracción cancelada por el usuario" });
+        break;
+      }
       const match = matchesToHarvest[gi];
       const homeName = match.teams.home.team.name;
       const awayName = match.teams.away.team.name;

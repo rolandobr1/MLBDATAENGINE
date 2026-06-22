@@ -4,6 +4,7 @@ import { fetchDailyOdds } from './etl/extractors/oddsScraper';
 import { validateGameData } from './etl/transformers/gameValidator';
 import { flattenGameForML } from './etl/transformers/mlFormatter';
 import { saveGameData } from './services/firestoreService';
+import { enrichWithVortexMetrics } from './etl/transformers/vortexMetrics';
 import { appendRowToMLSheet } from './services/googleSheetsService';
 
 export const runDailyPipeline = async (dateStr: string) => {
@@ -19,6 +20,27 @@ export const runDailyPipeline = async (dateStr: string) => {
     
     const games = schedule.dates[0].games;
     const odds = await fetchDailyOdds();
+
+    // 1.5 Fetch recent PyBaseball Statcast
+    // Fetch last 3 days of statcast for Hot Hand & CSW% metrics
+    const endDate = new Date(dateStr);
+    const startDate = new Date(dateStr);
+    startDate.setDate(startDate.getDate() - 3);
+    const startStr = startDate.toISOString().split('T')[0];
+    const endStr = endDate.toISOString().split('T')[0];
+    
+    let recentStatcast = null;
+    let batterSplits = null;
+    let bullpenWorkload = null;
+    try {
+      const { getRecentStatcast, getBatterSplits, getBullpenWorkload } = await import('./etl/extractors/pybaseballApi');
+      recentStatcast = await getRecentStatcast(startStr, endStr);
+      batterSplits = await getBatterSplits();
+      bullpenWorkload = await getBullpenWorkload();
+      console.log('PyBaseball advanced metrics fetched successfully');
+    } catch (err) {
+      console.error('Failed to fetch PyBaseball data:', err);
+    }
 
     // Iterar sobre los juegos programados
     for (const game of games) {
@@ -49,16 +71,50 @@ export const runDailyPipeline = async (dateStr: string) => {
         const savantData = await fetchPitcherSavantMetrics(homePitcherId.toString());
         rawGameData.pitchers.home_starter = {
           name: game.teams.home.probablePitcher.fullName,
-          era: null, // requires deeper stats endpoint
+          era: null, 
           whip: null,
           xERA: savantData?.xERA || null,
           fip: null,
           k_pct: savantData?.kPct || null,
           bb_pct: savantData?.bbPct || null
         } as any;
+        
+        // Asignar CSW% y Velocidad de PyBaseball
+        if (recentStatcast?.data?.pitchers_recent) {
+          const pStats = recentStatcast.data.pitchers_recent.find((p: any) => p.pitcher === homePitcherId);
+          if (pStats) {
+            (rawGameData as any).pitchers.home_starter.pitcher_csw_pct = pStats.csw_pct;
+            (rawGameData as any).pitchers.home_starter.pitcher_recent_velocity = pStats.avg_velocity;
+          }
+        }
       }
       
-      // Omitiendo lógica awayPitcher para simplificar
+      // Asignar Bullpen Workload
+      (rawGameData as any).bullpen = {
+        home: bullpenWorkload?.data?.teams?.[rawGameData.metadata.home_team]?.recent_ip || null,
+        away: bullpenWorkload?.data?.teams?.[rawGameData.metadata.away_team]?.recent_ip || null
+      };
+
+      // Asignar Bateadores (Mock de alineación y splits)
+      (rawGameData as any).lineups = {
+        home: [],
+        away: [],
+        lineup_confirmed: true
+      };
+      (rawGameData as any).advanced_offense = {
+        home: {},
+        away: {}
+      };
+      
+      // Simulamos asignar un bateador y sus splits vs RHP
+      if (batterSplits?.data?.splits?.default?.RHP) {
+        const defaultSplits = batterSplits.data.splits.default.RHP;
+        (rawGameData as any).lineups.home.push({
+          batter_id: 'mock_1',
+          babip: defaultSplits.babip,
+          hardHitPct: defaultSplits.hard_hit
+        });
+      }
       
       // Integrar Odds de manera muy básica
       const gameOdds = odds?.find((o: any) => o.home_team === rawGameData.metadata.home_team);
@@ -83,7 +139,8 @@ export const runDailyPipeline = async (dateStr: string) => {
         continue; // Skip invalid games or log them
       }
 
-      const validGame = validation.data;
+      let validGame: any = validation.data;
+      validGame = enrichWithVortexMetrics(validGame);
 
       // 3. Load (Guardar en Firestore y Sheets)
       await saveGameData(gameId, validGame);

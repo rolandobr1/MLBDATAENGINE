@@ -11,7 +11,7 @@ interface HeaderProps {
   totalGamesCount: number;
   isDatabaseLoading?: boolean;
   errorsCount: number;
-  propsCount?: { total: number, ks: number, tb: number, oddsApi?: number, dataStreak?: number, unknown?: number };
+  propsCount?: { total: number, ks: number, tb: number, oddsApi?: number, dataStreak?: number, rotowire?: number, unknown?: number };
   missingPitchers?: { name: string, team: string }[];
   onOpenDiagnostics: () => void;
 }
@@ -102,6 +102,9 @@ export const Header: React.FC<HeaderProps> = ({
                     </span>
                     <span title="Props extraidos desde The Odds API" className="bg-blue-950/70 border border-blue-800/70 px-1.5 py-0.5 rounded text-[10px] font-mono text-blue-200">
                       API <strong className="text-white">{propsCount.oddsApi ?? 0}</strong>
+                    </span>
+                    <span title="Props extraidos desde Rotowire" className="bg-indigo-950/70 border border-indigo-800/70 px-1.5 py-0.5 rounded text-[10px] font-mono text-indigo-200">
+                      RW <strong className="text-white">{propsCount.rotowire ?? 0}</strong>
                     </span>
                     <span title="Props extraidos desde DataStreak" className="bg-emerald-950/70 border border-emerald-800/70 px-1.5 py-0.5 rounded text-[10px] font-mono text-emerald-200">
                       DS <strong className="text-white">{propsCount.dataStreak ?? 0}</strong>

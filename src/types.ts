@@ -199,6 +199,17 @@ export interface AdvancedPitchingStats {
   curvePct?: number | null;
   changeupPct?: number | null;
   splitterPct?: number | null;
+
+  // Vortex V10.3 Metrics
+  pitcher_pitches_per_bf_last5?: number | null;
+  pitcher_pitches_per_ip_last5?: number | null;
+  pitcher_avg_pitches_last3?: number | null;
+  pitcher_rest_status?: string | null;
+  pitcher_primary_pitch?: string | null;
+  pitcher_primary_pitch_usage_pct?: number | null;
+  pitcher_secondary_pitch?: string | null;
+  pitcher_secondary_pitch_usage_pct?: number | null;
+
   // Catcher
   catcherName?: string | null;
   catcherFramingRuns?: number | null;
@@ -233,6 +244,13 @@ export interface AdvancedOffenseStats {
   whiffPctVsCurve?: number | null;
   whiffPctVsChangeup?: number | null;
   whiffPctVsSplitter?: number | null;
+  
+  // Vortex V10.3 Lineup Scores
+  lineup_contact_stress_score?: number | null;
+  lineup_pitch_count_risk_score?: number | null;
+  lineup_low_k_batters_count?: number | null;
+  lineup_high_babip_batters_count?: number | null;
+  lineup_high_hardhit_batters_count?: number | null;
 }
 
 export interface AdvancedOffense {
@@ -325,6 +343,7 @@ export interface BatterStats {
   contact_pct_vs_lhp?: number | null;
   whiff_pct?: number | null;
   chase_pct?: number | null;
+  batter_contact_stress_score?: number | null;
 }
 
 export interface InningScore {
@@ -416,6 +435,9 @@ export interface MLBGame {
   lineups: {
     home: BatterStats[];
     away: BatterStats[];
+    lineup_confirmed?: boolean;
+    lineup_source?: string;
+    lineup_updated_at?: string;
   };
   timestamp: string; // ISO string
   weather?: WeatherData;

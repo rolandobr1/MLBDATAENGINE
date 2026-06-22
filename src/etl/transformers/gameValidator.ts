@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z, ZodError } from 'zod';
 
 export const pitcherSchema = z.object({
   name: z.string().min(1),
@@ -31,16 +31,16 @@ export const gameSchema = z.object({
     }).optional()
   })
   // Se pueden agregar más esquemas (bullpen, offense, etc.)
-});
+}).passthrough();
 
 export const validateGameData = (data: any) => {
   try {
     const validData = gameSchema.parse(data);
     return { success: true, data: validData };
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      console.error('Data validation failed:', error.errors);
-      return { success: false, errors: error.errors };
+    if (error instanceof ZodError) {
+      console.error('Data validation failed:', (error as ZodError).issues);
+      return { success: false, errors: (error as ZodError).issues };
     }
     throw error;
   }

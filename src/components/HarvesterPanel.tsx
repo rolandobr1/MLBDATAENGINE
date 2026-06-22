@@ -20,6 +20,8 @@ interface HarvesterPanelProps {
     phase?: string;
   };
   extractedDates?: string[];
+  onCancel?: () => void;
+  syncRemoteDates?: () => void;
 }
 
 // Phase icon map for step dots
@@ -38,6 +40,8 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
   setSelectedDate,
   harvestProgress,
   extractedDates,
+  onCancel,
+  syncRemoteDates,
 }) => {
   const [refreshOdds, setRefreshOdds] = React.useState(false);
 
@@ -73,20 +77,31 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
             </div>
 
             {extractedDates && extractedDates.length > 0 && (
-              <div className="relative">
-                <Database className="absolute left-3 top-2.5 text-emerald-500" size={14} />
-                <select
-                  value={extractedDates.includes(selectedDate) ? selectedDate : ""}
-                  onChange={(e) => {
-                    if (e.target.value) setSelectedDate(e.target.value);
-                  }}
-                  className="w-full bg-emerald-50 border border-emerald-200 rounded-lg pl-9 pr-3 py-1.5 text-xs text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono font-medium appearance-none cursor-pointer"
-                >
-                  <option value="" disabled>Ver historial extraído...</option>
-                  {extractedDates.map((date) => (
-                    <option key={date} value={date}>{date} ({date === selectedDate ? "Actual" : "Ir"})</option>
-                  ))}
-                </select>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Database className="absolute left-3 top-2.5 text-emerald-500" size={14} />
+                  <select
+                    value={extractedDates.includes(selectedDate) ? selectedDate : ""}
+                    onChange={(e) => {
+                      if (e.target.value) setSelectedDate(e.target.value);
+                    }}
+                    className="w-full bg-emerald-50 border border-emerald-200 rounded-lg pl-9 pr-3 py-1.5 text-xs text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono font-medium appearance-none cursor-pointer"
+                  >
+                    <option value="" disabled>Ver historial local...</option>
+                    {extractedDates.map((date) => (
+                      <option key={date} value={date}>{date} ({date === selectedDate ? "Actual" : "Ir"})</option>
+                    ))}
+                  </select>
+                </div>
+                {syncRemoteDates && (
+                  <button
+                    onClick={syncRemoteDates}
+                    className="shrink-0 px-3 bg-white text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 hover:bg-slate-100 transition shadow-sm"
+                    title="Cargar fechas desde la nube (Firestore)"
+                  >
+                    ☁️ Nube
+                  </button>
+                )}
               </div>
             )}
             
@@ -109,27 +124,23 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
 
         {/* Engine Launch Button + Progress Bar */}
         <div className="flex flex-col items-center justify-center space-y-3 lg:border-x lg:border-slate-200/70 lg:px-6">
-          <button
-            onClick={runHarvest}
-            disabled={isLoading}
-            className={`w-full py-4 rounded-xl font-display font-semibold text-white transition flex items-center justify-center gap-3 shadow-md ${
-              isLoading
-                ? "bg-slate-500 cursor-not-allowed"
-                : "bg-baseball-red hover:bg-red-700 hover:shadow-lg hover:shadow-red-500/10 active:scale-98 cursor-pointer"
-            }`}
-          >
-            {isLoading ? (
-              <>
-                <Loader2 size={18} className="animate-spin text-white" />
-                <span className="text-sm">Extrayendo Datos...</span>
-              </>
-            ) : (
-              <>
-                <Play size={18} fill="currentColor" />
-                <span className="text-sm">Ejecutar Extracción ETL</span>
-              </>
-            )}
-          </button>
+          {isLoading ? (
+            <button
+              onClick={() => onCancel && onCancel()}
+              className="w-full py-4 rounded-xl font-display font-semibold text-white transition flex items-center justify-center gap-3 shadow-md bg-red-600 hover:bg-red-700 hover:shadow-lg active:scale-98 cursor-pointer"
+            >
+              <Loader2 size={18} className="animate-spin text-white" />
+              <span className="text-sm">Detener Extracción</span>
+            </button>
+          ) : (
+            <button
+              onClick={runHarvest}
+              className="w-full py-4 rounded-xl font-display font-semibold text-white transition flex items-center justify-center gap-3 shadow-md bg-baseball-red hover:bg-red-700 hover:shadow-lg hover:shadow-red-500/10 active:scale-98 cursor-pointer"
+            >
+              <Play size={18} fill="currentColor" />
+              <span className="text-sm">Ejecutar Extracción ETL</span>
+            </button>
+          )}
 
           {/* Progress Bar Block */}
           {isLoading ? (
