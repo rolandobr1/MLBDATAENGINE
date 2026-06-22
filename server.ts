@@ -6,6 +6,8 @@
 // ─── CARGAR VARIABLES DE ENTORNO PRIMERO ─────────────────────────────────────
 // CRÍTICO: dotenv debe cargarse ANTES de importar firebase.ts y otros módulos
 // que leen process.env en su inicialización.
+import { format } from "date-fns";
+import { getRecentStatcast } from './src/etl/extractors/pybaseballApi';
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
@@ -3692,9 +3694,11 @@ app.post("/api/harvest", async (req, res) => {
   };
 
   let isCancelled = false;
-  req.on('close', () => {
-    isCancelled = true;
-    console.log(`[ETL] Conexión cerrada por el cliente. Cancelando proceso para ${date}...`);
+  res.on('close', () => {
+    if (!res.writableEnded) {
+      isCancelled = true;
+      console.log(`[ETL] Conexión cerrada por el cliente. Cancelando proceso para ${date}...`);
+    }
   });
 
   console.log(`Iniciando recolección MLB para fecha: ${date}`);
@@ -3724,6 +3728,20 @@ app.post("/api/harvest", async (req, res) => {
     savantCache.load(parseInt(season)),
 
   ]);
+
+  // Pre-cargar PyBaseball (velocidad, CSW%)
+  emit({ phase: "schedule", step: "Cargando métricas PyBaseball...", pct: 5 });
+  const endDatePy = new Date(date);
+  const startDatePy = new Date(date);
+  startDatePy.setDate(startDatePy.getDate() - 3);
+  const startStrPy = startDatePy.toISOString().split('T')[0];
+  const endStrPy = endDatePy.toISOString().split('T')[0];
+  let pybaseballStatcast: any = null;
+  try {
+    pybaseballStatcast = await getRecentStatcast(startStrPy, endStrPy);
+  } catch (err) {
+    console.error("Error cargando PyBaseball", err);
+  }
 
   const harvestedGames: any[] = [];
   const errorsCollection = readErrorsDB();
@@ -3907,6 +3925,21 @@ app.post("/api/harvest", async (req, res) => {
           awayAdvOffense.xwOba = awayAdvOffense.xwOba ?? awayPitcherSavant.xwOBA;
         }
       }
+
+      // Inyectar PyBaseball
+      if (pybaseballStatcast?.data?.pitchers_recent) {
+        const homePStats = pybaseballStatcast.data.pitchers_recent.find((p: any) => String(p.pitcher) === String(homePitcherId));
+        if (homePStats && gameDataParsed.pitchers?.home) {
+          gameDataParsed.pitchers.home.pitcher_csw_pct = homePStats.csw_pct;
+          gameDataParsed.pitchers.home.pitcher_recent_velocity = homePStats.avg_velocity;
+        }
+        const awayPStats = pybaseballStatcast.data.pitchers_recent.find((p: any) => String(p.pitcher) === String(awayPitcherId));
+        if (awayPStats && gameDataParsed.pitchers?.away) {
+          gameDataParsed.pitchers.away.pitcher_csw_pct = awayPStats.csw_pct;
+          gameDataParsed.pitchers.away.pitcher_recent_velocity = awayPStats.avg_velocity;
+        }
+      }
+
       // Inyectar xwOBA de ofensiva desde los bateadores del lineup
       const homeLineup: any[] = gameDataParsed.lineups?.home || [];
       const awayLineup: any[] = gameDataParsed.lineups?.away || [];

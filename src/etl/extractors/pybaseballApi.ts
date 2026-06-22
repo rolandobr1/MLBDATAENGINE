@@ -15,7 +15,9 @@ export const getRecentStatcast = (startDate: string, endDate: string): Promise<a
         return reject(error);
       }
       try {
-        const jsonResponse = JSON.parse(stdout);
+        const jsonStart = stdout.indexOf('{');
+        const jsonStr = jsonStart >= 0 ? stdout.substring(jsonStart) : stdout;
+        const jsonResponse = JSON.parse(jsonStr);
         resolve(jsonResponse);
       } catch (parseError) {
         console.error('Failed to parse Python output:', stdout);
@@ -35,7 +37,9 @@ export const getBvP = (batterId: string, pitcherId: string): Promise<any> => {
         return reject(error);
       }
       try {
-        const jsonResponse = JSON.parse(stdout);
+        const jsonStart = stdout.indexOf('{');
+        const jsonStr = jsonStart >= 0 ? stdout.substring(jsonStart) : stdout;
+        const jsonResponse = JSON.parse(jsonStr);
         resolve(jsonResponse);
       } catch (parseError) {
         console.error('Failed to parse Python output:', stdout);
@@ -50,7 +54,11 @@ export const getBatterSplits = (): Promise<any> => {
     const command = `"${VENV_PYTHON}" "${PYTHON_SCRIPT}" --action batter_splits`;
     exec(command, { maxBuffer: 1024 * 1024 * 5 }, (error, stdout, stderr) => {
       if (error) return reject(error);
-      try { resolve(JSON.parse(stdout)); } catch (e) { reject(e); }
+      try { 
+        const jsonStart = stdout.indexOf('{');
+        const jsonStr = jsonStart >= 0 ? stdout.substring(jsonStart) : stdout;
+        resolve(JSON.parse(jsonStr)); 
+      } catch (e) { reject(e); }
     });
   });
 };
@@ -60,7 +68,11 @@ export const getBullpenWorkload = (): Promise<any> => {
     const command = `"${VENV_PYTHON}" "${PYTHON_SCRIPT}" --action bullpen`;
     exec(command, { maxBuffer: 1024 * 1024 * 5 }, (error, stdout, stderr) => {
       if (error) return reject(error);
-      try { resolve(JSON.parse(stdout)); } catch (e) { reject(e); }
+      try { 
+        const jsonStart = stdout.indexOf('{');
+        const jsonStr = jsonStart >= 0 ? stdout.substring(jsonStart) : stdout;
+        resolve(JSON.parse(jsonStr)); 
+      } catch (e) { reject(e); }
     });
   });
 };

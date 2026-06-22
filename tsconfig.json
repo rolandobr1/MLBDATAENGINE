@@ -15,11 +15,7 @@
     "moduleDetection": "force",
     "allowJs": true,
     "jsx": "react-jsx",
-    "paths": {
-      "@/*": [
-        "./*"
-      ]
-    },
+    "baseUrl": ".",
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
