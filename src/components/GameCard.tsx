@@ -32,9 +32,8 @@ interface GameCardProps {
 
 
 export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, onTogglePin, globalExpandToggle, globalExpandTarget }) => {
-  const [expanded, setExpanded] = React.useState(false);
   const [isCardExpanded, setIsCardExpanded] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState<"lineups" | "boxscore" | "splits" | "fatigue" | "sabermetrics">("lineups");
+  const [activeTab, setActiveTab] = React.useState<"resumen" | "lineups" | "boxscore" | "splits" | "fatigue" | "sabermetrics" | "injuries">("resumen");
   const [pitcherTab, setPitcherTab] = React.useState<"season" | "last7" | "vsOpp">("season");
   const [showAllPlays, setShowAllPlays] = React.useState(false);
   const [isRefreshing, setIsRefreshing] = React.useState(false);
@@ -531,9 +530,58 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
       </div>
 
       {isCardExpanded && (
-        <>
-      {/* Main Stats Bento-Grid */}
-      <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-slate-50 border-t border-slate-200">
+          {/* Tab Selector */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 border-b border-slate-200 p-4 bg-slate-100/50">
+            <button
+              onClick={() => setActiveTab("resumen")}
+              className={`col-span-2 sm:col-span-3 lg:col-span-1 px-2 py-2 rounded-lg text-[11px] lg:text-xs font-semibold transition cursor-pointer flex items-center justify-center text-center shadow-sm ${activeTab === "resumen" ? "bg-slate-900 text-white shadow-md" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"}`}
+            >
+              Resumen General
+            </button>
+            <button
+              onClick={() => setActiveTab("lineups")}
+              className={`col-span-1 px-1 py-2 rounded-lg text-[10px] lg:text-xs font-semibold transition cursor-pointer flex items-center justify-center text-center shadow-sm ${activeTab === "lineups" ? "bg-slate-900 text-white shadow-md" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"}`}
+            >
+              Alineaciones
+            </button>
+            <button
+              onClick={() => setActiveTab("boxscore")}
+              className={`col-span-1 px-1 py-2 rounded-lg text-[10px] lg:text-xs font-semibold transition cursor-pointer flex items-center justify-center text-center shadow-sm ${activeTab === "boxscore" ? "bg-slate-900 text-white shadow-md" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"}`}
+            >
+              Boxscore & PxP
+            </button>
+            <button
+              onClick={() => setActiveTab("splits")}
+              className={`col-span-1 px-1 py-2 rounded-lg text-[10px] lg:text-xs font-semibold transition cursor-pointer flex items-center justify-center text-center shadow-sm ${activeTab === "splits" ? "bg-slate-900 text-white shadow-md" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"}`}
+            >
+              Splits LHP/RHP
+            </button>
+            <button
+              onClick={() => setActiveTab("fatigue")}
+              className={`col-span-1 px-1 py-2 rounded-lg text-[10px] lg:text-xs font-semibold transition cursor-pointer flex items-center justify-center text-center shadow-sm ${activeTab === "fatigue" ? "bg-slate-900 text-white shadow-md" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"}`}
+            >
+              Descanso
+            </button>
+            <button
+              onClick={() => setActiveTab("sabermetrics")}
+              className={`col-span-1 px-1 py-2 rounded-lg text-[10px] lg:text-xs font-semibold transition cursor-pointer flex items-center justify-center text-center shadow-sm ${activeTab === "sabermetrics" ? "bg-slate-900 text-white shadow-md" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"}`}
+            >
+              Sabermetría
+            </button>
+            <button
+              onClick={() => setActiveTab("injuries")}
+              className={`col-span-1 px-1 py-2 rounded-lg text-[10px] lg:text-xs font-semibold transition cursor-pointer flex items-center justify-center text-center shadow-sm ${activeTab === "injuries" ? "bg-slate-900 text-white shadow-md" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"}`}
+            >
+              Lesiones
+            </button>
+          </div>
+
+          <div className="p-0 sm:p-6 font-sans text-slate-700 text-sm leading-relaxed space-y-4">
+            {activeTab === "resumen" && (
+              <>
+                {/* Main Stats Bento-Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 sm:p-0">
 
         {/* Column 1: Pitchers Matchup Comparison */}
         <div className="border border-slate-100 rounded-lg p-4 bg-slate-50/50 space-y-4">
@@ -754,68 +802,15 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
         </div>
       )}
 
-      {/* Roster & Lineups Accordion Footer */}
-      <div className="border-t border-slate-200">
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className={`w-full transition-all duration-200 px-6 py-3.5 flex justify-center items-center gap-2 font-display font-bold text-xs tracking-wider uppercase cursor-pointer ${expanded
-              ? "bg-slate-900 text-white"
-              : "bg-blue-50/50 hover:bg-blue-100/50 text-blue-800"
-            }`}
-        >
-          <span>{expanded ? "Ocultar Análisis de Partido" : "Ver Análisis Profundo, Lineups y Boxscore"}</span>
-          {expanded ? <ChevronUp size={16} className="text-white/70" /> : <ChevronDown size={16} className="text-blue-500" />}
-        </button>
-
-        {expanded && (
-          <div className="p-6 bg-slate-50 font-sans text-slate-700 text-sm leading-relaxed border-t border-slate-200 border-dashed space-y-4">
-
-            {/* Tab Selector */}
-            <div className="flex overflow-x-auto gap-2 border-b border-slate-200 pb-3 mb-2 whitespace-nowrap">
-              <button
-                onClick={() => setActiveTab("lineups")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${activeTab === "lineups" ? "bg-slate-900 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"}`}
-              >
-                Alineaciones
-              </button>
-              <button
-                onClick={() => setActiveTab("boxscore")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${activeTab === "boxscore" ? "bg-slate-900 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"}`}
-              >
-                Boxscore & PxP
-              </button>
-              <button
-                onClick={() => setActiveTab("splits")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${activeTab === "splits" ? "bg-slate-900 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"}`}
-              >
-                Splits vs RHP/LHP
-              </button>
-              <button
-                onClick={() => setActiveTab("fatigue")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${activeTab === "fatigue" ? "bg-slate-900 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"}`}
-              >
-                Fatiga y Descanso
-              </button>
-              <button
-                onClick={() => setActiveTab("sabermetrics")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${activeTab === "sabermetrics" ? "bg-slate-900 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"}`}
-              >
-                Sabermetría Avanzada
-              </button>
-              <button
-                onClick={() => setActiveTab("injuries")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${activeTab === "injuries" ? "bg-slate-900 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"}`}
-              >
-                Reporte Lesiones
-              </button>
-            </div>
+              </>
+            )}
 
             {/* TAB: Lineups Comparison */}
             {activeTab === "lineups" && game.lineups && (
               <div className="grid grid-cols-1 gap-6 mb-2">
                 {/* Away Lineup */}
                 <div className="overflow-x-auto w-full">
-                  <div className="bg-white rounded-lg border border-slate-200/60 overflow-hidden shadow-sm min-w-[600px]">
+                  <div className="bg-white rounded-lg border border-slate-200/60 overflow-hidden shadow-sm">
                   <div className="bg-slate-800 text-white px-4 py-2.5 font-display font-bold text-xs md:text-sm uppercase tracking-wider flex justify-between">
                     <span>Alineación Visitante ({game.metadata.awayTeam})</span>
                     <div className="flex gap-2 text-right shrink-0 font-mono text-[10px] md:text-xs text-slate-300">
@@ -900,7 +895,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
 
                 {/* Home Lineup */}
                 <div className="overflow-x-auto w-full">
-                  <div className="bg-white rounded-lg border border-slate-200/60 overflow-hidden shadow-sm min-w-[600px]">
+                  <div className="bg-white rounded-lg border border-slate-200/60 overflow-hidden shadow-sm">
                   <div className="bg-red-950 text-white px-4 py-2.5 font-display font-bold text-xs md:text-sm uppercase tracking-wider flex justify-between">
                     <span>Alineación Local ({game.metadata.homeTeam})</span>
                     <div className="flex gap-2 text-right shrink-0 font-mono text-[10px] md:text-xs text-red-300">
@@ -1032,7 +1027,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                     {/* Away Live Stats */}
                     <div className="bg-white rounded-lg border border-slate-200/60 overflow-hidden shadow-sm">
                       <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse table-fixed min-w-[400px]">
+                        <table className="w-full text-left border-collapse table-fixed">
                           <colgroup>
                             <col />
                             <col className="w-10" />
@@ -1086,7 +1081,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           )}
                         </table>
 
-                        <table className="w-full text-left border-collapse table-fixed mt-2 min-w-[400px]">
+                        <table className="w-full text-left border-collapse table-fixed mt-2">
                           <colgroup>
                             <col />
                             <col className="w-10" />
@@ -1142,7 +1137,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                     {/* Home Live Stats */}
                     <div className="bg-white rounded-lg border border-slate-200/60 overflow-hidden shadow-sm">
                       <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse table-fixed min-w-[400px]">
+                        <table className="w-full text-left border-collapse table-fixed">
                           <colgroup>
                             <col />
                             <col className="w-10" />
@@ -1196,7 +1191,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           )}
                         </table>
 
-                        <table className="w-full text-left border-collapse table-fixed mt-2 min-w-[400px]">
+                        <table className="w-full text-left border-collapse table-fixed mt-2">
                           <colgroup>
                             <col />
                             <col className="w-10" />
@@ -1259,7 +1254,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                         Registro de Jugadas (Play-by-Play)
                       </h5>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-semibold text-slate-500">Todas las jugadas</span>
+                        <span className="text-[10px] font-semibold text-slate-500">Mostrar jugadas</span>
                         <button
                           type="button"
                           onClick={() => setShowAllPlays(!showAllPlays)}
@@ -1304,7 +1299,6 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                         game.game_result.gameStatus !== "Postponed";
                       
                       const allPlays = isGameInProgress && game.playByPlay.allPlays ? [...game.playByPlay.allPlays].reverse() : game.playByPlay.allPlays;
-                      const scoringPlays = isGameInProgress && game.playByPlay.scoringPlays ? [...game.playByPlay.scoringPlays].reverse() : game.playByPlay.scoringPlays;
 
                       return (
                         <div className="space-y-2 mt-2 max-h-96 overflow-y-auto pr-1">
@@ -1332,23 +1326,10 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                               })
                             )
                           ) : (
-                            !scoringPlays || scoringPlays.length === 0 ? (
-                              <div className="text-xs text-slate-400 italic text-center py-4">No hay carreras anotadas aún.</div>
-                            ) : (
-                              scoringPlays.map((play: any, idx: number) => (
-                                <div key={idx} className="flex gap-3 items-start border-b border-slate-100 pb-2 last:border-0 p-1.5 bg-yellow-50/30 border-l-2 border-l-yellow-400 rounded text-left">
-                                  <div className="bg-yellow-100 text-yellow-800 font-bold px-2 py-0.5 rounded text-[9px] shrink-0 font-mono mt-0.5 w-14 text-center">
-                                    {play.inning}
-                                  </div>
-                                  <div className="text-xs font-sans text-slate-700 flex-1">
-                                    {play.description}
-                                  </div>
-                                  <div className="font-mono font-bold text-slate-800 text-xs shrink-0 mt-0.5 bg-slate-50 px-1.5 rounded">
-                                    {play.score}
-                                  </div>
-                                </div>
-                              ))
-                            )
+                            <div className="text-xs text-slate-400 italic text-center py-4">
+                              El historial de jugadas está oculto.<br/>
+                              Activa el interruptor arriba para cargar y ver todas las jugadas del partido.
+                            </div>
                           )}
                         </div>
                       );
@@ -1553,11 +1534,8 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                 </div>
               </div>
             )}
-
           </div>
-        )}
-      </div>
-      </>
+        </div>
       )}
     </div>
   );

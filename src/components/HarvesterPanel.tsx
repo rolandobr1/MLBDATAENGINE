@@ -153,41 +153,6 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
           )}
         </div>
 
-        {/* Scheduler / Automatic Flow Indicators (Requisito 6) */}
-        <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <Clock className="text-indigo-600" size={16} />
-            <h3 className="font-display font-semibold text-slate-800 text-sm uppercase tracking-wide">
-              Estatus de Automatización (Cron)
-            </h3>
-          </div>
-
-          <div className="space-y-2 text-xs">
-            {/* Morning check */}
-            <div className="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-200/60 shadow-sm leading-none">
-              <span className="text-slate-600 font-medium font-sans">1. Mañana (08:00 AM)</span>
-              <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold uppercase text-[11px] tracking-wide text-right">
-                Completado
-              </span>
-            </div>
-
-            {/* Hourly Sync indicators */}
-            <div className="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-200/60 shadow-sm leading-none">
-              <span className="text-slate-600 font-medium font-sans">2. Sincronización Horaria</span>
-              <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold uppercase text-[11px] tracking-wide text-right">
-                Activa (Horario)
-              </span>
-            </div>
-
-            {/* Lock Lines prior to Game */}
-            <div className="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-200/60 shadow-sm leading-none">
-              <span className="text-slate-600 font-medium font-sans">3. Cierre Líneas (T-35m)</span>
-              <span className="bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded font-bold uppercase text-[11px] tracking-wide text-right">
-                Programado
-              </span>
-            </div>
-          </div>
-        </div>
 
       </div>
     </div>

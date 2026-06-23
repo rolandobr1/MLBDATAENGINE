@@ -23,7 +23,9 @@ import {
   Search,
   TrendingUp,
   Eye,
-  EyeOff
+  EyeOff,
+  ChevronUp,
+  ChevronDown
 } from "lucide-react";
 
 function getLocalDateString(): string {
@@ -54,6 +56,7 @@ export default function App() {
   const [showBetTracking, setShowBetTracking] = React.useState<boolean>(false);
   const [globalExpandToggle, setGlobalExpandToggle] = React.useState<number>(0);
   const [globalExpandTarget, setGlobalExpandTarget] = React.useState<boolean>(false);
+  const [isHarvesterExpanded, setIsHarvesterExpanded] = React.useState<boolean>(true);
 
   const handleToggleExpandAll = () => {
     const newTarget = !globalExpandTarget;
@@ -419,45 +422,57 @@ export default function App() {
         
         {/* Row 1: Harvester Controls Dashboard */}
         <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="bg-slate-900 border-b border-slate-800 p-4 text-white flex items-center justify-between">
+          <div 
+            onClick={() => setIsHarvesterExpanded(!isHarvesterExpanded)}
+            className="bg-slate-900 border-b border-slate-800 p-4 text-white flex items-center justify-between cursor-pointer hover:bg-slate-800 transition-colors"
+          >
             <div className="flex items-center gap-2">
               <Sparkles className="text-amber-400" size={18} />
-              <h2 className="font-display font-medium text-sm uppercase tracking-wider">
+              <h2 className="font-display font-medium text-sm uppercase tracking-wider select-none">
                 Panel de Control de Harvester de Datos MLB
               </h2>
             </div>
-            <span className="font-mono text-xs text-slate-400">
-              Estado API: <strong className="text-emerald-400">Conectado</strong>
-            </span>
+            <div className="flex items-center gap-4">
+              <span className="font-mono text-xs text-slate-400 hidden sm:inline-block">
+                Estado API: <strong className="text-emerald-400">Conectado</strong>
+              </span>
+              <div className="bg-slate-700/50 p-1 rounded hover:bg-slate-700 transition">
+                {isHarvesterExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </div>
+            </div>
           </div>
 
-          <div className="p-6">
-            <HarvesterPanel
-              onHarvest={handleHarvest}
-              isLoading={isLoading}
-              selectedDate={selectedDate}
-              setSelectedDate={handleSetSelectedDate}
-              harvestProgress={harvestProgress}
-              extractedDates={extractedDates}
-              onCancel={handleCancelHarvest}
-              syncRemoteDates={() => fetchExtractedDates(true)}
-            />
-          </div>
+          {isHarvesterExpanded && (
+            <>
+              <div className="p-6">
+                <HarvesterPanel
+                  onHarvest={handleHarvest}
+                  isLoading={isLoading}
+                  selectedDate={selectedDate}
+                  setSelectedDate={handleSetSelectedDate}
+                  harvestProgress={harvestProgress}
+                  extractedDates={extractedDates}
+                  onCancel={handleCancelHarvest}
+                  syncRemoteDates={() => fetchExtractedDates(true)}
+                />
+              </div>
 
-          <div ref={sheetsRef} className="px-6 pb-6">
-            <GoogleSheetsSync games={games} selectedDate={selectedDate} compact />
-          </div>
+              <div ref={sheetsRef} className="px-6 pb-6">
+                <GoogleSheetsSync games={games} selectedDate={selectedDate} compact />
+              </div>
 
-          {/* Bet Tracking Toggle Button */}
-          <div className="px-6 pb-6">
-            <button
-              onClick={() => setShowBetTracking(prev => !prev)}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white text-sm font-semibold rounded-lg shadow transition-all duration-200"
-            >
-              <TrendingUp size={16} />
-              {showBetTracking ? "Ocultar Bet Tracking" : "📊 Bet Tracking"}
-            </button>
-          </div>
+              {/* Bet Tracking Toggle Button */}
+              <div className="px-6 pb-6">
+                <button
+                  onClick={() => setShowBetTracking(prev => !prev)}
+                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white text-sm font-semibold rounded-lg shadow transition-all duration-200"
+                >
+                  <TrendingUp size={16} />
+                  {showBetTracking ? "Ocultar Bet Tracking" : "📊 Bet Tracking"}
+                </button>
+              </div>
+            </>
+          )}
         </section>
 
         {/* Bet Tracking Panel */}
