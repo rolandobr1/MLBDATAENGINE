@@ -36,7 +36,7 @@ for (const key in process.env) {
 
 import express from "express";
 import { createServer as createViteServer } from "vite";
-import { saveGameData, loadAllGamesFromFirestore, loadGamesByDateFromFirestore, loadLatestGamesFromFirestore, loadExtractedDatesFromFirestore } from "./src/services/firestoreService";
+import { saveGameData, loadAllGamesFromFirestore, loadGamesByDateFromFirestore, loadLatestGamesFromFirestore, loadExtractedDatesFromFirestore, ensureAnonymousAuth } from "./src/services/firestoreService";
 import { scrapeStrikeoutProps } from "./src/etl/extractors/rotowireScraper";
 import {
   WeatherData,
@@ -3733,7 +3733,7 @@ app.post("/api/harvest", async (req, res) => {
   emit({ phase: "schedule", step: "Cargando métricas PyBaseball...", pct: 5 });
   const endDatePy = new Date(date);
   const startDatePy = new Date(date);
-  startDatePy.setDate(startDatePy.getDate() - 3);
+  startDatePy.setDate(startDatePy.getDate() - 10);
   const startStrPy = startDatePy.toISOString().split('T')[0];
   const endStrPy = endDatePy.toISOString().split('T')[0];
   let pybaseballStatcast: any = null;
@@ -4639,9 +4639,15 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
+    
+    // Pre-autenticar Firebase en segundo plano
+    ensureAnonymousAuth().then((authed) => {
+      console.log(`[Firebase] Autenticación anónima en arranque: ${authed ? 'OK' : 'Fallida'}`);
+    }).catch(console.error);
+
     startLiveGamesAutoupdater();
     runStartupFirestoreSync().catch((err) => {
-      console.error("[Firestore Sync] Error en sincronizaciÃ³n de arranque en segundo plano:", err);
+      console.error("[Firestore Sync] Error en sincronización de arranque en segundo plano:", err);
     });
   });
 }

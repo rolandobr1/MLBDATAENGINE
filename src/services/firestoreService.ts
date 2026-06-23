@@ -5,7 +5,7 @@ import { getAuth, signInAnonymously } from 'firebase/auth';
 let authInitialized = false;
 const FIRESTORE_READ_TIMEOUT_MS = Number(process.env.FIRESTORE_READ_TIMEOUT_MS || 3000);
 
-async function ensureAnonymousAuth(): Promise<boolean> {
+export async function ensureAnonymousAuth(): Promise<boolean> {
   if (!app) return false;
   if (authInitialized) return true;
 
@@ -158,8 +158,18 @@ export const loadAllGamesFromFirestore = async (): Promise<any[]> => {
   }
 };
 
+const emptyCache = new Map<string, number>();
+const EMPTY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
+
 export const loadGamesByDateFromFirestore = async (date: string): Promise<any[]> => {
   try {
+    // 1. Revisar Caché Negativo Local
+    const now = Date.now();
+    if (emptyCache.has(date) && (now - emptyCache.get(date)!) < EMPTY_CACHE_TTL_MS) {
+      console.log(`[Caché] Día vacío en caché para ${date}, abortando consulta a Firebase instantáneamente.`);
+      return [];
+    }
+
     if (!db) {
       console.warn("Firestore db is not initialized. Skipping Firestore date load.");
       return [];
@@ -167,9 +177,25 @@ export const loadGamesByDateFromFirestore = async (date: string): Promise<any[]>
     const isAuthed = await ensureAnonymousAuth();
     if (!isAuthed) return [];
 
+    // 2. Revisión Rápida de Metadatos (Fast Check)
+    const metadataRef = doc(db, 'metadata', 'extracted_dates');
+    const metaSnapshot = await withFirestoreReadTimeout(getDoc(metadataRef), null, 'metadatos de fechas rápidas');
+    if (metaSnapshot && metaSnapshot.exists()) {
+      const dates = metaSnapshot.data()?.dates || [];
+      if (!dates.includes(date)) {
+        console.log(`[Optimización] La fecha ${date} no está en metadatos. Evitando query completo.`);
+        emptyCache.set(date, now); // Guardar en caché negativo
+        return [];
+      }
+    }
+
     const gamesQuery = query(collection(db, 'games'), where('metadata.date', '==', date));
     const snapshot = await withFirestoreReadTimeout(getDocs(gamesQuery), null, `juegos de ${date}`);
-    if (!snapshot) return [];
+    if (!snapshot || snapshot.empty) {
+      emptyCache.set(date, now); // Si la query real también vuelve vacía, guardamos en caché negativo
+      return [];
+    }
+    
     const games: any[] = [];
     snapshot.forEach((doc) => {
       games.push(doc.data());
