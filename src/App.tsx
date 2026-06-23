@@ -401,7 +401,21 @@ export default function App() {
     if (indexA !== -1 && indexB !== -1) return indexA - indexB;
     if (indexA !== -1) return -1;
     if (indexB !== -1) return 1;
-    return 0;
+
+    // Parse time like "1:05 p.m." into total minutes for chronological sorting
+    const parseTime = (t: string) => {
+      if (!t) return Number.MAX_SAFE_INTEGER; // Put games with no time at the end
+      const isPm = t.toLowerCase().includes("p");
+      const match = t.match(/(\d+):(\d+)/);
+      if (!match) return Number.MAX_SAFE_INTEGER;
+      let hours = parseInt(match[1], 10);
+      const mins = parseInt(match[2], 10);
+      if (isPm && hours !== 12) hours += 12;
+      if (!isPm && hours === 12) hours = 0;
+      return hours * 60 + mins;
+    };
+
+    return parseTime(a.metadata?.time) - parseTime(b.metadata?.time);
   });
 
   return (
@@ -596,9 +610,9 @@ export default function App() {
                 }
 
                 return (
-                  <div className="columns-1 xl:columns-2 gap-6 space-y-6">
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-stretch">
                     {filteredGames.map((game) => (
-                      <div key={game.id} className="break-inside-avoid">
+                      <div key={game.id} className="flex flex-col">
                         <GameCard 
                           game={game} 
                           onRefresh={() => handleRefreshGame(game.id, game.metadata.date)} 

@@ -4541,10 +4541,10 @@ app.post("/api/harvest-game", async (req, res) => {
   }
 });
 
-// Auto-updater for live/in-progress games in background (every 15 minutes)
+// Auto-updater for live/in-progress games in background (every 2 minutes)
 function startLiveGamesAutoupdater() {
-  const INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
-  console.log(`[Auto-Updater] Iniciando programador de actualización cada 15 minutos...`);
+  const INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+  console.log(`[Auto-Updater] Iniciando programador de actualización cada 2 minutos...`);
 
   setInterval(async () => {
     try {
