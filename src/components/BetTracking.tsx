@@ -718,13 +718,14 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     setAmount(bet.amount ? String(bet.amount) : "");
     setOdds(oddsForFormat(bet.odds, oddsFormat));
     setNote(bet.note || "");
+    setNote(bet.note || "");
     setStep(5);
   };
 
   // Auto-resolve
   const resolvedBets = useMemo(() => bets.map(bet => {
-    // Buscar en dateGames primero, y si no, en games (prop live)
-    const game     = dateGames.find(g => String(g.id) === bet.gameId) || games.find(g => String(g.id) === bet.gameId);
+    // Buscar en games (prop live) primero, y si no, en dateGames
+    const game     = games.find(g => String(g.id) === bet.gameId) || dateGames.find(g => String(g.id) === bet.gameId);
     const progress = resolveLiveProgress(bet, game);
     const status   = bet.status === "pending" && progress.autoStatus ? progress.autoStatus : bet.status;
     return { bet: { ...bet, status }, progress, game };

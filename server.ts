@@ -1661,6 +1661,8 @@ async function fetchRealBettingLines(date: string, forceRefreshOdds: boolean = f
 
   if (!activeKey || !data) {
     console.error("[Odds API] Todas las keys de The Odds API agotaron su cuota o fallaron.");
+    // Crear un archivo de caché vacío para evitar el bucle infinito de reintentos
+    fs.writeFileSync(cacheFile, JSON.stringify([]));
     return null;
   }
 
@@ -1965,6 +1967,7 @@ async function fetchRealMLBGameData(
           const liveHr      = s.homeRuns || 0;
           const liveSingles = Math.max(0, liveHits - liveDbl - liveTpl - liveHr);
           batters.push({
+            id: id,
             name: p.person?.fullName || "Bateador",
             position: p.position?.abbreviation || "DH",
             ab: s.atBats || 0,
@@ -1987,6 +1990,7 @@ async function fetchRealMLBGameData(
           if (!p) return;
           const s = p.stats?.pitching || {};
           pitchers.push({
+            id: id,
             name: p.person?.fullName || "Lanzador",
             position: "P",
             ip: s.inningsPitched || "0.0",
@@ -1996,7 +2000,8 @@ async function fetchRealMLBGameData(
             bb: s.baseOnBalls || 0,
             k: s.strikeOuts || 0,
             bf: s.battersFaced ?? "",
-            pitches: s.numberOfPitches || 0
+            pitches: s.numberOfPitches || 0,
+            strikes: s.strikes || 0
           });
         });
       }
@@ -2158,9 +2163,10 @@ async function fetchRealMLBGameData(
 
     const fetchLinescore = async () => {
       try {
-        const r = await fetchWithTimeout(`https://statsapi.mlb.com/api/v1/game/${gamePk}/linescore`);
-        const d = await r.json();
-        if (!d.innings) return null;
+        const r = await fetchWithTimeout(`https://statsapi.mlb.com/api/v1.1/game/${gamePk}/feed/live`);
+        const fullD = await r.json();
+        const d = fullD?.liveData?.linescore;
+        if (!d || !d.innings) return null;
         return {
           innings: d.innings.map((i: any) => ({
             num: i.num,
@@ -2173,7 +2179,19 @@ async function fetchRealMLBGameData(
           currentInningOrdinal: d.currentInningOrdinal,
           inningState: d.inningState,
           inningHalf: d.inningHalf,
-          isTopInning: d.isTopInning
+          isTopInning: d.isTopInning,
+          balls: d.balls,
+          strikes: d.strikes,
+          outs: d.outs,
+          defense: d.defense?.pitcher ? {
+            pitcher: { id: d.defense.pitcher.id, fullName: d.defense.pitcher.fullName }
+          } : undefined,
+          offense: d.offense ? {
+            batter: d.offense.batter ? { id: d.offense.batter.id, fullName: d.offense.batter.fullName } : undefined,
+            first: d.offense.first ? { id: d.offense.first.id, fullName: d.offense.first.fullName } : undefined,
+            second: d.offense.second ? { id: d.offense.second.id, fullName: d.offense.second.fullName } : undefined,
+            third: d.offense.third ? { id: d.offense.third.id, fullName: d.offense.third.fullName } : undefined,
+          } : undefined
         };
       } catch { return null; }
     };

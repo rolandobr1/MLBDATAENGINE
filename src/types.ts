@@ -361,6 +361,18 @@ export interface Linescore {
   inningState?: string;
   inningHalf?: string;
   isTopInning?: boolean;
+  balls?: number;
+  strikes?: number;
+  outs?: number;
+  defense?: {
+    pitcher?: { id: number; fullName: string };
+  };
+  offense?: {
+    batter?: { id: number; fullName: string };
+    first?: { id: number; fullName: string };
+    second?: { id: number; fullName: string };
+    third?: { id: number; fullName: string };
+  };
 }
 
 export interface LivePlayerStats {

@@ -31,6 +31,115 @@ interface GameCardProps {
 }
 
 
+const LiveFieldUI: React.FC<{ linescore: any, liveBoxscore: any }> = ({ linescore, liveBoxscore }) => {
+  if (!linescore) return null;
+
+  const b = linescore.balls || 0;
+  const s = linescore.strikes || 0;
+  const o = linescore.outs || 0;
+
+  const first = !!linescore.offense?.first;
+  const second = !!linescore.offense?.second;
+  const third = !!linescore.offense?.third;
+
+  const currentPitcherId = linescore.defense?.pitcher?.id;
+  const currentBatterId = linescore.offense?.batter?.id;
+  
+  let currentPitcher: any = null;
+  let currentBatter: any = null;
+  
+  if (liveBoxscore) {
+    currentPitcher = liveBoxscore.home?.pitchers?.find((p: any) => p.id === currentPitcherId) || 
+                     liveBoxscore.away?.pitchers?.find((p: any) => p.id === currentPitcherId);
+    
+    currentBatter = liveBoxscore.home?.batters?.find((b: any) => b.id === currentBatterId) || 
+                    liveBoxscore.away?.batters?.find((b: any) => b.id === currentBatterId);
+  }
+
+  const pitcherName = currentPitcher?.name || linescore.defense?.pitcher?.fullName;
+  const batterName = currentBatter?.name || linescore.offense?.batter?.fullName;
+
+  const InningDot = ({ count, max, color }: { count: number, max: number, color: string }) => (
+    <div className="flex gap-1">
+      {Array.from({ length: max }).map((_, i) => (
+        <div
+          key={i}
+          className={`w-2 h-2 rounded-full ${i < count ? color : 'bg-slate-700'}`}
+        />
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="bg-slate-900 rounded-lg p-3 mx-4 mt-4 flex items-center justify-between border border-slate-700 shadow-inner overflow-hidden relative">
+      {/* Background field lines */}
+      <div className="absolute inset-0 opacity-20 flex justify-center items-center pointer-events-none">
+        <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <path d="M0 100 L50 50 L100 100" stroke="white" strokeWidth="1" fill="none" />
+        </svg>
+      </div>
+
+      <div className="w-full flex items-center justify-between z-10 px-2 md:px-6 py-2">
+        {/* Left side: Pitcher */}
+        <div className="flex flex-col flex-1">
+          {pitcherName && (
+            <>
+              <div className="text-white font-bold text-sm md:text-base flex items-center gap-1">
+                {pitcherName.split(' ').map((n: string, i: number, arr: any[]) => i === arr.length - 1 ? n.charAt(0) : n).join(', ')}
+                <span className="text-slate-400 text-[10px] md:text-xs uppercase ml-1">{currentPitcher?.position || "P"}</span>
+              </div>
+              <div className="text-slate-300 text-[10px] md:text-xs font-mono mt-1">
+                {currentPitcher ? `${currentPitcher.pitches} P - ${currentPitcher.strikes} S` : '- P - - S'}
+              </div>
+              <div className="text-slate-400 text-[10px] md:text-xs font-mono">
+                {currentPitcher ? `${currentPitcher.ip} IL, ${currentPitcher.h} H, ${currentPitcher.er} CL` : '- IL, - H, - CL'}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Center: Count and Diamond */}
+        <div className="flex flex-col items-center shrink-0 px-4">
+          <div className="relative w-14 h-14 md:w-16 md:h-16 transform -rotate-45 mb-2 mt-2">
+            <div className="absolute inset-0 grid grid-cols-2 grid-rows-2 gap-1">
+              <div className={`w-full h-full rounded-sm ${third ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]' : 'bg-slate-700/60'}`} />
+              <div className={`w-full h-full rounded-sm ${second ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]' : 'bg-slate-700/60'}`} />
+              <div className="w-full h-full" />
+              <div className={`w-full h-full rounded-sm ${first ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]' : 'bg-slate-700/60'}`} />
+            </div>
+          </div>
+          <div className="flex gap-2 text-white font-bold text-sm md:text-base font-mono mb-1">
+            <span className="text-emerald-400">{b}</span>
+            <span className="text-slate-500">-</span>
+            <span className="text-red-400">{s}</span>
+          </div>
+          <div className="flex gap-1 justify-center">
+            <InningDot count={o} max={3} color="bg-red-500" />
+          </div>
+        </div>
+
+        {/* Right side: Batter */}
+        <div className="flex flex-col flex-1 items-end text-right">
+          {batterName && (
+            <>
+              <div className="text-white font-bold text-sm md:text-base flex items-center justify-end gap-1">
+                {batterName.split(' ').map((n: string, i: number, arr: any[]) => i === arr.length - 1 ? n.charAt(0) : n).join(', ')}
+                <span className="text-slate-400 text-[10px] md:text-xs uppercase ml-1">{currentBatter?.position || "B"}</span>
+              </div>
+              <div className="text-slate-300 text-xs md:text-sm font-mono mt-1 font-bold">
+                {b} - {s}
+              </div>
+              <div className="text-slate-400 text-[10px] md:text-xs font-mono">
+                {currentBatter ? `${currentBatter.h} - ${currentBatter.ab}` : '-'}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, onTogglePin, globalExpandToggle, globalExpandTarget }) => {
   const [isCardExpanded, setIsCardExpanded] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<"resumen" | "lineups" | "boxscore" | "splits" | "fatigue" | "sabermetrics" | "injuries">("resumen");
@@ -350,7 +459,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
   };
 
   return (
-    <div className="rounded-xl overflow-hidden shadow-sm hover:shadow-md transition duration-200 font-sans bg-white border border-slate-200 h-full flex flex-col">
+    <div className="rounded-xl overflow-hidden shadow-sm hover:shadow-md transition duration-200 font-sans bg-white border border-slate-200">
       {selectedPitcherData && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" onClick={() => setSelectedPitcherSide(null)}>
           <div
@@ -531,6 +640,14 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
 
       {isCardExpanded && (
         <div className="bg-slate-50 border-t border-slate-200">
+          
+          {/* Live Progress Indicator */}
+          {game.game_result?.gameStatus?.includes("In Progress") && game.linescore && (
+            <div className="mb-4">
+              <LiveFieldUI linescore={game.linescore} liveBoxscore={game.liveBoxscore} />
+            </div>
+          )}
+
           {/* Tab Selector */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 border-b border-slate-200 p-4 bg-slate-100/50">
             <button
@@ -1030,16 +1147,16 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                         <table className="w-full text-left border-collapse table-fixed">
                           <colgroup>
                             <col />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
                           </colgroup>
                           <thead>
                             <tr className="bg-blue-950 text-white font-display font-bold text-[10px] uppercase tracking-wider">
-                              <th className="py-2 px-4 text-left truncate">Bateadores Visitantes</th>
+                              <th className="py-2 px-2 text-left truncate">Bateadores Visitantes</th>
                               <th className="py-2 px-1 text-center font-mono text-blue-300">AB</th>
                               <th className="py-2 px-1 text-center font-mono text-blue-300">R</th>
                               <th className="py-2 px-1 text-center font-mono text-blue-300">H</th>
@@ -1051,7 +1168,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           <tbody className="divide-y divide-slate-100 font-mono text-[10px]">
                             {game.liveBoxscore.away.batters.map((player: any, idx: number) => (
                               <tr key={idx} className="hover:bg-slate-50/50">
-                                <td className="py-1.5 px-4 truncate">
+                                <td className="py-1.5 px-2 truncate">
                                   <div className="flex items-center gap-2 truncate">
                                     <span className="bg-slate-100 text-slate-600 px-1 rounded text-[8px] font-bold shrink-0 w-6 text-center">{player.position}</span>
                                     <span className="text-slate-800 font-sans font-medium truncate" title={player.name}>{player.name}</span>
@@ -1069,7 +1186,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           {awayBattersTotals && (
                             <tfoot>
                               <tr className="bg-slate-100/80 font-bold border-t border-slate-300 text-slate-800 text-[10px]">
-                                <td className="py-2 px-4 font-sans text-left uppercase text-[9px] tracking-wider">Totales</td>
+                                <td className="py-2 px-2 font-sans text-left uppercase text-[9px] tracking-wider">Totales</td>
                                 <td className="py-2 px-1 text-center font-mono">{awayBattersTotals.ab}</td>
                                 <td className="py-2 px-1 text-center font-mono">{awayBattersTotals.r}</td>
                                 <td className="py-2 px-1 text-center font-mono">{awayBattersTotals.h}</td>
@@ -1084,16 +1201,16 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                         <table className="w-full text-left border-collapse table-fixed mt-2">
                           <colgroup>
                             <col />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
                           </colgroup>
                           <thead>
                             <tr className="bg-slate-100 text-slate-700 font-display font-bold text-[10px] uppercase tracking-wider">
-                              <th className="py-1.5 px-4 text-left truncate">Lanzadores</th>
+                              <th className="py-1.5 px-2 text-left truncate">Lanzadores</th>
                               <th className="py-1.5 px-1 text-center font-mono"><span title="Innings Pitched (Entradas Lanzadas)" className="cursor-help border-b border-dotted border-slate-400/50">IP</span></th>
                               <th className="py-1.5 px-1 text-center font-mono"><span title="Hits (Imparables permitidos)" className="cursor-help border-b border-dotted border-slate-400/50">H</span></th>
                               <th className="py-1.5 px-1 text-center font-mono"><span title="Runs (Carreras permitidas)" className="cursor-help border-b border-dotted border-slate-400/50">R</span></th>
@@ -1105,7 +1222,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           <tbody className="divide-y divide-slate-100 font-mono text-[10px]">
                             {game.liveBoxscore.away.pitchers.map((player: any, idx: number) => (
                               <tr key={idx} className="hover:bg-slate-50/50">
-                                <td className="py-1.5 px-4 truncate">
+                                <td className="py-1.5 px-2 truncate">
                                   <span className="text-slate-800 font-sans font-medium truncate" title={player.name}>{player.name}</span>
                                 </td>
                                 <td className="py-1.5 px-1 text-center font-bold text-slate-800">{player.ip}</td>
@@ -1120,7 +1237,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           {awayPitchersTotals && (
                             <tfoot>
                               <tr className="bg-slate-100/85 font-bold border-t border-slate-200 text-slate-800 text-[10px]">
-                                <td className="py-2 px-4 font-sans text-left uppercase text-[9px] tracking-wider">Totales</td>
+                                <td className="py-2 px-2 font-sans text-left uppercase text-[9px] tracking-wider">Totales</td>
                                 <td className="py-2 px-1 text-center font-mono">{awayPitchersTotals.ip}</td>
                                 <td className="py-2 px-1 text-center font-mono text-slate-600">{awayPitchersTotals.h}</td>
                                 <td className="py-2 px-1 text-center font-mono text-slate-600">{awayPitchersTotals.r}</td>
@@ -1140,16 +1257,16 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                         <table className="w-full text-left border-collapse table-fixed">
                           <colgroup>
                             <col />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
                           </colgroup>
                           <thead>
                             <tr className="bg-red-950 text-white font-display font-bold text-[10px] uppercase tracking-wider">
-                              <th className="py-2 px-4 text-left truncate">Bateadores Locales</th>
+                              <th className="py-2 px-2 text-left truncate">Bateadores Locales</th>
                               <th className="py-2 px-1 text-center font-mono text-red-300">AB</th>
                               <th className="py-2 px-1 text-center font-mono text-red-300">R</th>
                               <th className="py-2 px-1 text-center font-mono text-red-300">H</th>
@@ -1161,7 +1278,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           <tbody className="divide-y divide-slate-100 font-mono text-[10px]">
                             {game.liveBoxscore.home.batters.map((player: any, idx: number) => (
                               <tr key={idx} className="hover:bg-slate-50/50">
-                                <td className="py-1.5 px-4 truncate">
+                                <td className="py-1.5 px-2 truncate">
                                   <div className="flex items-center gap-2 truncate">
                                     <span className="bg-slate-100 text-slate-600 px-1 rounded text-[8px] font-bold shrink-0 w-6 text-center">{player.position}</span>
                                     <span className="text-slate-800 font-sans font-medium truncate" title={player.name}>{player.name}</span>
@@ -1179,7 +1296,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           {homeBattersTotals && (
                             <tfoot>
                               <tr className="bg-slate-100/80 font-bold border-t border-slate-300 text-slate-800 text-[10px]">
-                                <td className="py-2 px-4 font-sans text-left uppercase text-[9px] tracking-wider">Totales</td>
+                                <td className="py-2 px-2 font-sans text-left uppercase text-[9px] tracking-wider">Totales</td>
                                 <td className="py-2 px-1 text-center font-mono">{homeBattersTotals.ab}</td>
                                 <td className="py-2 px-1 text-center font-mono">{homeBattersTotals.r}</td>
                                 <td className="py-2 px-1 text-center font-mono">{homeBattersTotals.h}</td>
@@ -1194,16 +1311,16 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                         <table className="w-full text-left border-collapse table-fixed mt-2">
                           <colgroup>
                             <col />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
-                            <col className="w-10" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
+                            <col className="w-8" />
                           </colgroup>
                           <thead>
                             <tr className="bg-slate-100 text-slate-700 font-display font-bold text-[10px] uppercase tracking-wider">
-                              <th className="py-1.5 px-4 text-left truncate">Lanzadores</th>
+                              <th className="py-1.5 px-2 text-left truncate">Lanzadores</th>
                               <th className="py-1.5 px-1 text-center font-mono"><span title="Innings Pitched (Entradas Lanzadas)" className="cursor-help border-b border-dotted border-slate-400/50">IP</span></th>
                               <th className="py-1.5 px-1 text-center font-mono"><span title="Hits (Imparables permitidos)" className="cursor-help border-b border-dotted border-slate-400/50">H</span></th>
                               <th className="py-1.5 px-1 text-center font-mono"><span title="Runs (Carreras permitidas)" className="cursor-help border-b border-dotted border-slate-400/50">R</span></th>
@@ -1215,7 +1332,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           <tbody className="divide-y divide-slate-100 font-mono text-[10px]">
                             {game.liveBoxscore.home.pitchers.map((player: any, idx: number) => (
                               <tr key={idx} className="hover:bg-slate-50/50">
-                                <td className="py-1.5 px-4 truncate">
+                                <td className="py-1.5 px-2 truncate">
                                   <span className="text-slate-800 font-sans font-medium truncate" title={player.name}>{player.name}</span>
                                 </td>
                                 <td className="py-1.5 px-1 text-center font-bold text-slate-800">{player.ip}</td>
@@ -1230,7 +1347,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           {homePitchersTotals && (
                             <tfoot>
                               <tr className="bg-slate-100/85 font-bold border-t border-slate-200 text-slate-800 text-[10px]">
-                                <td className="py-2 px-4 font-sans text-left uppercase text-[9px] tracking-wider">Totales</td>
+                                <td className="py-2 px-2 font-sans text-left uppercase text-[9px] tracking-wider">Totales</td>
                                 <td className="py-2 px-1 text-center font-mono">{homePitchersTotals.ip}</td>
                                 <td className="py-2 px-1 text-center font-mono text-slate-600">{homePitchersTotals.h}</td>
                                 <td className="py-2 px-1 text-center font-mono text-slate-600">{homePitchersTotals.r}</td>

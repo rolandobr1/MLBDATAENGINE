@@ -475,35 +475,35 @@ export default function App() {
                 <GoogleSheetsSync games={games} selectedDate={selectedDate} compact />
               </div>
 
-              {/* Bet Tracking Toggle Button */}
-              <div className="px-6 pb-6">
-                <button
-                  onClick={() => setShowBetTracking(prev => !prev)}
-                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white text-sm font-semibold rounded-lg shadow transition-all duration-200"
-                >
-                  <TrendingUp size={16} />
-                  {showBetTracking ? "Ocultar Bet Tracking" : "📊 Bet Tracking"}
-                </button>
-              </div>
             </>
           )}
         </section>
 
         {/* Bet Tracking Panel */}
-        {showBetTracking && (
-          <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="bg-gradient-to-r from-violet-700 to-indigo-700 border-b border-violet-800 p-4 text-white flex items-center gap-2">
+        <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div 
+            onClick={() => setShowBetTracking(!showBetTracking)}
+            className="bg-gradient-to-r from-violet-700 to-indigo-700 border-b border-violet-800 p-4 text-white flex items-center justify-between cursor-pointer hover:from-violet-800 hover:to-indigo-800 transition-colors"
+          >
+            <div className="flex items-center gap-2">
               <TrendingUp size={18} className="text-violet-200" />
-              <h2 className="font-display font-medium text-sm uppercase tracking-wider">Bet Tracking</h2>
+              <h2 className="font-display font-medium text-sm uppercase tracking-wider select-none">
+                Bet Tracking
+              </h2>
             </div>
+            <div className="bg-violet-800/50 p-1 rounded hover:bg-violet-800 transition">
+              {showBetTracking ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </div>
+          </div>
+          {showBetTracking && (
             <div className="p-6">
               <BetTracking
                 games={games}
                 onRefreshGame={handleRefreshGame}
               />
             </div>
-          </section>
-        )}
+          )}
+        </section>
 
         {/* Row 2: Active Harvested MLB Games Section */}
         <section className="space-y-4">
@@ -610,9 +610,9 @@ export default function App() {
                 }
 
                 return (
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-stretch">
+                  <div className="columns-1 xl:columns-2 gap-6">
                     {filteredGames.map((game) => (
-                      <div key={game.id} className="flex flex-col">
+                      <div key={game.id} className="break-inside-avoid mb-6">
                         <GameCard 
                           game={game} 
                           onRefresh={() => handleRefreshGame(game.id, game.metadata.date)} 
