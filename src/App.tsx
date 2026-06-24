@@ -28,6 +28,39 @@ import {
   ChevronDown
 } from "lucide-react";
 
+const mlbDivisions: Record<string, { league: string, division: string }> = {
+  "Baltimore Orioles": { league: "AL", division: "East" },
+  "Boston Red Sox": { league: "AL", division: "East" },
+  "New York Yankees": { league: "AL", division: "East" },
+  "Tampa Bay Rays": { league: "AL", division: "East" },
+  "Toronto Blue Jays": { league: "AL", division: "East" },
+  "Chicago White Sox": { league: "AL", division: "Central" },
+  "Cleveland Guardians": { league: "AL", division: "Central" },
+  "Detroit Tigers": { league: "AL", division: "Central" },
+  "Kansas City Royals": { league: "AL", division: "Central" },
+  "Minnesota Twins": { league: "AL", division: "Central" },
+  "Houston Astros": { league: "AL", division: "West" },
+  "Los Angeles Angels": { league: "AL", division: "West" },
+  "Oakland Athletics": { league: "AL", division: "West" },
+  "Seattle Mariners": { league: "AL", division: "West" },
+  "Texas Rangers": { league: "AL", division: "West" },
+  "Atlanta Braves": { league: "NL", division: "East" },
+  "Miami Marlins": { league: "NL", division: "East" },
+  "New York Mets": { league: "NL", division: "East" },
+  "Philadelphia Phillies": { league: "NL", division: "East" },
+  "Washington Nationals": { league: "NL", division: "East" },
+  "Chicago Cubs": { league: "NL", division: "Central" },
+  "Cincinnati Reds": { league: "NL", division: "Central" },
+  "Milwaukee Brewers": { league: "NL", division: "Central" },
+  "Pittsburgh Pirates": { league: "NL", division: "Central" },
+  "St. Louis Cardinals": { league: "NL", division: "Central" },
+  "Arizona Diamondbacks": { league: "NL", division: "West" },
+  "Colorado Rockies": { league: "NL", division: "West" },
+  "Los Angeles Dodgers": { league: "NL", division: "West" },
+  "San Diego Padres": { league: "NL", division: "West" },
+  "San Francisco Giants": { league: "NL", division: "West" }
+};
+
 function getLocalDateString(): string {
   const localDate = new Date();
   const tzOffset = localDate.getTimezoneOffset() * 60000;
@@ -52,7 +85,24 @@ export default function App() {
   }>({ pct: 0, step: "" });
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = React.useState<boolean>(false);
   const [searchQuery, setSearchQuery] = React.useState<string>("");
-  const [pinnedGames, setPinnedGames] = React.useState<string[]>([]);
+  const [pinnedGames, setPinnedGames] = React.useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('mlb_pinned_games');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [filterTime, setFilterTime] = React.useState<string>("All");
+  const [filterStatus, setFilterStatus] = React.useState<string>("All");
+  const [filterLeague, setFilterLeague] = React.useState<string>("All");
+  const [filterDivision, setFilterDivision] = React.useState<string>("All");
+
+  React.useEffect(() => {
+    localStorage.setItem('mlb_pinned_games', JSON.stringify(pinnedGames));
+  }, [pinnedGames]);
+
   const [showBetTracking, setShowBetTracking] = React.useState<boolean>(false);
   const [globalExpandToggle, setGlobalExpandToggle] = React.useState<number>(0);
   const [globalExpandTarget, setGlobalExpandTarget] = React.useState<boolean>(false);
@@ -536,24 +586,59 @@ export default function App() {
               </p>
             </div>
 
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto mt-3 sm:mt-0">
+            <div className="flex flex-col items-start gap-3 w-full mt-3 sm:mt-0">
               {games.length > 0 && (
-                <div className="relative w-full sm:w-auto">
-                  <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
-                    <Search size={14} className="text-slate-400" />
+                <div className="flex flex-wrap items-center gap-2 w-full">
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
+                      <Search size={14} className="text-slate-400" />
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Buscar equipo..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-8 pr-3 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 w-full sm:w-40 transition-colors"
+                    />
                   </div>
-                  <input
-                    type="text"
-                    placeholder="Buscar equipo..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-8 pr-3 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 w-full sm:w-48 transition-colors"
-                  />
+                  
+                  {/* Nuevos Filtros */}
+                  <select value={filterTime} onChange={e => setFilterTime(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none">
+                    <option value="All">Hora (Todas)</option>
+                    <option value="Afternoon">Tarde (antes 6 PM)</option>
+                    <option value="Night">Noche (desde 6 PM)</option>
+                  </select>
+                  
+                  <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none">
+                    <option value="All">Estatus (Todos)</option>
+                    <option value="Scheduled">Programado</option>
+                    <option value="In Progress">En Vivo</option>
+                    <option value="Final">Finalizado</option>
+                  </select>
+
+                  <select value={filterLeague} onChange={e => setFilterLeague(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none">
+                    <option value="All">Liga (Ambas)</option>
+                    <option value="AL">Americana (AL)</option>
+                    <option value="NL">Nacional (NL)</option>
+                  </select>
+
+                  <select value={filterDivision} onChange={e => setFilterDivision(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none">
+                    <option value="All">División (Todas)</option>
+                    <option value="East">Este</option>
+                    <option value="Central">Central</option>
+                    <option value="West">Oeste</option>
+                  </select>
+
+                  <div className="bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs font-mono font-medium text-slate-600 shadow-sm shrink-0 ml-auto">
+                    Extracción: <strong className="text-slate-800 uppercase">{games.length > 0 ? "Completado" : "Pendiente"}</strong>
+                  </div>
                 </div>
               )}
-              <div className="bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs font-mono font-medium text-slate-600 shadow-sm shrink-0">
-                Extracción: <strong className="text-slate-800 uppercase">{games.length > 0 ? "Completado" : "Pendiente"}</strong>
-              </div>
+              {games.length === 0 && (
+                <div className="bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs font-mono font-medium text-slate-600 shadow-sm shrink-0 ml-auto">
+                  Extracción: <strong className="text-slate-800 uppercase">Pendiente</strong>
+                </div>
+              )}
             </div>
           </div>
 
@@ -593,12 +678,53 @@ export default function App() {
               {/* Match grid lists with Masonry effect */}
               {(() => {
               const filteredGames = sortedGames.filter(g => {
-                if (!searchQuery) return true;
-                const searchLower = searchQuery.toLowerCase();
-                return (
-                  g.metadata.homeTeam.toLowerCase().includes(searchLower) ||
-                  g.metadata.awayTeam.toLowerCase().includes(searchLower)
-                );
+                // Filtro de Búsqueda
+                if (searchQuery) {
+                  const searchLower = searchQuery.toLowerCase();
+                  if (!g.metadata.homeTeam.toLowerCase().includes(searchLower) &&
+                      !g.metadata.awayTeam.toLowerCase().includes(searchLower)) {
+                    return false;
+                  }
+                }
+
+                // Filtro de Estatus
+                if (filterStatus !== "All") {
+                  const s = g.game_result?.gameStatus || "Scheduled";
+                  if (filterStatus === "Final" && !s.includes("Final") && !s.includes("Game Over")) return false;
+                  if (filterStatus === "In Progress" && !s.includes("In Progress") && !s.includes("Live")) return false;
+                  if (filterStatus === "Scheduled" && s !== "Scheduled" && s !== "Pre-Game" && s !== "Warmup") return false;
+                }
+
+                // Filtro de Liga
+                if (filterLeague !== "All") {
+                  const homeLeague = mlbDivisions[g.metadata.homeTeam]?.league;
+                  const awayLeague = mlbDivisions[g.metadata.awayTeam]?.league;
+                  if (homeLeague !== filterLeague && awayLeague !== filterLeague) return false;
+                }
+
+                // Filtro de División
+                if (filterDivision !== "All") {
+                  const homeDiv = mlbDivisions[g.metadata.homeTeam]?.division;
+                  const awayDiv = mlbDivisions[g.metadata.awayTeam]?.division;
+                  if (homeDiv !== filterDivision && awayDiv !== filterDivision) return false;
+                }
+
+                // Filtro de Hora
+                if (filterTime !== "All") {
+                  const timeStr = g.metadata.time || "";
+                  const isPm = timeStr.toLowerCase().includes("p");
+                  let hoursStr = timeStr.split(":")[0];
+                  if (hoursStr) {
+                    let hours = parseInt(hoursStr, 10);
+                    if (isPm && hours !== 12) hours += 12;
+                    if (!isPm && hours === 12) hours = 0;
+                    
+                    if (filterTime === "Afternoon" && hours >= 18) return false;
+                    if (filterTime === "Night" && hours < 18) return false;
+                  }
+                }
+
+                return true;
               });
 
                 if (filteredGames.length === 0) {

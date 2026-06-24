@@ -1739,6 +1739,7 @@ async function fetchRealMLBGameData(
     teamOffense: { home: null, away: null },
     bullpenERA: { home: null, away: null },
     pitcherIds: { home: null, away: null },
+    teamRecords: { home: "N/D", away: "N/D" },
     currentPitching: { home: null, away: null },
     linescore: null,
     liveBoxscore: null,
@@ -1830,6 +1831,14 @@ async function fetchRealMLBGameData(
         home: gameEntry.teams?.home?.probablePitcher?.id || null,
         away: gameEntry.teams?.away?.probablePitcher?.id || null
       };
+      
+      const homeRecord = gameEntry.teams?.home?.leagueRecord;
+      const awayRecord = gameEntry.teams?.away?.leagueRecord;
+      realData.teamRecords = {
+        home: homeRecord ? `${homeRecord.wins}-${homeRecord.losses}` : "N/D",
+        away: awayRecord ? `${awayRecord.wins}-${awayRecord.losses}` : "N/D"
+      };
+
       const [homePitcher, awayPitcher] = await Promise.all([
         fetchPitcherStats(gameEntry.teams?.home?.probablePitcher),
         fetchPitcherStats(gameEntry.teams?.away?.probablePitcher),
@@ -3582,8 +3591,8 @@ function buildDirectGameData(
       }
     },
     trends: {
-      home: { recordLast10: "N/D", recordHome: "N/D", recordAway: "N/D" },
-      away: { recordLast10: "N/D", recordHome: "N/D", recordAway: "N/D" }
+      home: { recordLast10: "N/D", recordHome: realMLBData?.teamRecords?.home || "N/D", recordAway: "N/D" },
+      away: { recordLast10: "N/D", recordHome: realMLBData?.teamRecords?.away || "N/D", recordAway: "N/D" }
     },
     betting_lines: odds,
     injuries: [

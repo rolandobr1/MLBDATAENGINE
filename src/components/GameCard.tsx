@@ -59,83 +59,202 @@ const LiveFieldUI: React.FC<{ linescore: any, liveBoxscore: any }> = ({ linescor
   const pitcherName = currentPitcher?.name || linescore.defense?.pitcher?.fullName;
   const batterName = currentBatter?.name || linescore.offense?.batter?.fullName;
 
-  const InningDot = ({ count, max, color }: { count: number, max: number, color: string }) => (
-    <div className="flex gap-1">
-      {Array.from({ length: max }).map((_, i) => (
-        <div
-          key={i}
-          className={`w-2 h-2 rounded-full ${i < count ? color : 'bg-slate-700'}`}
-        />
-      ))}
+
+  const formatName = (fullName: string) => {
+    if (!fullName) return '';
+    const parts = fullName.split(' ');
+    if (parts.length === 1) return fullName;
+    const lastName = parts[parts.length - 1];
+    const initials = parts.slice(0, -1).map((n: string) => n.charAt(0) + '.').join(' ');
+    return `${initials} ${lastName}`;
+  };
+
+  const StatPill = ({ label, value, accent }: { label: string, value: string | number, accent?: string }) => (
+    <div className={`flex flex-col items-center px-1 py-1 rounded-md min-w-0 ${accent || 'bg-white/5'} border border-white/10`}>
+      <span className="text-white/40 text-[7px] uppercase tracking-widest font-bold leading-none">{label}</span>
+      <span className="text-white font-mono font-bold text-[10px] leading-tight mt-0.5 whitespace-nowrap">{value}</span>
     </div>
   );
 
+  const CountDot = ({ filled, activeColor, glowColor }: { filled: boolean, activeColor: string, glowColor: string }) => (
+    <div className={`w-2.5 h-2.5 rounded-full border transition-all duration-300 ${filled
+      ? `${activeColor} border-transparent shadow-[0_0_7px_2px_${glowColor}]`
+      : 'bg-white/10 border-white/20'}`}
+    />
+  );
+
   return (
-    <div className="bg-slate-900 rounded-lg p-3 mx-4 mt-4 flex items-center justify-between border border-slate-700 shadow-inner overflow-hidden relative">
-      {/* Background field lines */}
-      <div className="absolute inset-0 opacity-20 flex justify-center items-center pointer-events-none">
-        <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
-          <path d="M0 100 L50 50 L100 100" stroke="white" strokeWidth="1" fill="none" />
-        </svg>
+    <div className="relative mx-4 mt-3 rounded-xl overflow-hidden border border-white/10" style={{ background: 'linear-gradient(160deg, #0a1628 0%, #091520 50%, #0a1628 100%)' }}>
+      {/* Ambient glow blobs */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-xl">
+        <div className="absolute -top-4 left-1/4 w-48 h-24 bg-blue-700/15 blur-3xl rounded-full" />
+        <div className="absolute -top-4 right-1/4 w-48 h-24 bg-amber-600/10 blur-3xl rounded-full" />
+        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-32 h-12 bg-red-900/20 blur-2xl rounded-full" />
       </div>
 
-      <div className="w-full flex items-center justify-between z-10 px-2 md:px-6 py-2">
-        {/* Left side: Pitcher */}
-        <div className="flex flex-col flex-1">
-          {pitcherName && (
-            <>
-              <div className="text-white font-bold text-sm md:text-base flex items-center gap-1">
-                {pitcherName.split(' ').map((n: string, i: number, arr: any[]) => i === arr.length - 1 ? n.charAt(0) : n).join(', ')}
-                <span className="text-slate-400 text-[10px] md:text-xs uppercase ml-1">{currentPitcher?.position || "P"}</span>
-              </div>
-              <div className="text-slate-300 text-[10px] md:text-xs font-mono mt-1">
-                {currentPitcher ? `${currentPitcher.pitches} P - ${currentPitcher.strikes} S` : '- P - - S'}
-              </div>
-              <div className="text-slate-400 text-[10px] md:text-xs font-mono">
-                {currentPitcher ? `${currentPitcher.ip} IL, ${currentPitcher.h} H, ${currentPitcher.er} CL` : '- IL, - H, - CL'}
-              </div>
-            </>
-          )}
-        </div>
+      {/* Top rainbow accent */}
+      <div className="h-0.5 w-full bg-gradient-to-r from-blue-500 via-red-500 to-amber-500" />
 
-        {/* Center: Count and Diamond */}
-        <div className="flex flex-col items-center shrink-0 px-4">
-          <div className="relative w-14 h-14 md:w-16 md:h-16 transform -rotate-45 mb-2 mt-2">
-            <div className="absolute inset-0 grid grid-cols-2 grid-rows-2 gap-1">
-              <div className={`w-full h-full rounded-sm ${third ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]' : 'bg-slate-700/60'}`} />
-              <div className={`w-full h-full rounded-sm ${second ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]' : 'bg-slate-700/60'}`} />
-              <div className="w-full h-full" />
-              <div className={`w-full h-full rounded-sm ${first ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]' : 'bg-slate-700/60'}`} />
+      {/* EN VIVO pill */}
+      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20">
+        <div className="flex items-center gap-1.5 bg-red-600 px-3 py-0.5 rounded-full shadow-lg shadow-red-900/50">
+          <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+          <span className="text-white text-[9px] font-black uppercase tracking-[0.15em]">EN VIVO</span>
+        </div>
+      </div>
+
+      <div className="relative z-10 flex items-stretch px-3 pb-3 pt-8 gap-1">
+
+        {/* ── LEFT: PITCHER ── */}
+        <div className="flex-1 flex flex-col gap-2 pr-3 border-r border-white/8">
+          {/* Row 1: Label + Name */}
+          <div className="min-h-[44px]">
+            <div className="flex items-center gap-1.5 mb-1">
+              <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse shrink-0" />
+              <span className="text-blue-300/60 text-[8px] uppercase tracking-[0.18em] font-extrabold">Lanzador</span>
+            </div>
+            <div className="text-white font-bold text-sm leading-snug">
+              {pitcherName ? formatName(pitcherName) : <span className="text-white/25 italic text-xs">Sin datos</span>}
+            </div>
+            <div className="text-white/35 text-[9px] font-mono mt-0.5 h-[13px]">
+              {currentPitcher ? `#${currentPitcher.pitches || 0} pitcheos` : ''}
             </div>
           </div>
-          <div className="flex gap-2 text-white font-bold text-sm md:text-base font-mono mb-1">
-            <span className="text-emerald-400">{b}</span>
-            <span className="text-slate-500">-</span>
-            <span className="text-red-400">{s}</span>
+          {/* Row 2: Progress bar */}
+          <div className="h-[28px] flex flex-col justify-end">
+            <div className="flex justify-between text-[8px] text-white/25 mb-1 font-mono">
+              <span>Strike%</span>
+              <span className="text-blue-300/60">
+                {currentPitcher?.pitches ? Math.round((currentPitcher.strikes / currentPitcher.pitches) * 100) : 0}%
+              </span>
+            </div>
+            <div className="h-1 bg-white/8 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-700 bg-gradient-to-r from-blue-600 to-blue-400"
+                style={{ width: `${currentPitcher?.pitches ? Math.round((currentPitcher.strikes / currentPitcher.pitches) * 100) : 0}%` }}
+              />
+            </div>
           </div>
-          <div className="flex gap-1 justify-center">
-            <InningDot count={o} max={3} color="bg-red-500" />
+          {/* Row 3: Stat pills */}
+          <div className="grid gap-1" style={{ gridTemplateColumns: '1.5fr 1fr 1fr 1fr' }}>
+            <StatPill label="IL" value={currentPitcher?.ip || '0.0'} />
+            <StatPill label="H" value={currentPitcher?.h ?? '-'} />
+            <StatPill label="CL" value={currentPitcher?.er ?? '-'} />
+            <StatPill label="SO" value={currentPitcher?.k ?? '-'} accent="bg-blue-500/15" />
           </div>
         </div>
 
-        {/* Right side: Batter */}
-        <div className="flex flex-col flex-1 items-end text-right">
-          {batterName && (
-            <>
-              <div className="text-white font-bold text-sm md:text-base flex items-center justify-end gap-1">
-                {batterName.split(' ').map((n: string, i: number, arr: any[]) => i === arr.length - 1 ? n.charAt(0) : n).join(', ')}
-                <span className="text-slate-400 text-[10px] md:text-xs uppercase ml-1">{currentBatter?.position || "B"}</span>
+        {/* ── CENTER ── */}
+        <div className="flex flex-col items-center justify-between px-2 shrink-0 min-w-[96px] gap-2">
+          {/* SVG Diamond */}
+          <div className="w-16 h-16">
+            <svg viewBox="0 0 80 80" className="w-full h-full" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <filter id="glow-base">
+                  <feGaussianBlur stdDeviation="2.5" result="blur" />
+                  <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                </filter>
+              </defs>
+              {/* Grass outline */}
+              <polygon points="40,5 75,40 40,75 5,40" stroke="rgba(255,255,255,0.1)" strokeWidth="1" fill="rgba(255,255,255,0.02)" />
+              {/* Baselines */}
+              <line x1="40" y1="68" x2="68" y2="40" stroke="rgba(255,255,255,0.07)" strokeWidth="1" />
+              <line x1="40" y1="68" x2="12" y2="40" stroke="rgba(255,255,255,0.07)" strokeWidth="1" />
+              <line x1="68" y1="40" x2="40" y2="12" stroke="rgba(255,255,255,0.07)" strokeWidth="1" />
+              <line x1="12" y1="40" x2="40" y2="12" stroke="rgba(255,255,255,0.07)" strokeWidth="1" />
+              {/* Home plate */}
+              <polygon points="40,74 36,70 36,66 44,66 44,70" fill="rgba(255,255,255,0.3)" />
+              {/* 1B */}
+              <rect x="62" y="36" width="10" height="10" rx="1.5" transform="rotate(45 67 41)"
+                fill={first ? '#f59e0b' : 'rgba(255,255,255,0.07)'} filter={first ? 'url(#glow-base)' : ''} className="transition-all duration-500" />
+              {/* 2B */}
+              <rect x="36" y="9" width="10" height="10" rx="1.5" transform="rotate(45 41 14)"
+                fill={second ? '#f59e0b' : 'rgba(255,255,255,0.07)'} filter={second ? 'url(#glow-base)' : ''} className="transition-all duration-500" />
+              {/* 3B */}
+              <rect x="9" y="36" width="10" height="10" rx="1.5" transform="rotate(45 14 41)"
+                fill={third ? '#f59e0b' : 'rgba(255,255,255,0.07)'} filter={third ? 'url(#glow-base)' : ''} className="transition-all duration-500" />
+            </svg>
+          </div>
+
+          {/* Ball-Strike dots */}
+          <div className="flex flex-col items-center gap-1">
+            <div className="flex items-center gap-2">
+              <div className="flex gap-0.5">
+                {[0,1,2,3].map(i => (
+                  <div key={i} className={`w-2.5 h-2.5 rounded-full border transition-all duration-300 ${i < b ? 'bg-emerald-400 border-emerald-300' : 'bg-white/8 border-white/15'}`} />
+                ))}
               </div>
-              <div className="text-slate-300 text-xs md:text-sm font-mono mt-1 font-bold">
-                {b} - {s}
+              <div className="w-px h-3 bg-white/10" />
+              <div className="flex gap-0.5">
+                {[0,1,2].map(i => (
+                  <div key={i} className={`w-2.5 h-2.5 rounded-full border transition-all duration-300 ${i < s ? 'bg-yellow-400 border-yellow-300' : 'bg-white/8 border-white/15'}`} />
+                ))}
               </div>
-              <div className="text-slate-400 text-[10px] md:text-xs font-mono">
-                {currentBatter ? `${currentBatter.h} - ${currentBatter.ab}` : '-'}
-              </div>
-            </>
-          )}
+            </div>
+            <div className="flex items-center gap-2 text-[8px] font-black uppercase tracking-widest">
+              <span className="text-emerald-400/70">{b}B</span>
+              <span className="text-white/20">·</span>
+              <span className="text-yellow-400/70">{s}S</span>
+            </div>
+          </div>
+
+          {/* Outs */}
+          <div className="flex flex-col items-center gap-1">
+            <div className="flex gap-1.5">
+              {[0,1,2].map(i => (
+                <div key={i} className={`w-2.5 h-2.5 rounded-full border transition-all duration-300 ${i < o
+                  ? 'bg-red-500 border-red-400 shadow-[0_0_6px_2px_rgba(239,68,68,0.5)]'
+                  : 'bg-white/8 border-white/15'}`}
+                />
+              ))}
+            </div>
+            <span className="text-white/25 text-[7px] font-bold uppercase tracking-widest">{o} out{o !== 1 ? 's' : ''}</span>
+          </div>
         </div>
+
+        {/* ── RIGHT: BATTER ── */}
+        <div className="flex-1 flex flex-col gap-2 pl-3 border-l border-white/8 items-end text-right">
+          {/* Row 1: Label + Name */}
+          <div className="min-h-[44px] w-full">
+            <div className="flex items-center justify-end gap-1.5 mb-1">
+              <span className="text-amber-300/60 text-[8px] uppercase tracking-[0.18em] font-extrabold">Bateador</span>
+              <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+            </div>
+            <div className="text-white font-bold text-sm leading-snug">
+              {batterName ? formatName(batterName) : <span className="text-white/25 italic text-xs">Sin datos</span>}
+            </div>
+            <div className="text-white/35 text-[9px] font-mono mt-0.5 h-[13px]">
+              {currentBatter ? (currentBatter.position || 'DH') : ''}
+            </div>
+          </div>
+          {/* Row 2: Progress bar */}
+          <div className="h-[28px] flex flex-col justify-end w-full">
+            <div className="flex justify-between text-[8px] text-white/25 mb-1 font-mono">
+              <span className="text-amber-300/60">
+                {currentBatter?.ab ? (Math.round((currentBatter.h / currentBatter.ab) * 1000) / 1000).toFixed(3).replace('0.', '.') : '.000'}
+              </span>
+              <span>Hoy {currentBatter?.h ?? 0}/{currentBatter?.ab ?? 0}</span>
+            </div>
+            <div className="h-1 bg-white/8 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-700 bg-gradient-to-r from-amber-600 to-amber-400"
+                style={{ width: `${currentBatter?.ab ? Math.min(100, Math.round((currentBatter.h / currentBatter.ab) * 100 * 3)) : 0}%` }}
+              />
+            </div>
+          </div>
+          {/* Row 3: Stat pills */}
+          <div className="grid grid-cols-4 gap-1 w-full">
+            <StatPill label="AB" value={currentBatter?.ab ?? '-'} />
+            <StatPill label="H" value={currentBatter?.h ?? '-'} accent="bg-amber-500/15" />
+            <StatPill label="RBI" value={currentBatter?.rbi ?? '-'} />
+            <StatPill label="BB" value={currentBatter?.bb ?? '-'} />
+          </div>
+        </div>
+
       </div>
+
+      {/* Bottom faint accent */}
+      <div className="h-px w-full bg-gradient-to-r from-blue-500/30 via-transparent to-amber-500/30" />
     </div>
   );
 };
@@ -519,9 +638,16 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                 <h3 className="font-display font-bold text-3xl leading-tight drop-shadow-lg tracking-tight hidden sm:block">
                   {game.metadata.awayTeam}
                 </h3>
-                <span className="text-[9px] sm:text-[11px] font-mono font-bold uppercase tracking-widest text-white/80 drop-shadow-md mt-1 bg-black/20 px-1.5 py-0.5 rounded backdrop-blur-sm">
-                  Visitante
-                </span>
+                {game.trends?.away?.recordHome && game.trends.away.recordHome !== "N/D" && (
+                  <span className="text-[10px] sm:text-xs font-mono font-bold tracking-wider text-white/90 drop-shadow-md mt-0.5">
+                    {game.trends.away.recordHome}
+                  </span>
+                )}
+                <div className="flex items-center gap-1.5 mt-1">
+                  <span className="text-[9px] sm:text-[11px] font-mono font-bold uppercase tracking-widest text-white/80 drop-shadow-md bg-black/20 px-1.5 py-0.5 rounded backdrop-blur-sm">
+                    Visitante
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -534,9 +660,16 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                 <h3 className="font-display font-bold text-3xl leading-tight drop-shadow-lg text-right tracking-tight hidden sm:block">
                   {game.metadata.homeTeam}
                 </h3>
-                <span className="text-[9px] sm:text-[11px] font-mono font-bold uppercase tracking-widest text-white/80 drop-shadow-md mt-1 bg-black/20 px-1.5 py-0.5 rounded backdrop-blur-sm text-right">
-                  Local
-                </span>
+                {game.trends?.home?.recordHome && game.trends.home.recordHome !== "N/D" && (
+                  <span className="text-[10px] sm:text-xs font-mono font-bold tracking-wider text-white/90 drop-shadow-md mt-0.5 text-right">
+                    {game.trends.home.recordHome}
+                  </span>
+                )}
+                <div className="flex items-center justify-end gap-1.5 mt-1">
+                  <span className="text-[9px] sm:text-[11px] font-mono font-bold uppercase tracking-widest text-white/80 drop-shadow-md bg-black/20 px-1.5 py-0.5 rounded backdrop-blur-sm text-right">
+                    Local
+                  </span>
+                </div>
               </div>
               {getTeamLogo(game.metadata.homeTeam) && (
                 <div className="w-12 h-12 sm:w-20 sm:h-20 bg-white rounded-full flex items-center justify-center p-1.5 sm:p-2 shadow-xl shrink-0 border-2 border-white/20">
@@ -642,11 +775,20 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
         <div className="bg-slate-50 border-t border-slate-200">
           
           {/* Live Progress Indicator */}
-          {game.game_result?.gameStatus?.includes("In Progress") && game.linescore && (
-            <div className="mb-4">
-              <LiveFieldUI linescore={game.linescore} liveBoxscore={game.liveBoxscore} />
-            </div>
-          )}
+          {(() => {
+            const status = game.game_result?.gameStatus || '';
+            const isLiveStatus = status.includes('In Progress') ||
+              status.includes('Challenge') ||
+              status.includes('Delayed') ||
+              status.includes('Warmup') ||
+              status.includes('Pre-Game') ||
+              status === 'Live';
+            return isLiveStatus && game.linescore ? (
+              <div className="mb-4">
+                <LiveFieldUI linescore={game.linescore} liveBoxscore={game.liveBoxscore} />
+              </div>
+            ) : null;
+          })()}
 
           {/* Tab Selector */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 border-b border-slate-200 p-4 bg-slate-100/50">

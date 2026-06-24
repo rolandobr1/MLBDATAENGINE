@@ -53,27 +53,64 @@ export async function scrapeStrikeoutProps(): Promise<StrikeoutProp[]> {
     for (const player of targetData) {
       const name = player.name;
       
-      // Buscamos la primera casa de apuestas disponible para extraer la línea principal
-      // Prioridades comunes: draftkings, fanduel, mgm, caesars
+      // Buscamos todas las líneas disponibles en las distintas casas de apuestas
       const sportsbooks = ['draftkings', 'fanduel', 'mgm', 'caesars', 'betrivers', 'hardrock', 'thescore'];
+      const linesData: { line: number, overOdds: number, underOdds: number, book: string }[] = [];
       
       for (const book of sportsbooks) {
-        const line = player[`${book}_strikeouts`];
-        const under = player[`${book}_strikeoutsUnder`];
-        const over = player[`${book}_strikeoutsOver`];
+        const lineStr = player[`${book}_strikeouts`];
+        const underStr = player[`${book}_strikeoutsUnder`];
+        const overStr = player[`${book}_strikeoutsOver`];
 
-        if (line !== null && line !== "") {
-          const parsedOver = parseInt(over, 10);
-          const parsedUnder = parseInt(under, 10);
-          props.push({
-            playerName: name,
-            line: parseFloat(line),
-            overOdds: isNaN(parsedOver) ? null as any : parsedOver,
-            underOdds: isNaN(parsedUnder) ? null as any : parsedUnder,
-            sportsbook: book
-          });
-          break; // Tomamos la primera línea disponible para este jugador
+        if (lineStr !== null && lineStr !== "") {
+          const parsedOver = parseInt(overStr, 10);
+          const parsedUnder = parseInt(underStr, 10);
+          const line = parseFloat(lineStr);
+          if (!isNaN(line)) {
+            linesData.push({
+              line,
+              overOdds: isNaN(parsedOver) ? null as any : parsedOver,
+              underOdds: isNaN(parsedUnder) ? null as any : parsedUnder,
+              book
+            });
+          }
         }
+      }
+
+      if (linesData.length > 0) {
+        // Encontrar la línea que más se repite (consenso/moda)
+        const lineCounts = new Map<number, number>();
+        for (const d of linesData) {
+          lineCounts.set(d.line, (lineCounts.get(d.line) || 0) + 1);
+        }
+
+        let modeLine = linesData[0].line;
+        let maxCount = 0;
+
+        for (const [line, count] of lineCounts.entries()) {
+          if (count > maxCount) {
+            maxCount = count;
+            modeLine = line;
+          }
+        }
+
+        // Buscar los datos de la línea ganadora (preferiblemente de draftkings si está, o el primero que la tenga)
+        let bestLineData = linesData.find(d => d.line === modeLine && d.book === 'draftkings') 
+                        || linesData.find(d => d.line === modeLine)!;
+
+        // Formatear el nombre de las casas de apuestas (Ej: "draftkings, mgm (Consenso)")
+        const matchingBooks = linesData.filter(d => d.line === modeLine).map(d => d.book);
+        const sourceLabel = matchingBooks.length > 1 
+          ? `Consenso (${matchingBooks.length} casas)` 
+          : bestLineData.book;
+
+        props.push({
+          playerName: name,
+          line: bestLineData.line,
+          overOdds: bestLineData.overOdds,
+          underOdds: bestLineData.underOdds,
+          sportsbook: sourceLabel
+        });
       }
     }
 
