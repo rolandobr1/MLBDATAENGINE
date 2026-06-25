@@ -20,8 +20,8 @@ import { getTeamLogo, getTeamColor, getTeamAbbr } from "../utils/teamLogos";
 // ════════════════════════════════════════════════════════════════════════════
 
 type BetCategory = "pitcher" | "batter" | "team";
-type BetStatus   = "pending" | "won" | "lost" | "void";
-type BetTypeKey  = "pitcher_k" | "batter_tb" | "team_ml" | "team_f5";
+type BetStatus = "pending" | "won" | "lost" | "void";
+type BetTypeKey = "pitcher_k" | "batter_tb" | "team_ml" | "team_f5";
 
 interface Bet {
   id: number;
@@ -61,15 +61,15 @@ interface LiveProgress {
 // STORAGE LAYER  — swap localStorage.getItem/setItem for Firestore calls
 // ════════════════════════════════════════════════════════════════════════════
 
-const BETS_KEY  = (date: string) => `mlb_bets_${date}`;
-const USER_KEY  = "mlb_bet_username";
+const BETS_KEY = (date: string) => `mlb_bets_${date}`;
+const USER_KEY = "mlb_bet_username";
 
 function loadBets(date: string): Bet[] {
   try { return JSON.parse(localStorage.getItem(BETS_KEY(date)) ?? "[]") ?? []; }
   catch { return []; }
 }
 function saveBets(date: string, bets: Bet[]): void {
-  try { localStorage.setItem(BETS_KEY(date), JSON.stringify(bets)); } catch {}
+  try { localStorage.setItem(BETS_KEY(date), JSON.stringify(bets)); } catch { }
 }
 const USERS_LIST_KEY = "mlb_bet_users_list";
 
@@ -77,8 +77,8 @@ function getRegisteredUsers(): string[] {
   try {
     const list = JSON.parse(localStorage.getItem(USERS_LIST_KEY) || "[]");
     if (Array.isArray(list) && list.length > 0) return list;
-  } catch {}
-  
+  } catch { }
+
   // Fallback: scan bets
   const users = new Set<string>();
   datesWithBets().forEach(d => {
@@ -105,8 +105,8 @@ function registerUser(name: string): void {
 }
 
 function loadUsername(): string { return localStorage.getItem(USER_KEY) ?? ""; }
-function saveUsername(name: string): void { 
-  localStorage.setItem(USER_KEY, name); 
+function saveUsername(name: string): void {
+  localStorage.setItem(USER_KEY, name);
   registerUser(name);
 }
 function datesWithBets(): string[] {
@@ -187,7 +187,7 @@ function calcPotentialWin(amount: number, oddsStr: string, format: OddsFormat): 
 }
 
 function exportCSV(bets: Bet[], date: string): void {
-  const headers = ["Fecha","Usuario","Casa","Equipo","vs","Jugador","Tipo","Línea","Odds","Monto($)","Ganancia Pot.($)","Nota","Estado"];
+  const headers = ["Fecha", "Usuario", "Casa", "Equipo", "vs", "Jugador", "Tipo", "Línea", "Odds", "Monto($)", "Ganancia Pot.($)", "Nota", "Estado"];
   const rows = bets.map(b => [
     b.date, b.userName, b.bookmaker, b.teamName, b.opponentName,
     b.subject, b.betLabel, b.line || "—", formatOddsDisplay(b.odds), b.amount, b.potentialWin, `"${b.note}"`, b.status
@@ -213,7 +213,7 @@ function exportJSON(bets: Bet[], date: string): void {
 // ════════════════════════════════════════════════════════════════════════════
 
 const FINAL_STATUSES = ["Final", "Game Over", "Postponed", "Cancelled"];
-const LIVE_STATUSES  = ["In Progress", "Live", "Delayed"];
+const LIVE_STATUSES = ["In Progress", "Live", "Delayed"];
 
 function getGameStartLabel(game: MLBGame | undefined): string {
   const time = game?.metadata?.time?.trim();
@@ -223,8 +223,8 @@ function getGameStartLabel(game: MLBGame | undefined): string {
 function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress {
   const NONE: LiveProgress = { current: 0, pct: 0, display: "Sin datos", hint: "Esperando inicio", isLive: false, isFinal: false, autoStatus: null };
   if (!game) return NONE;
-  const status  = game.game_result?.gameStatus ?? "";
-  const isLive  = LIVE_STATUSES.some(s => status.includes(s));
+  const status = game.game_result?.gameStatus ?? "";
+  const isLive = LIVE_STATUSES.some(s => status.includes(s));
   const isFinal = FINAL_STATUSES.some(s => status.includes(s));
 
   // Si el partido no ha comenzado (no está en vivo ni finalizado), forzar estado de espera a 0%
@@ -235,8 +235,8 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
       display: bet.betTypeKey === "team_f5"
         ? "0 - 0 (0/5 inn)"
         : bet.betTypeKey === "team_ml"
-        ? "0 - 0"
-        : `0 / ${bet.line} ${bet.betTypeKey === "pitcher_k" ? "K's" : "bases"}`,
+          ? "0 - 0"
+          : `0 / ${bet.line} ${bet.betTypeKey === "pitcher_k" ? "K's" : "bases"}`,
       hint: getGameStartLabel(game),
       startLabel: getGameStartLabel(game),
       isLive: false,
@@ -248,12 +248,12 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
   if (bet.betTypeKey === "pitcher_k") {
     const pitchers = game.liveBoxscore?.[bet.teamSide]?.pitchers ?? [];
     const pitcherIndex = pitchers.findIndex(p => p.name === bet.subject);
-    const pitcher  = pitcherIndex >= 0 ? pitchers[pitcherIndex] : pitchers[0];
-    const current  = pitcher?.k ?? 0;
+    const pitcher = pitcherIndex >= 0 ? pitchers[pitcherIndex] : pitchers[0];
+    const current = pitcher?.k ?? 0;
     const exceeded = current >= bet.line;
-    const isPulled = (isLive || isFinal) && pitcherIndex >= 0 && pitcherIndex < pitchers.length - 1;
-    const pct      = bet.line > 0 ? Math.min(100, Math.round((current / bet.line) * 100)) : 0;
-    
+    const isPulled = (isLive || isFinal) && pitcherIndex >= 0 && pitchers.slice(pitcherIndex + 1).some(p => (p.pitches || 0) > 0 || (p.ip && p.ip !== "0.0" && p.ip !== "0"));
+    const pct = bet.line > 0 ? Math.min(100, Math.round((current / bet.line) * 100)) : 0;
+
     let autoStatus: BetStatus | null = null;
     if (isFinal || exceeded || isPulled) {
       autoStatus = bet.isOver ? (exceeded ? "won" : "lost") : (current < bet.line ? "won" : "lost");
@@ -275,10 +275,10 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
 
   if (bet.betTypeKey === "batter_tb") {
     const batters = game.liveBoxscore?.[bet.teamSide]?.batters ?? [];
-    const batter  = batters.find(b => b.name === bet.subject);
+    const batter = batters.find(b => b.name === bet.subject);
     const current = batter?.total_bases ?? 0;
     const exceeded = current >= bet.line;
-    const pct      = bet.line > 0 ? Math.min(100, Math.round((current / bet.line) * 100)) : 0;
+    const pct = bet.line > 0 ? Math.min(100, Math.round((current / bet.line) * 100)) : 0;
     let autoStatus: BetStatus | null = null;
     if (isFinal || exceeded) autoStatus = bet.isOver ? (exceeded ? "won" : "lost") : (current < bet.line ? "won" : "lost");
     return { current, pct: autoStatus === "won" ? 100 : pct, display: `${current} / ${bet.line} bases`, hint: exceeded ? "¡Línea superada!" : isFinal ? `Final — ${current} bases` : `Necesita ${Math.ceil(bet.line - current)} más`, isLive, isFinal, autoStatus };
@@ -287,10 +287,10 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
   if (bet.betTypeKey === "team_ml") {
     const homeScore = game.game_result?.homeScore ?? 0;
     const awayScore = game.game_result?.awayScore ?? 0;
-    const myScore   = bet.teamSide === "home" ? homeScore : awayScore;
-    const oppScore  = bet.teamSide === "home" ? awayScore : homeScore;
+    const myScore = bet.teamSide === "home" ? homeScore : awayScore;
+    const oppScore = bet.teamSide === "home" ? awayScore : homeScore;
     const winning = myScore > oppScore;
-    const total   = myScore + oppScore;
+    const total = myScore + oppScore;
     let pct = total === 0 ? 0 : winning ? 70 : myScore === oppScore ? 50 : 30;
     let autoStatus: BetStatus | null = null;
     if (isFinal) { autoStatus = winning ? "won" : "lost"; pct = autoStatus === "won" ? 100 : 0; }
@@ -299,18 +299,18 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
 
   if (bet.betTypeKey === "team_f5") {
     const innings = game.linescore?.innings ?? [];
-    const first5  = innings.slice(0, 5);
-    const cur5    = game.linescore?.currentInning ?? 0;
-    
+    const first5 = innings.slice(0, 5);
+    const cur5 = game.linescore?.currentInning ?? 0;
+
     // El F5 es oficial si ya se jugó el 6to inning (cur5 > 5) o si el juego terminó (isFinal) habiendo completado 5 innings
     // Si el juego concluyó y no se completaron 5 innings (ej. suspendido en el 4to), es nulo (void/push).
     const f5Completed = cur5 > 5 || (isFinal && cur5 >= 5);
     const f5Void = isFinal && cur5 < 5;
 
-    const myRuns  = first5.reduce((a, i) => a + ((bet.teamSide === "home" ? i.home : i.away)?.runs ?? 0), 0);
+    const myRuns = first5.reduce((a, i) => a + ((bet.teamSide === "home" ? i.home : i.away)?.runs ?? 0), 0);
     const oppRuns = first5.reduce((a, i) => a + ((bet.teamSide === "home" ? i.away : i.home)?.runs ?? 0), 0);
     const winning = myRuns > oppRuns;
-    const tied    = myRuns === oppRuns;
+    const tied = myRuns === oppRuns;
 
     let autoStatus: BetStatus | null = null;
     if (f5Void) {
@@ -323,18 +323,18 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
     let pct = f5Completed ? 100 : Math.min(100, Math.round((Math.min(cur5, 5) / 5) * 100));
     if (autoStatus === "won" || autoStatus === "void") pct = 100;
 
-    return { 
-      current: myRuns, 
-      pct, 
-      display: `${myRuns} - ${oppRuns} (${Math.min(cur5, 5)}/5 inn)`, 
-      hint: autoStatus === "void" 
-        ? "Push / Nula (Empate o suspendido)" 
-        : f5Completed 
-        ? (winning ? "¡Ganó F5!" : "Perdió F5") 
-        : `Inning ${cur5}`, 
-      isLive, 
-      isFinal: f5Completed || f5Void, 
-      autoStatus 
+    return {
+      current: myRuns,
+      pct,
+      display: `${myRuns} - ${oppRuns} (${Math.min(cur5, 5)}/5 inn)`,
+      hint: autoStatus === "void"
+        ? "Push / Nula (Empate o suspendido)"
+        : f5Completed
+          ? (winning ? "¡Ganó F5!" : "Perdió F5")
+          : `Inning ${cur5}`,
+      isLive,
+      isFinal: f5Completed || f5Void,
+      autoStatus
     };
   }
 
@@ -369,19 +369,19 @@ function hasResultDataForBet(bet: Bet, game: MLBGame | undefined): boolean {
 // ════════════════════════════════════════════════════════════════════════════
 
 const CATEGORY_CFG: Record<BetCategory, { label: string; color: string; bg: string }> = {
-  pitcher: { label: "Pitcher",  color: "text-blue-700",    bg: "bg-blue-50 border-blue-200"      },
-  batter:  { label: "Bateador", color: "text-violet-700",  bg: "bg-violet-50 border-violet-200"  },
-  team:    { label: "Equipo",   color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200" },
+  pitcher: { label: "Pitcher", color: "text-blue-700", bg: "bg-blue-50 border-blue-200" },
+  batter: { label: "Bateador", color: "text-violet-700", bg: "bg-violet-50 border-violet-200" },
+  team: { label: "Equipo", color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200" },
 };
 
-const BOOKMAKERS = ["DraftKings","FanDuel","BetMGM","Caesars","Pinnacle","bet365","ESPNBet","Otra"];
+const BOOKMAKERS = ["DraftKings", "FanDuel", "BetMGM", "Caesars", "Pinnacle", "bet365", "ESPNBet", "Otra"];
 
 const StatusBadge: React.FC<{ status: BetStatus }> = ({ status }) => {
   const cfg = {
     pending: { cls: "bg-amber-100 text-amber-700 border-amber-200", label: "Pendiente", Icon: Clock },
-    won:     { cls: "bg-emerald-100 text-emerald-700 border-emerald-200", label: "Ganada", Icon: CheckCircle2 },
-    lost:    { cls: "bg-red-100 text-red-600 border-red-200", label: "Perdida", Icon: XCircle },
-    void:    { cls: "bg-slate-100 text-slate-600 border-slate-200", label: "Nula / Push", Icon: AlertTriangle },
+    won: { cls: "bg-emerald-100 text-emerald-700 border-emerald-200", label: "Ganada", Icon: CheckCircle2 },
+    lost: { cls: "bg-red-100 text-red-600 border-red-200", label: "Perdida", Icon: XCircle },
+    void: { cls: "bg-slate-100 text-slate-600 border-slate-200", label: "Nula / Push", Icon: AlertTriangle },
   }[status];
   return <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full border ${cfg.cls}`}><cfg.Icon size={11} />{cfg.label}</span>;
 };
@@ -392,10 +392,10 @@ const LiveProgressBar: React.FC<{ progress: LiveProgress; betStatus: BetStatus; 
   let bar = "from-violet-500 to-indigo-500";
   let dot: React.ReactNode = <Clock size={11} className="text-amber-500" />;
   let label = "Esperando";
-  if (effectiveStatus === "won")  { bar = "from-emerald-400 to-emerald-600"; dot = <CheckCircle2 size={11} className="text-emerald-600" />; label = "¡Ganó!"; }
+  if (effectiveStatus === "won") { bar = "from-emerald-400 to-emerald-600"; dot = <CheckCircle2 size={11} className="text-emerald-600" />; label = "¡Ganó!"; }
   else if (effectiveStatus === "lost") { bar = "from-red-400 to-red-500"; dot = <XCircle size={11} className="text-red-500" />; label = "Perdió"; }
   else if (effectiveStatus === "void") { bar = "from-slate-300 to-slate-450"; dot = <AlertTriangle size={11} className="text-slate-500" />; label = "Push / Nula"; }
-  else if (isLive)  { dot = <span className="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse" />; label = "En vivo"; }
+  else if (isLive) { dot = <span className="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse" />; label = "En vivo"; }
   else if (isFinal) { bar = "from-slate-400 to-slate-500"; label = "Finalizado"; }
   else if (startLabel) { label = startLabel; }
   return (
@@ -415,7 +415,7 @@ const LiveProgressBar: React.FC<{ progress: LiveProgress; betStatus: BetStatus; 
 // Analytics dashboard
 const AnalyticsDashboard: React.FC<{ bets: Bet[] }> = ({ bets }) => {
   const closed = bets.filter(b => b.status !== "pending" && b.status !== "void");
-  const wins   = closed.filter(b => b.status === "won");
+  const wins = closed.filter(b => b.status === "won");
   const winRate = closed.length > 0 ? Math.round((wins.length / closed.length) * 100) : 0;
   const totalRisk = closed.reduce((s, b) => s + b.amount, 0);
   const totalReturn = wins.reduce((s, b) => s + b.potentialWin, 0) - closed.filter(b => b.status === "lost").reduce((s, b) => s + b.amount, 0);
@@ -432,7 +432,7 @@ const AnalyticsDashboard: React.FC<{ bets: Bet[] }> = ({ bets }) => {
   }
 
   // Best category
-  const catWinRates = (["pitcher","batter","team"] as BetCategory[]).map(cat => {
+  const catWinRates = (["pitcher", "batter", "team"] as BetCategory[]).map(cat => {
     const c = closed.filter(b => b.betCategory === cat);
     const w = c.filter(b => b.status === "won");
     return { cat, rate: c.length > 0 ? Math.round((w.length / c.length) * 100) : 0, count: c.length };
@@ -484,7 +484,7 @@ const UserModal: React.FC<{ onSave: (name: string) => void, onClose: () => void,
           <h2 className="font-bold text-lg text-slate-800">Bienvenido a Bet Tracking</h2>
           <p className="text-xs text-slate-500 text-center">Selecciona un usuario existente o escribe tu nombre.</p>
         </div>
-        
+
         {existingUsers.length > 0 && (
           <div className="flex flex-wrap justify-center gap-2 pt-2">
             {existingUsers.map(u => (
@@ -518,11 +518,11 @@ const UserModal: React.FC<{ onSave: (name: string) => void, onClose: () => void,
 
 // Wizard step indicator
 const STEPS = [
-  { id: 1, label: "Juego",   Icon: Users      },
-  { id: 2, label: "Tipo",    Icon: ListChecks },
-  { id: 3, label: "Jugador", Icon: User       },
-  { id: 4, label: "Apuesta", Icon: Zap        },
-  { id: 5, label: "Detalles",Icon: DollarSign },
+  { id: 1, label: "Juego", Icon: Users },
+  { id: 2, label: "Tipo", Icon: ListChecks },
+  { id: 3, label: "Jugador", Icon: User },
+  { id: 4, label: "Apuesta", Icon: Zap },
+  { id: 5, label: "Detalles", Icon: DollarSign },
 ];
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -537,15 +537,15 @@ interface BetTrackingProps {
 export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }) => {
 
   // ── User ──────────────────────────────────────────────────────────────────
-  const [userName, setUserName]       = useState<string>(() => loadUsername());
+  const [userName, setUserName] = useState<string>(() => loadUsername());
   const [showUserModal, setShowUserModal] = useState<boolean>(() => !loadUsername());
   const [showGameModal, setShowGameModal] = useState<boolean>(false);
 
   // ── Date ─────────────────────────────────────────────────────────────────
-  const [betDate, setBetDate]         = useState<string>(todayStr);
-  const [dateGames, setDateGames]     = useState<MLBGame[]>([]);
-  const markedDates                   = useMemo(() => new Set(datesWithBets()), [betDate]);
-  const [oddsFormat, setOddsFormat]   = useState<OddsFormat>(() => loadOddsFormat());
+  const [betDate, setBetDate] = useState<string>(todayStr);
+  const [dateGames, setDateGames] = useState<MLBGame[]>([]);
+  const markedDates = useMemo(() => new Set(datesWithBets()), [betDate]);
+  const [oddsFormat, setOddsFormat] = useState<OddsFormat>(() => loadOddsFormat());
   const handleOddsFormat = (f: OddsFormat) => { setOddsFormat(f); saveOddsFormat(f); };
 
   useEffect(() => {
@@ -556,9 +556,9 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
   }, [betDate]);
 
   // ── Bets ──────────────────────────────────────────────────────────────────
-  const [bets, setBets]               = useState<Bet[]>(() => loadBets(todayStr()));
-  const [filter, setFilter]           = useState<"all" | BetStatus>("all");
-  const [userFilter, setUserFilter]   = useState<string>("all");
+  const [bets, setBets] = useState<Bet[]>(() => loadBets(todayStr()));
+  const [filter, setFilter] = useState<"all" | BetStatus>("all");
+  const [userFilter, setUserFilter] = useState<string>("all");
   const [expandedBets, setExpandedBets] = useState<Set<number>>(new Set());
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
   const [isRefreshingAll, setIsRefreshingAll] = useState(false);
@@ -570,7 +570,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
   useEffect(() => {
     // Initial local load
     setBets(loadBets(betDate));
-    
+
     // Sync with Firestore
     const unsubscribe = syncBets(betDate, (dbBets) => {
       // Avoid overwriting if db is empty and we have local bets (migration)
@@ -606,27 +606,30 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
   };
 
   // ── Wizard ────────────────────────────────────────────────────────────────
-  const [editingBetId, setEditingBetId]       = useState<number | null>(null);
-  const [step, setStep]               = useState(1);
+  const [editingBetId, setEditingBetId] = useState<number | null>(null);
+  const [step, setStep] = useState(1);
   const [selectedGameId, setSelectedGameId] = useState("");
   const [selectedTeamSide, setSelectedTeamSide] = useState<"home" | "away" | "">("");
-  const [category, setCategory]       = useState<BetCategory | "">("");
-  const [subject, setSubject]         = useState("");
-  const [betTypeKey, setBetTypeKey]   = useState<BetTypeKey | "">("");
-  const [betLabel, setBetLabel]       = useState("");
-  const [isOver, setIsOver]           = useState(true);
-  const [line, setLine]               = useState("");
-  const [bookmaker, setBookmaker]     = useState("");
-  const [amount, setAmount]           = useState("");
-  const [odds, setOdds]               = useState("");
-  const [note, setNote]               = useState("");
+  const [category, setCategory] = useState<BetCategory | "">("");
+  const [subject, setSubject] = useState("");
+  const [betTypeKey, setBetTypeKey] = useState<BetTypeKey | "">("");
+  const [betLabel, setBetLabel] = useState("");
+  const [isOver, setIsOver] = useState(true);
+  const [line, setLine] = useState("");
+  const [bookmaker, setBookmaker] = useState("");
+  const [amount, setAmount] = useState("");
+  const [odds, setOdds] = useState("");
+  const [note, setNote] = useState("");
+  const [showSmartPaste, setShowSmartPaste] = useState(false);
+  const [smartPasteText, setSmartPasteText] = useState("");
+  const [smartPasteError, setSmartPasteError] = useState("");
 
   const potentialWin = useMemo(() => calcPotentialWin(parseFloat(amount) || 0, odds, oddsFormat), [amount, odds, oddsFormat]);
 
   const selectedGame = useMemo(() => games.find(g => String(g.id) === selectedGameId) ?? null, [games, selectedGameId]);
-  const teamName     = selectedGame ? (selectedTeamSide === "home" ? selectedGame.metadata.homeTeam : selectedGame.metadata.awayTeam) : "";
+  const teamName = selectedGame ? (selectedTeamSide === "home" ? selectedGame.metadata.homeTeam : selectedGame.metadata.awayTeam) : "";
   const opponentName = selectedGame ? (selectedTeamSide === "home" ? selectedGame.metadata.awayTeam : selectedGame.metadata.homeTeam) : "";
-  const pitcherName  = selectedGame && selectedTeamSide ? (selectedTeamSide === "home" ? selectedGame.pitchers.home.name : selectedGame.pitchers.away.name) : "";
+  const pitcherName = selectedGame && selectedTeamSide ? (selectedTeamSide === "home" ? selectedGame.pitchers.home.name : selectedGame.pitchers.away.name) : "";
   const lineupBatters = useMemo((): string[] => {
     if (!selectedGame || !selectedTeamSide) return [];
     return (selectedTeamSide === "home" ? selectedGame.lineups.home : selectedGame.lineups.away).map(b => b.name).filter(Boolean);
@@ -647,6 +650,121 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     setStep(1); setSelectedGameId(""); setSelectedTeamSide(""); setCategory("");
     setSubject(""); setBetTypeKey(""); setBetLabel(""); setIsOver(true);
     setLine(""); setBookmaker(""); setAmount(""); setOdds(""); setNote("");
+    setShowSmartPaste(false); setSmartPasteText(""); setSmartPasteError("");
+  };
+
+  // ── Smart Paste Parser ──────────────────────────────────────────────────
+  const parseSmartPaste = () => {
+    setSmartPasteError("");
+    const text = smartPasteText;
+    if (!text.trim()) { setSmartPasteError("Pega el texto de la apuesta."); return; }
+
+    // Extract teams
+    const teamsMatch = text.match(/(?:Juego:)?\s*([A-Z][A-Za-z\s\.]+)\s+vs\.?\s+([A-Z][A-Za-z\s\.]+)(?:\r?\n|$)/i) || text.match(/([A-Z][A-Za-z\s\.]+)\s+vs\.?\s+([A-Z][A-Za-z\s\.]+)/i);
+    const awayTeamRaw = teamsMatch ? teamsMatch[1].trim() : "";
+    const homeTeamRaw = teamsMatch ? teamsMatch[2].trim() : "";
+
+    // Find matching game
+    const allGames = [...games, ...dateGames];
+    let matchedGame: typeof games[0] | null = null;
+    let matchedSide: "home" | "away" = "away";
+    for (const g of allGames) {
+      const home = g.metadata.homeTeam.toLowerCase();
+      const away = g.metadata.awayTeam.toLowerCase();
+      const h6 = homeTeamRaw.toLowerCase().slice(0, 6);
+      const a6 = awayTeamRaw.toLowerCase().slice(0, 6);
+      if ((home.includes(h6) || h6.includes(home.slice(0, 6))) &&
+        (away.includes(a6) || a6.includes(away.slice(0, 6)))) {
+        matchedGame = g; break;
+      }
+    }
+    if (!matchedGame) {
+      setSmartPasteError("No se encontró el juego. Verifica que los datos estén cargados.");
+      return;
+    }
+
+    // Extract subject and pick
+    const explicitSubject = text.match(/(?:🎯|Target:|Player:|1️⃣)\s*([^\n—\-]+)/i);
+    const explicitPick = text.match(/(?:📌\s*(?:Pick|Lean|Play|Apuesta):?|📌|(?:Pick|Lean|Play|Apuesta):)\s*([^\n]+)/i);
+    const firstLineMatch = text.match(/(?:^|\n)(?:.*?)\b([A-Za-z\s\.]+?)\s*[—\-]\s*([^\n]+)/i);
+
+    const subjectRaw = explicitSubject ? explicitSubject[1].trim() : (firstLineMatch ? firstLineMatch[1].trim() : "");
+    const pickLine = explicitPick ? explicitPick[1].trim() : (firstLineMatch ? firstLineMatch[2].trim() : text);
+
+    // Over/Under & line value
+    const overUnderMatch = pickLine.match(/(over|under)\s*([\d.]+)/i);
+    const isOverParsed = overUnderMatch ? overUnderMatch[1].toLowerCase() === "over" : true;
+    const lineParsed = overUnderMatch ? overUnderMatch[2] : "";
+
+    // Bet type detection
+    let betTypeParsed: BetTypeKey = "pitcher_k";
+    let betLabelParsed = pickLine;
+    let categoryParsed: BetCategory = "pitcher";
+    if (/\bk\b|strikeout|ponche/i.test(pickLine)) {
+      betTypeParsed = "pitcher_k"; categoryParsed = "pitcher";
+      betLabelParsed = `${isOverParsed ? "Over" : "Under"} ${lineParsed} Ks`;
+    } else if (/total base|tb\b/i.test(pickLine)) {
+      betTypeParsed = "batter_tb"; categoryParsed = "batter";
+      betLabelParsed = `${isOverParsed ? "Over" : "Under"} ${lineParsed} TB`;
+    } else if (/\bml\b|moneyline/i.test(pickLine)) {
+      betTypeParsed = "team_ml"; categoryParsed = "team";
+      betLabelParsed = "Moneyline";
+    } else if (/\bf5\b|first 5/i.test(pickLine)) {
+      betTypeParsed = "team_f5"; categoryParsed = "team";
+      betLabelParsed = "First 5 Innings";
+    }
+
+    // Odds
+    let oddsParsed = "";
+    const oddsMatch = text.match(/(?:@|Cuota:\s*)([+-]?\d+(?:\.\d+)?)(?:\s*\/\s*([+-]?\d+(?:\.\d+)?))?/i);
+    if (oddsMatch) {
+      const val1 = oddsMatch[1];
+      const val2 = oddsMatch[2];
+      if (val2) {
+        const isVal1American = val1.startsWith('+') || val1.startsWith('-') || Math.abs(parseFloat(val1)) >= 100;
+        const val1MatchesFormat = (oddsFormat === "american" && isVal1American) || (oddsFormat === "decimal" && !isVal1American);
+        oddsParsed = val1MatchesFormat ? val1 : val2;
+      } else {
+        oddsParsed = val1;
+      }
+      oddsParsed = oddsForFormat(oddsParsed, oddsFormat);
+    }
+
+    // Amount
+    const amountMatch = text.match(/(?:monto|amount|stake)[:\s]*\$?([\d.]+)/i) || text.match(/\$([\d.]+)/i);
+    const amountParsed = amountMatch ? amountMatch[1] : "";
+
+    // Determine team side
+    if (subjectRaw) {
+      const homePitcher = matchedGame.pitchers?.home?.name || "";
+      const awayPitcher = matchedGame.pitchers?.away?.name || "";
+      const homeLineup = (matchedGame.lineups?.home || []).map((p: any) => (p.name || "").toLowerCase());
+      const awayLineup = (matchedGame.lineups?.away || []).map((p: any) => (p.name || "").toLowerCase());
+      const s6 = subjectRaw.toLowerCase().slice(0, 6);
+      if (homePitcher.toLowerCase().includes(s6) || homeLineup.some((n: string) => n.includes(s6))) {
+        matchedSide = "home";
+      } else if (awayPitcher.toLowerCase().includes(s6) || awayLineup.some((n: string) => n.includes(s6))) {
+        matchedSide = "away";
+      } else {
+        matchedSide = text.toLowerCase().includes(matchedGame.metadata.homeTeam.toLowerCase().slice(0, 6)) ? "home" : "away";
+      }
+    }
+
+    // Fill form fields
+    setSelectedGameId(String(matchedGame.id));
+    setSelectedTeamSide(matchedSide);
+    setCategory(categoryParsed);
+    setSubject(subjectRaw || (matchedSide === "home" ? matchedGame.metadata.homeTeam : matchedGame.metadata.awayTeam));
+    setBetTypeKey(betTypeParsed);
+    setBetLabel(betLabelParsed);
+    setIsOver(isOverParsed);
+    setLine(lineParsed);
+    if (oddsParsed) setOdds(oddsParsed);
+    if (amountParsed) setAmount(amountParsed);
+    
+    setStep(5);
+    setShowSmartPaste(false);
+    setSmartPasteText("");
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -656,7 +774,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
       return;
     }
     if (!selectedGame || !category || !subject || !betLabel || !betTypeKey) return;
-    
+
     if (editingBetId) {
       updateBets(prev => prev.map(b => b.id === editingBetId ? {
         ...b,
@@ -725,9 +843,9 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
   // Auto-resolve
   const resolvedBets = useMemo(() => bets.map(bet => {
     // Buscar en games (prop live) primero, y si no, en dateGames
-    const game     = games.find(g => String(g.id) === bet.gameId) || dateGames.find(g => String(g.id) === bet.gameId);
+    const game = games.find(g => String(g.id) === bet.gameId) || dateGames.find(g => String(g.id) === bet.gameId);
     const progress = resolveLiveProgress(bet, game);
-    const status   = bet.status === "pending" && progress.autoStatus ? progress.autoStatus : bet.status;
+    const status = bet.status === "pending" && progress.autoStatus ? progress.autoStatus : bet.status;
     return { bet: { ...bet, status }, progress, game };
   }), [bets, dateGames, games]);
 
@@ -808,7 +926,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
   const handleRefreshPending = async () => {
     const pendingGameIds = Array.from(new Set(bets.filter(b => b.status === "pending").map(b => b.gameId)));
     if (pendingGameIds.length === 0) return;
-    
+
     setIsRefreshingAll(true);
     try {
       await Promise.all(pendingGameIds.map(async (gid) => {
@@ -831,18 +949,18 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
   const filteredByUser = userFilter === "all" ? resolvedBets : resolvedBets.filter(r => r.bet.userName === userFilter);
 
   const allBets = filteredByUser.map(r => r.bet);
-  const won     = allBets.filter(b => b.status === "won").reduce((s, b) => s + b.amount, 0);
+  const won = allBets.filter(b => b.status === "won").reduce((s, b) => s + b.amount, 0);
   const wonReturn = allBets.filter(b => b.status === "won").reduce((s, b) => s + b.potentialWin, 0);
-  const lost    = allBets.filter(b => b.status === "lost").reduce((s, b) => s + b.amount, 0);
+  const lost = allBets.filter(b => b.status === "lost").reduce((s, b) => s + b.amount, 0);
   const pending = allBets.filter(b => b.status === "pending").reduce((s, b) => s + b.amount, 0);
-  const net     = wonReturn - lost;
+  const net = wonReturn - lost;
 
   const filtered = filter === "all" ? filteredByUser : filteredByUser.filter(r => r.bet.status === filter);
 
   const handleUserSave = (name: string) => {
-    saveUsername(name); 
-    setUserName(name); 
-    setShowUserModal(false); 
+    saveUsername(name);
+    setUserName(name);
+    setShowUserModal(false);
     void registerUserDb(name).catch(error => {
       console.error("Error registrando usuario de apuestas en Firestore:", error);
     });
@@ -892,7 +1010,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                 <X size={18} />
               </button>
             </div>
-            
+
             <div className="p-3 overflow-y-auto space-y-3 bg-slate-50/50">
               {games.length === 0 ? (
                 <p className="text-sm text-slate-500 text-center py-6">No hay juegos cargados para este día.</p>
@@ -921,7 +1039,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                           {getTeamAbbr(g.metadata.awayTeam)}
                         </span>
                       </div>
-                      
+
                       {/* @ */}
                       <div className="text-xs font-black text-slate-300 italic shrink-0 w-[20%] text-center">
                         @
@@ -1013,10 +1131,10 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
       {/* ── Summary cards ───────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: "En juego",  value: `$${pending.toFixed(0)}`,                                      Icon: Clock,      color: "text-amber-600 bg-amber-50 border-amber-200"      },
-          { label: "Ganadas",   value: `+$${wonReturn.toFixed(0)}`,                                   Icon: Trophy,     color: "text-emerald-600 bg-emerald-50 border-emerald-200" },
-          { label: "Perdidas",  value: `-$${lost.toFixed(0)}`,                                        Icon: XCircle,    color: "text-red-600 bg-red-50 border-red-200"             },
-          { label: "Neto",      value: `${net >= 0 ? "+" : ""}$${net.toFixed(0)}`,                   Icon: TrendingUp, color: net >= 0 ? "text-emerald-600 bg-emerald-50 border-emerald-200" : "text-red-600 bg-red-50 border-red-200" },
+          { label: "En juego", value: `$${pending.toFixed(0)}`, Icon: Clock, color: "text-amber-600 bg-amber-50 border-amber-200" },
+          { label: "Ganadas", value: `+$${wonReturn.toFixed(0)}`, Icon: Trophy, color: "text-emerald-600 bg-emerald-50 border-emerald-200" },
+          { label: "Perdidas", value: `-$${lost.toFixed(0)}`, Icon: XCircle, color: "text-red-600 bg-red-50 border-red-200" },
+          { label: "Neto", value: `${net >= 0 ? "+" : ""}$${net.toFixed(0)}`, Icon: TrendingUp, color: net >= 0 ? "text-emerald-600 bg-emerald-50 border-emerald-200" : "text-red-600 bg-red-50 border-red-200" },
         ].map(({ label, value, Icon, color }) => (
           <div key={label} className={`border rounded-xl p-3 flex items-center gap-3 ${color}`}>
             <div className="p-2 rounded-lg bg-white shadow-sm"><Icon size={14} /></div>
@@ -1037,12 +1155,62 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
               <PlusCircle size={14} className="text-violet-600" />
               <h3 className="font-bold text-sm text-slate-800">{editingBetId ? "Editar Apuesta" : "Nueva Apuesta"}</h3>
             </div>
-            {editingBetId && (
-              <button onClick={resetForm} className="text-xs font-semibold text-slate-500 hover:text-slate-700 border border-slate-200 px-2 py-1 rounded-md bg-white">
-                Cancelar edición
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => { setShowSmartPaste(v => !v); setSmartPasteError(""); }}
+                title="Pegar texto de apuesta"
+                className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border transition ${showSmartPaste
+                  ? "bg-violet-600 text-white border-violet-600"
+                  : "bg-white text-violet-600 border-violet-300 hover:bg-violet-50"
+                  }`}
+              >
+                <Zap size={10} /> Smart Paste
               </button>
-            )}
+              {editingBetId && (
+                <button onClick={resetForm} className="text-xs font-semibold text-slate-500 hover:text-slate-700 border border-slate-200 px-2 py-1 rounded-md bg-white">
+                  Cancelar edición
+                </button>
+              )}
+            </div>
           </div>
+
+          {/* Smart Paste Panel */}
+          {showSmartPaste && (
+            <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 space-y-2 mt-3 animate-fade-in">
+              <p className="text-[10px] text-violet-700 font-semibold flex items-center gap-1">
+                <Zap size={10} /> Pega el slip de tu apuesta aqui:
+              </p>
+              <textarea
+                className="w-full text-[11px] font-mono border border-violet-200 rounded-lg p-2 bg-white resize-none focus:outline-none focus:ring-1 focus:ring-violet-400 leading-relaxed"
+                rows={6}
+                placeholder="7:45 PM ET\nArizona Diamondbacks vs St. Louis Cardinals\nMichael McGreevy - St. Louis Cardinals\nPick: Over 2.5 Ks @-168\nmonto: $55"
+                value={smartPasteText}
+                onChange={e => setSmartPasteText(e.target.value)}
+              />
+              {smartPasteError && (
+                <p className="text-[10px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-2 py-1 flex items-center gap-1">
+                  <AlertTriangle size={10} /> {smartPasteError}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={parseSmartPaste}
+                  className="flex-1 bg-violet-600 hover:bg-violet-700 text-white text-[11px] font-bold py-1.5 rounded-lg transition flex items-center justify-center gap-1"
+                >
+                  <Zap size={11} /> Importar apuesta
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowSmartPaste(false); setSmartPasteText(""); setSmartPasteError(""); }}
+                  className="px-3 py-1.5 border border-slate-200 rounded-lg text-[11px] text-slate-500 hover:bg-slate-100 bg-white"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Steps */}
           <div className="flex items-center gap-1 flex-wrap">
@@ -1067,8 +1235,8 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                   {games.length === 0
                     ? <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center gap-2"><AlertTriangle size={13} /> Extrae datos primero.</p>
                     : (
-                      <button 
-                        type="button" 
+                      <button
+                        type="button"
                         onClick={() => setShowGameModal(true)}
                         className="w-full border border-slate-200 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white text-left flex justify-between items-center transition-shadow hover:shadow-sm"
                       >
@@ -1092,7 +1260,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 mb-1">¿A qué equipo le juegas?</label>
                     <div className="grid grid-cols-2 gap-2">
-                      {(["away","home"] as const).map(side => {
+                      {(["away", "home"] as const).map(side => {
                         const name = side === "home" ? selectedGame.metadata.homeTeam : selectedGame.metadata.awayTeam;
                         return <button key={side} type="button" onClick={() => setSelectedTeamSide(side)}
                           className={`py-2.5 px-3 rounded-lg border text-xs font-bold transition-all ${selectedTeamSide === side ? "bg-violet-600 text-white border-violet-600 shadow" : "bg-white border-slate-200 text-slate-700 hover:border-violet-300"}`}>
@@ -1112,8 +1280,8 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                 <p className="text-[11px] text-slate-500 mb-2">{teamName} vs {opponentName}</p>
                 {[
                   { val: "pitcher" as BetCategory, label: "🎯 Pitcher — Ponches (K's)", desc: pitcherName || "Sin abridor" },
-                  { val: "batter"  as BetCategory, label: "⚾ Bateador — Total de bases", desc: `${lineupBatters.length} jugadores` },
-                  { val: "team"    as BetCategory, label: "🏟️ Equipo — Resultado", desc: "Al juego o al 5to inning" },
+                  { val: "batter" as BetCategory, label: "⚾ Bateador — Total de bases", desc: `${lineupBatters.length} jugadores` },
+                  { val: "team" as BetCategory, label: "🏟️ Equipo — Resultado", desc: "Al juego o al 5to inning" },
                 ].map(opt => (
                   <button key={opt.val} type="button" onClick={() => { setCategory(opt.val); setSubject(""); setBetTypeKey(""); setBetLabel(""); }}
                     className={`w-full text-left px-3 py-2.5 rounded-lg border text-xs font-semibold transition-all ${category === opt.val ? "bg-violet-600 text-white border-violet-600 shadow" : "bg-white border-slate-200 text-slate-700 hover:border-violet-300"}`}>
@@ -1141,7 +1309,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                     {lineupBatters.length === 0
                       ? <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg p-3"><AlertTriangle size={12} className="inline mr-1" />Sin lineup disponible.</p>
                       : lineupBatters.map(s => <button key={s} type="button" onClick={() => setSubject(s)}
-                          className={`w-full text-left px-3 py-2 rounded-lg border text-xs font-semibold transition-all ${subject === s ? "bg-violet-600 text-white border-violet-600" : "bg-white border-slate-200 text-slate-700 hover:border-violet-300"}`}>{s}</button>)}
+                        className={`w-full text-left px-3 py-2 rounded-lg border text-xs font-semibold transition-all ${subject === s ? "bg-violet-600 text-white border-violet-600" : "bg-white border-slate-200 text-slate-700 hover:border-violet-300"}`}>{s}</button>)}
                   </div>
                 )}
                 {category === "team" && (
@@ -1227,14 +1395,12 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                     <div className="flex items-center gap-0.5 bg-slate-100 p-0.5 rounded-lg">
                       <button type="button"
                         onClick={() => { handleOddsFormat("american"); setOdds(""); }}
-                        className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${
-                          oddsFormat === "american" ? "bg-white shadow text-violet-700" : "text-slate-500 hover:text-slate-700"}`}>
+                        className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${oddsFormat === "american" ? "bg-white shadow text-violet-700" : "text-slate-500 hover:text-slate-700"}`}>
                         Americano
                       </button>
                       <button type="button"
                         onClick={() => { handleOddsFormat("decimal"); setOdds(""); }}
-                        className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${
-                          oddsFormat === "decimal" ? "bg-white shadow text-violet-700" : "text-slate-500 hover:text-slate-700"}`}>
+                        className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${oddsFormat === "decimal" ? "bg-white shadow text-violet-700" : "text-slate-500 hover:text-slate-700"}`}>
                         Decimal
                       </button>
                     </div>
@@ -1289,14 +1455,14 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
               {step > 1 && <button type="button" onClick={() => setStep(s => s - 1)}
                 className="flex-1 py-2 border border-slate-300 text-slate-600 text-xs rounded-lg hover:bg-slate-100 font-semibold">← Atrás</button>}
               {step < 5
-                ? <button key="btn-next" type="button" onClick={(e) => { e.preventDefault(); if(canNext()) setStep(s => s + 1); }} disabled={!canNext()}
-                    className="flex-1 py-2 bg-violet-600 text-white text-xs font-bold rounded-lg hover:bg-violet-700 disabled:opacity-40 flex items-center justify-center gap-1">
-                    Siguiente <ChevronRight size={12} />
-                  </button>
+                ? <button key="btn-next" type="button" onClick={(e) => { e.preventDefault(); if (canNext()) setStep(s => s + 1); }} disabled={!canNext()}
+                  className="flex-1 py-2 bg-violet-600 text-white text-xs font-bold rounded-lg hover:bg-violet-700 disabled:opacity-40 flex items-center justify-center gap-1">
+                  Siguiente <ChevronRight size={12} />
+                </button>
                 : <button key="btn-submit" type="submit"
-                    className="flex-1 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 text-white text-xs font-bold rounded-lg hover:from-violet-700 hover:to-indigo-700 shadow flex items-center justify-center gap-1">
-                    <Target size={12} /> {editingBetId ? "Guardar cambios" : "Registrar"}
-                  </button>}
+                  className="flex-1 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 text-white text-xs font-bold rounded-lg hover:from-violet-700 hover:to-indigo-700 shadow flex items-center justify-center gap-1">
+                  <Target size={12} /> {editingBetId ? "Guardar cambios" : "Registrar"}
+                </button>}
             </div>
           </form>
         </div>
@@ -1306,7 +1472,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg w-fit">
-                {(["all","pending","won","lost"] as const).map(f => (
+                {(["all", "pending", "won", "lost"] as const).map(f => (
                   <button key={f} onClick={() => setFilter(f)}
                     className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${filter === f ? "bg-white shadow text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
                     {f === "all" ? "Todas" : f === "pending" ? "Pendientes" : f === "won" ? "Ganadas" : "Perdidas"}
@@ -1316,7 +1482,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                   </button>
                 ))}
               </div>
-              <button 
+              <button
                 onClick={() => {
                   if (expandedBets.size === filtered.length && filtered.length > 0) {
                     setExpandedBets(new Set());
@@ -1330,10 +1496,10 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                 {expandedBets.size === filtered.length && filtered.length > 0 ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
-            
+
             {uniqueUsers.length > 0 && (
               <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-slate-500 flex items-center gap-1"><Users size={12}/> Filtro:</span>
+                <span className="text-xs font-semibold text-slate-500 flex items-center gap-1"><Users size={12} /> Filtro:</span>
                 <select value={userFilter} onChange={e => setUserFilter(e.target.value)}
                   className="bg-white border border-slate-200 text-slate-700 text-xs font-bold rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-violet-400">
                   <option value="all">Todos los usuarios ({resolvedBets.length})</option>
@@ -1347,126 +1513,126 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
 
           {filtered.length === 0
             ? <div className="flex flex-col items-center justify-center py-14 text-slate-400 bg-slate-50 border border-dashed border-slate-200 rounded-xl">
-                <BarChart2 size={28} className="mb-2 opacity-40" />
-                <p className="text-sm font-semibold">Sin apuestas para este día</p>
-                <p className="text-xs mt-1">Registra tu primera jugada con el wizard</p>
-              </div>
+              <BarChart2 size={28} className="mb-2 opacity-40" />
+              <p className="text-sm font-semibold">Sin apuestas para este día</p>
+              <p className="text-xs mt-1">Registra tu primera jugada con el wizard</p>
+            </div>
             : <div className="space-y-3 max-h-[680px] overflow-y-auto pr-0.5">
-                {filtered.map(({ bet, progress, game }) => {
-                  const catCfg = CATEGORY_CFG[bet.betCategory];
-                  const isRefreshing = refreshingIds.has(bet.gameId);
+              {filtered.map(({ bet, progress, game }) => {
+                const catCfg = CATEGORY_CFG[bet.betCategory];
+                const isRefreshing = refreshingIds.has(bet.gameId);
 
-                  let extraDetails = null;
-                  if (game && expandedBets.has(bet.id)) {
-                    const isLiveOrFinal = game.game_result?.gameStatus?.includes("In Progress") || game.game_result?.gameStatus?.includes("Live") || game.game_result?.gameStatus?.includes("Final");
-                    if (isLiveOrFinal) {
-                      const ls = game.linescore;
-                      const scoreText = ls ? `${game.teams.away} ${ls.awayTotals.runs} - ${ls.homeTotals.runs} ${game.teams.home}` : "";
-                      const inningText = ls?.inningState ? `${ls.inningState === "Top" ? "Alta" : ls.inningState === "Bottom" ? "Baja" : ls.inningState === "Middle" ? "Mitad" : ls.inningState === "End" ? "Fin" : ls.inningState} ${ls.currentInning}` : "";
-                      
-                      let statsText = "";
-                      if (bet.betCategory === "pitcher") {
-                        const side = bet.teamSide;
-                        const p = game.liveBoxscore?.[side]?.pitchers?.find(p => p.name === bet.subject) || game.liveBoxscore?.[side]?.pitchers?.[0];
-                        if (p) statsText = `IP: ${p.ip || "0.0"} | Picheos: ${p.pitches || 0} | ER: ${p.er || 0}`;
-                      } else if (bet.betCategory === "batter") {
-                        const side = bet.teamSide;
-                        const b = game.liveBoxscore?.[side]?.batters?.find(b => b.name === bet.subject) || game.liveBoxscore?.[side]?.batters?.[0];
-                        if (b) statsText = `AB: ${b.ab || 0} | H: ${b.h || 0} | R: ${b.r || 0} | RBI: ${b.rbi || 0} | K: ${b.k || 0}`;
-                      }
-                      
-                      extraDetails = (scoreText || statsText) ? (
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-slate-500 mt-3 bg-slate-50 p-2 rounded-lg border border-slate-100 font-semibold">
-                          {scoreText && <span><span className="text-slate-400">Score:</span> {scoreText}</span>}
-                          {inningText && <span><span className="text-slate-400">Inning:</span> {inningText}</span>}
-                          {statsText && <span><span className="text-slate-400">Stats:</span> {statsText}</span>}
-                        </div>
-                      ) : null;
+                let extraDetails = null;
+                if (game && expandedBets.has(bet.id)) {
+                  const isLiveOrFinal = game.game_result?.gameStatus?.includes("In Progress") || game.game_result?.gameStatus?.includes("Live") || game.game_result?.gameStatus?.includes("Final");
+                  if (isLiveOrFinal) {
+                    const ls = game.linescore;
+                    const scoreText = ls ? `${game.teams.away} ${ls.awayTotals.runs} - ${ls.homeTotals.runs} ${game.teams.home}` : "";
+                    const inningText = ls?.inningState ? `${ls.inningState === "Top" ? "Alta" : ls.inningState === "Bottom" ? "Baja" : ls.inningState === "Middle" ? "Mitad" : ls.inningState === "End" ? "Fin" : ls.inningState} ${ls.currentInning}` : "";
+
+                    let statsText = "";
+                    if (bet.betCategory === "pitcher") {
+                      const side = bet.teamSide;
+                      const p = game.liveBoxscore?.[side]?.pitchers?.find(p => p.name === bet.subject) || game.liveBoxscore?.[side]?.pitchers?.[0];
+                      if (p) statsText = `IP: ${p.ip || "0.0"} | Picheos: ${p.pitches || 0} | ER: ${p.er || 0}`;
+                    } else if (bet.betCategory === "batter") {
+                      const side = bet.teamSide;
+                      const b = game.liveBoxscore?.[side]?.batters?.find(b => b.name === bet.subject) || game.liveBoxscore?.[side]?.batters?.[0];
+                      if (b) statsText = `AB: ${b.ab || 0} | H: ${b.h || 0} | R: ${b.r || 0} | RBI: ${b.rbi || 0} | K: ${b.k || 0}`;
                     }
+
+                    extraDetails = (scoreText || statsText) ? (
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-slate-500 mt-3 bg-slate-50 p-2 rounded-lg border border-slate-100 font-semibold">
+                        {scoreText && <span><span className="text-slate-400">Score:</span> {scoreText}</span>}
+                        {inningText && <span><span className="text-slate-400">Inning:</span> {inningText}</span>}
+                        {statsText && <span><span className="text-slate-400">Stats:</span> {statsText}</span>}
+                      </div>
+                    ) : null;
                   }
+                }
 
-                  return (
-                    <div key={bet.id}
-                      className={`bg-white border rounded-xl p-4 shadow-sm hover:shadow-md transition-all ${bet.status === "won" ? "border-emerald-200" : bet.status === "lost" ? "border-red-200" : "border-slate-200"}`}>
+                return (
+                  <div key={bet.id}
+                    className={`bg-white border rounded-xl p-4 shadow-sm hover:shadow-md transition-all ${bet.status === "won" ? "border-emerald-200" : bet.status === "lost" ? "border-red-200" : "border-slate-200"}`}>
 
-                      {!expandedBets.has(bet.id) ? (
-                        <div className="cursor-pointer group" onClick={() => toggleCollapse(bet.id)}>
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 truncate min-w-0">
-                              <div className="shrink-0"><StatusBadge status={bet.status} /></div>
-                              <span className="font-bold text-sm text-slate-800 truncate">{bet.subject}</span>
-                              <span className="text-xs text-slate-500 truncate hidden sm:inline">· {bet.betLabel}</span>
+                    {!expandedBets.has(bet.id) ? (
+                      <div className="cursor-pointer group" onClick={() => toggleCollapse(bet.id)}>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 truncate min-w-0">
+                            <div className="shrink-0"><StatusBadge status={bet.status} /></div>
+                            <span className="font-bold text-sm text-slate-800 truncate">{bet.subject}</span>
+                            <span className="text-xs text-slate-500 truncate hidden sm:inline">· {bet.betLabel}</span>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <span className="font-bold text-sm text-slate-800">${bet.amount}</span>
+                            {bet.potentialWin > 0 && <span className="text-xs font-bold text-emerald-600 hidden sm:inline">+${bet.potentialWin.toFixed(2)}</span>}
+                            <button className="text-slate-400 hover:text-violet-600 transition-colors">
+                              <ChevronDown size={14} />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="pl-0 sm:pl-24">
+                          <LiveProgressBar progress={progress} betStatus={bet.status} compact />
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-start justify-between gap-2 cursor-pointer group" onClick={() => toggleCollapse(bet.id)}>
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${catCfg.bg} ${catCfg.color}`}>{catCfg.label}</span>
+                              <StatusBadge status={bet.status} />
+                              {bet.bookmaker && <span className="text-[10px] font-semibold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">{bet.bookmaker}</span>}
                             </div>
-                            <div className="flex items-center gap-3 shrink-0">
-                              <span className="font-bold text-sm text-slate-800">${bet.amount}</span>
-                              {bet.potentialWin > 0 && <span className="text-xs font-bold text-emerald-600 hidden sm:inline">+${bet.potentialWin.toFixed(2)}</span>}
-                              <button className="text-slate-400 hover:text-violet-600 transition-colors">
-                                <ChevronDown size={14} />
+                            <p className="font-bold text-sm text-slate-800 truncate">{bet.subject}</p>
+                            <p className="text-xs text-slate-500">{bet.teamName} <span className="text-slate-300">vs</span> {bet.opponentName}</p>
+                            <p className="text-xs font-semibold text-slate-700">{bet.betLabel}</p>
+                            {bet.note && (
+                              <p className="text-[10px] italic text-slate-400 flex items-start gap-1 mt-1">
+                                <StickyNote size={10} className="shrink-0 mt-0.5" />{bet.note}
+                              </p>
+                            )}
+                          </div>
+                          <div className="text-right shrink-0 space-y-0.5">
+                            <p className="text-xs text-slate-400 font-semibold">{bet.userName}</p>
+                            <p className="text-sm font-bold text-slate-800">{bet.amount > 0 ? `$${bet.amount}` : "—"}</p>
+                            {bet.potentialWin > 0 && (
+                              <p className="text-[11px] font-bold text-emerald-600">+${bet.potentialWin.toFixed(2)}</p>
+                            )}
+                            <p className="text-xs font-semibold text-slate-500">{formatOddsDisplay(bet.odds)}</p>
+                            <p className="text-[10px] text-slate-400">{bet.createdAt}</p>
+                            <div className="flex items-center justify-end gap-2 mt-1">
+                              <button onClick={(e) => { e.stopPropagation(); handleRefreshBet(bet.gameId); }} disabled={isRefreshing}
+                                className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-violet-600 transition-colors disabled:opacity-40 font-semibold">
+                                <RefreshCw size={10} className={isRefreshing ? "animate-spin" : ""} />
+                              </button>
+                              <button className="inline-flex items-center text-slate-400 hover:text-violet-600 transition-colors">
+                                <ChevronUp size={14} />
                               </button>
                             </div>
                           </div>
-                          <div className="pl-0 sm:pl-24">
-                            <LiveProgressBar progress={progress} betStatus={bet.status} compact />
-                          </div>
                         </div>
-                      ) : (
-                        <>
-                          <div className="flex items-start justify-between gap-2 cursor-pointer group" onClick={() => toggleCollapse(bet.id)}>
-                            <div className="min-w-0 space-y-1">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${catCfg.bg} ${catCfg.color}`}>{catCfg.label}</span>
-                                <StatusBadge status={bet.status} />
-                                {bet.bookmaker && <span className="text-[10px] font-semibold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">{bet.bookmaker}</span>}
-                              </div>
-                              <p className="font-bold text-sm text-slate-800 truncate">{bet.subject}</p>
-                              <p className="text-xs text-slate-500">{bet.teamName} <span className="text-slate-300">vs</span> {bet.opponentName}</p>
-                              <p className="text-xs font-semibold text-slate-700">{bet.betLabel}</p>
-                              {bet.note && (
-                                <p className="text-[10px] italic text-slate-400 flex items-start gap-1 mt-1">
-                                  <StickyNote size={10} className="shrink-0 mt-0.5" />{bet.note}
-                                </p>
-                              )}
-                            </div>
-                            <div className="text-right shrink-0 space-y-0.5">
-                              <p className="text-xs text-slate-400 font-semibold">{bet.userName}</p>
-                              <p className="text-sm font-bold text-slate-800">{bet.amount > 0 ? `$${bet.amount}` : "—"}</p>
-                              {bet.potentialWin > 0 && (
-                                <p className="text-[11px] font-bold text-emerald-600">+${bet.potentialWin.toFixed(2)}</p>
-                              )}
-                              <p className="text-xs font-semibold text-slate-500">{formatOddsDisplay(bet.odds)}</p>
-                              <p className="text-[10px] text-slate-400">{bet.createdAt}</p>
-                              <div className="flex items-center justify-end gap-2 mt-1">
-                                <button onClick={(e) => { e.stopPropagation(); handleRefreshBet(bet.gameId); }} disabled={isRefreshing}
-                                  className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-violet-600 transition-colors disabled:opacity-40 font-semibold">
-                                  <RefreshCw size={10} className={isRefreshing ? "animate-spin" : ""} />
-                                </button>
-                                <button className="inline-flex items-center text-slate-400 hover:text-violet-600 transition-colors">
-                                  <ChevronUp size={14} />
-                                </button>
-                              </div>
-                            </div>
-                          </div>
 
-                          <LiveProgressBar progress={progress} betStatus={bet.status} />
+                        <LiveProgressBar progress={progress} betStatus={bet.status} />
 
-                          {extraDetails}
+                        {extraDetails}
 
-                          <div className="mt-3 flex justify-end gap-3 pt-3 border-t border-slate-100">
-                            <button onClick={(e) => { e.stopPropagation(); editBet(bet); }}
-                              className="text-[11px] text-slate-400 hover:text-violet-600 flex items-center gap-1 transition-colors font-semibold">
-                              <Edit2 size={10} /> Editar
-                            </button>
-                            <button onClick={(e) => { e.stopPropagation(); if(window.confirm("¿Estás seguro de que deseas eliminar esta apuesta? Esta acción no se puede deshacer.")) deleteBet(bet.id); }}
-                              className="text-[11px] text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors font-semibold">
-                              <Trash2 size={10} /> Eliminar
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>}
+                        <div className="mt-3 flex justify-end gap-3 pt-3 border-t border-slate-100">
+                          <button onClick={(e) => { e.stopPropagation(); editBet(bet); }}
+                            className="text-[11px] text-slate-400 hover:text-violet-600 flex items-center gap-1 transition-colors font-semibold">
+                            <Edit2 size={10} /> Editar
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); if (window.confirm("¿Estás seguro de que deseas eliminar esta apuesta? Esta acción no se puede deshacer.")) deleteBet(bet.id); }}
+                            className="text-[11px] text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors font-semibold">
+                            <Trash2 size={10} /> Eliminar
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>}
         </div>
       </div>
     </div>

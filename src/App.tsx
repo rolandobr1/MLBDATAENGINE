@@ -586,57 +586,50 @@ export default function App() {
               </p>
             </div>
 
-            <div className="flex flex-col items-start gap-3 w-full mt-3 sm:mt-0">
+            <div className="flex flex-col items-start gap-2 w-full mt-3 sm:mt-0">
               {games.length > 0 && (
-                <div className="flex flex-wrap items-center gap-2 w-full">
-                  <div className="relative">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full">
+
+                  {/* Search — full width on mobile, auto-shrink on desktop */}
+                  <div className="relative w-full sm:flex-1 sm:min-w-[180px] sm:max-w-xs">
                     <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
-                      <Search size={14} className="text-slate-400" />
+                      <Search size={13} className="text-slate-400" />
                     </div>
                     <input
                       type="text"
-                      placeholder="Buscar equipo..."
+                      placeholder="Buscar equipo o jugador..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-8 pr-3 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 w-full sm:w-40 transition-colors"
+                      className="pl-8 pr-3 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 w-full transition-colors"
                     />
                   </div>
-                  
-                  {/* Nuevos Filtros */}
-                  <select value={filterTime} onChange={e => setFilterTime(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none">
-                    <option value="All">Hora (Todas)</option>
-                    <option value="Afternoon">Tarde (antes 6 PM)</option>
-                    <option value="Night">Noche (desde 6 PM)</option>
-                  </select>
-                  
-                  <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none">
-                    <option value="All">Estatus (Todos)</option>
-                    <option value="Scheduled">Programado</option>
-                    <option value="In Progress">En Vivo</option>
-                    <option value="Final">Finalizado</option>
-                  </select>
 
-                  <select value={filterLeague} onChange={e => setFilterLeague(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none">
-                    <option value="All">Liga (Ambas)</option>
-                    <option value="AL">Americana (AL)</option>
-                    <option value="NL">Nacional (NL)</option>
-                  </select>
-
-                  <select value={filterDivision} onChange={e => setFilterDivision(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none">
-                    <option value="All">División (Todas)</option>
-                    <option value="East">Este</option>
-                    <option value="Central">Central</option>
-                    <option value="West">Oeste</option>
-                  </select>
-
-                  <div className="bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs font-mono font-medium text-slate-600 shadow-sm shrink-0 ml-auto">
-                    Extracción: <strong className="text-slate-800 uppercase">{games.length > 0 ? "Completado" : "Pendiente"}</strong>
+                  {/* Selects: 2-col grid on mobile, single flex row on desktop */}
+                  <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:flex-row sm:items-center sm:gap-2 sm:w-auto">
+                    <select value={filterTime} onChange={e => setFilterTime(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
+                      <option value="All">⏰ Hora (Todas)</option>
+                      <option value="Afternoon">Tarde (antes 6 PM)</option>
+                      <option value="Night">Noche (desde 6 PM)</option>
+                    </select>
+                    <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
+                      <option value="All">📋 Estatus (Todos)</option>
+                      <option value="Scheduled">Programado</option>
+                      <option value="In Progress">En Vivo</option>
+                      <option value="Final">Finalizado</option>
+                    </select>
+                    <select value={filterLeague} onChange={e => setFilterLeague(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
+                      <option value="All">🏟 Liga (Ambas)</option>
+                      <option value="AL">Americana (AL)</option>
+                      <option value="NL">Nacional (NL)</option>
+                    </select>
+                    <select value={filterDivision} onChange={e => setFilterDivision(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
+                      <option value="All">🧭 División (Todas)</option>
+                      <option value="East">Este</option>
+                      <option value="Central">Central</option>
+                      <option value="West">Oeste</option>
+                    </select>
                   </div>
-                </div>
-              )}
-              {games.length === 0 && (
-                <div className="bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs font-mono font-medium text-slate-600 shadow-sm shrink-0 ml-auto">
-                  Extracción: <strong className="text-slate-800 uppercase">Pendiente</strong>
+
                 </div>
               )}
             </div>
@@ -681,8 +674,20 @@ export default function App() {
                 // Filtro de Búsqueda
                 if (searchQuery) {
                   const searchLower = searchQuery.toLowerCase();
-                  if (!g.metadata.homeTeam.toLowerCase().includes(searchLower) &&
-                      !g.metadata.awayTeam.toLowerCase().includes(searchLower)) {
+                  const matchesTeam =
+                    g.metadata.homeTeam.toLowerCase().includes(searchLower) ||
+                    g.metadata.awayTeam.toLowerCase().includes(searchLower);
+
+                  const matchesPitcher =
+                    g.pitchers?.home?.name?.toLowerCase().includes(searchLower) ||
+                    g.pitchers?.away?.name?.toLowerCase().includes(searchLower);
+
+                  const matchesLineup = [
+                    ...(g.lineups?.home || []),
+                    ...(g.lineups?.away || [])
+                  ].some((p: any) => p?.name?.toLowerCase().includes(searchLower));
+
+                  if (!matchesTeam && !matchesPitcher && !matchesLineup) {
                     return false;
                   }
                 }

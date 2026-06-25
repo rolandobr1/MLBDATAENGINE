@@ -18,6 +18,7 @@ import {
   Download,
   Eye,
   EyeOff,
+  Search,
   X
 } from "lucide-react";
 
@@ -31,7 +32,7 @@ interface GameCardProps {
 }
 
 
-const LiveFieldUI: React.FC<{ linescore: any, liveBoxscore: any }> = ({ linescore, liveBoxscore }) => {
+const LiveFieldUI: React.FC<{ linescore: any, liveBoxscore: any, gameStatus?: string }> = ({ linescore, liveBoxscore, gameStatus = '' }) => {
   if (!linescore) return null;
 
   const b = linescore.balls || 0;
@@ -95,12 +96,24 @@ const LiveFieldUI: React.FC<{ linescore: any, liveBoxscore: any }> = ({ linescor
       {/* Top rainbow accent */}
       <div className="h-0.5 w-full bg-gradient-to-r from-blue-500 via-red-500 to-amber-500" />
 
-      {/* EN VIVO pill */}
+      {/* Status pill */}
       <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20">
-        <div className="flex items-center gap-1.5 bg-red-600 px-3 py-0.5 rounded-full shadow-lg shadow-red-900/50">
-          <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-          <span className="text-white text-[9px] font-black uppercase tracking-[0.15em]">EN VIVO</span>
-        </div>
+        {(() => {
+          let label = 'EN VIVO';
+          let bg = 'bg-red-600';
+          let shadow = 'shadow-red-900/50';
+          if (gameStatus.includes('Challenge')) {
+            label = 'REVISIÓN'; bg = 'bg-orange-500'; shadow = 'shadow-orange-900/50';
+          } else if (gameStatus.includes('Delayed')) {
+            label = 'SUSPENDIDO'; bg = 'bg-yellow-600'; shadow = 'shadow-yellow-900/50';
+          }
+          return (
+            <div className={`flex items-center gap-1.5 ${bg} px-3 py-0.5 rounded-full shadow-lg ${shadow}`}>
+              <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+              <span className="text-white text-[9px] font-black uppercase tracking-[0.15em]">{label}</span>
+            </div>
+          );
+        })()}
       </div>
 
       <div className="relative z-10 flex items-stretch px-3 pb-3 pt-8 gap-1">
@@ -267,6 +280,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [expandedPlayer, setExpandedPlayer] = React.useState<string | null>(null);
   const [selectedPitcherSide, setSelectedPitcherSide] = React.useState<"home" | "away" | null>(null);
+  const [playSearch, setPlaySearch] = React.useState("");
 
   React.useEffect(() => {
     if (globalExpandToggle !== undefined && globalExpandToggle > 0) {
@@ -774,18 +788,21 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
       {isCardExpanded && (
         <div className="bg-slate-50 border-t border-slate-200">
           
-          {/* Live Progress Indicator */}
+          {/* Live Progress Indicator — solo para juegos en curso */}
           {(() => {
             const status = game.game_result?.gameStatus || '';
-            const isLiveStatus = status.includes('In Progress') ||
+            const isActuallyLive =
+              status.includes('In Progress') ||
               status.includes('Challenge') ||
               status.includes('Delayed') ||
-              status.includes('Warmup') ||
-              status.includes('Pre-Game') ||
               status === 'Live';
-            return isLiveStatus && game.linescore ? (
+            return isActuallyLive && game.linescore ? (
               <div className="mb-4">
-                <LiveFieldUI linescore={game.linescore} liveBoxscore={game.liveBoxscore} />
+                <LiveFieldUI
+                  linescore={game.linescore}
+                  liveBoxscore={game.liveBoxscore}
+                  gameStatus={status}
+                />
               </div>
             ) : null;
           })()}
@@ -1506,33 +1523,119 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                 )}
 
                 {/* Play by Play */}
-                {game.playByPlay && (
+                {game.playByPlay && (() => {
+                  const translatePlay = (desc: string): string => {
+                    if (!desc) return desc;
+                    return desc
+                      // Resultados de turno al bate
+                      .replace(/strikes out swinging/gi, 'ponche (bateado en el aire)')
+                      .replace(/strikes out looking/gi, 'ponche (llamado tercer strike)')
+                      .replace(/(?<!\w)strikes out(?!\s+swinging|\s+looking)/gi, 'se poncha')
+                      .replace(/walks/gi, 'base por bolas')
+                      .replace(/intentional walk/gi, 'base por bolas intencional')
+                      .replace(/singles(?: to (\w+))?/gi, (m, loc) => `sencillo${loc ? ` al ${loc === 'left' ? 'left field' : loc === 'right' ? 'right field' : loc === 'center' ? 'center field' : loc}` : ''}`)
+                      .replace(/doubles(?: to (\w+))?/gi, 'doble')
+                      .replace(/triples(?: to (\w+))?/gi, 'triple')
+                      .replace(/homers? \(\d+\)/gi, (m) => `jonrón ${m.match(/\((\d+)\)/)?.[0] || ''}`)
+                      .replace(/\bhomers?\b/gi, 'jonrón')
+                      .replace(/grounds out/gi, 'roletazo de out')
+                      .replace(/grounds into double play/gi, 'doble matanza por roletazo')
+                      .replace(/grounds into fielders choice/gi, 'selección del fildeador')
+                      .replace(/flies out/gi, 'elevado de out')
+                      .replace(/lines out/gi, 'línea de out')
+                      .replace(/pops out/gi, 'palomita de out')
+                      .replace(/hit by pitch/gi, 'golpeado por pitcheo')
+                      .replace(/reaches on a fielding error/gi, 'llega por error de fildeo')
+                      .replace(/reaches on a throwing error/gi, 'llega por error de tiro')
+                      .replace(/sac fly/gi, 'elevado de sacrificio')
+                      .replace(/sacrifice bunt/gi, 'toque de sacrificio')
+                      .replace(/bunt/gi, 'toque')
+                      // Robos y carreras
+                      .replace(/steals (\w+) base/gi, (_, b) => `roba ${b === 'second' ? 'segunda' : b === 'third' ? 'tercera' : b} base`)
+                      .replace(/caught stealing/gi, 'atrapado robando')
+                      .replace(/scores/gi, 'anota')
+                      .replace(/wild pitch/gi, 'pitcheo descontrolado')
+                      .replace(/passed ball/gi, 'bola pasada')
+                      .replace(/balks/gi, 'balk')
+                      // Direcciones y posiciones
+                      .replace(/\bleft field\b/gi, 'jardín izquierdo')
+                      .replace(/\bright field\b/gi, 'jardín derecho')
+                      .replace(/\bcenter field\b/gi, 'jardín central')
+                      .replace(/\bshortstop\b/gi, 'campo corto')
+                      .replace(/\bthird base\b/gi, 'tercera base')
+                      .replace(/\bsecond base\b/gi, 'segunda base')
+                      .replace(/\bfirst base\b/gi, 'primera base')
+                      .replace(/\bcatcher\b/gi, 'receptor')
+                      .replace(/\bpitcher\b/gi, 'lanzador')
+                      // Posiciones en base
+                      .replace(/\bto first\b/gi, 'a primera')
+                      .replace(/\bto second\b/gi, 'a segunda')
+                      .replace(/\bto third\b/gi, 'a tercera')
+                      .replace(/\bto home\b/gi, 'al plato');
+                  };
+
+                  const quickFilters = [
+                    { label: '⚡ Carreras', kw: 'scores' },
+                    { label: '🔥 Ponches', kw: 'strikes out' },
+                    { label: '🏠 Jonrones', kw: 'homer' },
+                    { label: '🚶 BB', kw: 'walks' },
+                    { label: '🎯 Sencillos', kw: 'singles' },
+                  ];
+
+                  return (
                   <div className="bg-white rounded-lg border border-slate-200/60 overflow-hidden shadow-sm p-4 space-y-3">
-                    <div className="flex items-center justify-between border-b pb-1.5">
-                      <h5 className="font-display font-bold text-xs uppercase tracking-wider text-slate-800">
-                        Registro de Jugadas (Play-by-Play)
-                      </h5>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-semibold text-slate-500">Mostrar jugadas</span>
-                        <button
-                          type="button"
-                          onClick={() => setShowAllPlays(!showAllPlays)}
-                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${showAllPlays ? "bg-blue-600" : "bg-slate-200"
-                            }`}
-                        >
-                          <span
-                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${showAllPlays ? "translate-x-4" : "translate-x-0"
-                              }`}
+                    <div className="flex flex-col gap-2 border-b pb-2">
+                      {/* Row 1: title + toggle + refresh */}
+                      <div className="flex items-center justify-between">
+                        <h5 className="font-display font-bold text-xs uppercase tracking-wider text-slate-800">
+                          Registro de Jugadas (Play-by-Play)
+                        </h5>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-semibold text-slate-500">Mostrar jugadas</span>
+                          <button
+                            type="button"
+                            onClick={() => setShowAllPlays(!showAllPlays)}
+                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${showAllPlays ? "bg-blue-600" : "bg-slate-200"}`}
+                          >
+                            <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${showAllPlays ? "translate-x-4" : "translate-x-0"}`} />
+                          </button>
+                          <button type="button" onClick={handleRefreshClick} disabled={isRefreshing} className="p-1 rounded hover:bg-slate-200">
+                            <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
+                          </button>
+                        </div>
+                      </div>
+                      {/* Row 2: Search + quick chips */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <div className="relative flex-1 min-w-[160px]">
+                          <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
+                            <Search size={11} className="text-slate-400" />
+                          </div>
+                          <input
+                            type="text"
+                            value={playSearch}
+                            onChange={e => setPlaySearch(e.target.value)}
+                            placeholder="Buscar jugador o jugada..."
+                            className="pl-6 pr-2 py-1 text-[10px] font-sans border border-slate-200 rounded-md w-full focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
                           />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleRefreshClick}
-                          disabled={isRefreshing}
-                          className="p-1 rounded hover:bg-slate-200"
-                        >
-                          <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
-                        </button>
+                          {playSearch && (
+                            <button onClick={() => setPlaySearch('')} className="absolute inset-y-0 right-1 flex items-center text-slate-400 hover:text-slate-600">
+                              <X size={10} />
+                            </button>
+                          )}
+                        </div>
+                        {quickFilters.map(f => (
+                          <button
+                            key={f.kw}
+                            onClick={() => setPlaySearch(playSearch === f.kw ? '' : f.kw)}
+                            className={`text-[9px] font-bold px-2 py-0.5 rounded-full border transition whitespace-nowrap ${
+                              playSearch === f.kw
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                            }`}
+                          >
+                            {f.label}
+                          </button>
+                        ))}
                       </div>
                     </div>
 
@@ -1542,7 +1645,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                           Actual ({game.playByPlay.currentPlay.inning})
                         </div>
                         <div className="text-sm font-sans text-slate-800 flex-1 text-left">
-                          {game.playByPlay.currentPlay.description}
+                          {translatePlay(game.playByPlay.currentPlay.description)}
                         </div>
                         <div className="font-mono font-bold text-slate-900 text-sm shrink-0">
                           {game.playByPlay.currentPlay.score}
@@ -1559,24 +1662,44 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       
                       const allPlays = isGameInProgress && game.playByPlay.allPlays ? [...game.playByPlay.allPlays].reverse() : game.playByPlay.allPlays;
 
+                      const searchLower = playSearch.toLowerCase().trim();
+                      const filteredPlays = searchLower && allPlays
+                        ? allPlays.filter((p: any) => p.description?.toLowerCase().includes(searchLower))
+                        : allPlays;
+
                       return (
                         <div className="space-y-2 mt-2 max-h-96 overflow-y-auto pr-1">
                           {showAllPlays ? (
-                            !allPlays || allPlays.length === 0 ? (
-                              <div className="text-xs text-slate-400 italic text-center py-4">No hay jugadas registradas aún.</div>
+                            !filteredPlays || filteredPlays.length === 0 ? (
+                              <div className="text-xs text-slate-400 italic text-center py-4">
+                                {searchLower ? `No hay jugadas que coincidan con "${playSearch}".` : 'No hay jugadas registradas aún.'}
+                              </div>
                             ) : (
-                              allPlays.map((play: any, idx: number) => {
+                              filteredPlays.map((play: any, idx: number) => {
                                 const isScoring = play.isScoringPlay;
+                                const isTop = play.inning?.toLowerCase().startsWith('top');
+                                const battingTeam = isTop ? game.metadata.awayTeam : game.metadata.homeTeam;
+                                const teamAbbr = getTeamAbbr(battingTeam);
+                                const teamColor = getTeamColor(battingTeam);
                                 return (
-                                  <div key={idx} className={`flex gap-3 items-start border-b border-slate-100 pb-2 last:border-0 p-1.5 rounded transition text-left ${isScoring ? "bg-yellow-50/70 border-l-2 border-l-yellow-400" : "hover:bg-slate-50/50"
-                                    }`}>
-                                    <div className={`font-bold px-2 py-0.5 rounded text-[9px] shrink-0 font-mono mt-0.5 w-14 text-center ${isScoring ? "bg-yellow-100 text-yellow-800" : "bg-slate-100 text-slate-600"
-                                      }`}>
+                                  <div key={idx} className={`flex gap-2 items-start border-b border-slate-100 pb-2 last:border-0 p-1.5 rounded transition text-left ${isScoring ? "bg-yellow-50/70 border-l-2 border-l-yellow-400" : "hover:bg-slate-50/50"}`}>
+                                    {/* Inning badge */}
+                                    <div className={`font-bold px-2 py-0.5 rounded text-[9px] shrink-0 font-mono mt-0.5 w-14 text-center ${isScoring ? "bg-yellow-100 text-yellow-800" : "bg-slate-100 text-slate-600"}`}>
                                       {play.inning}
                                     </div>
-                                    <div className="text-xs font-sans text-slate-700 flex-1">
-                                      {play.description}
+                                    {/* Team badge */}
+                                    <div
+                                      className="shrink-0 mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wide text-white font-mono"
+                                      style={{ background: teamColor, minWidth: '32px', textAlign: 'center' }}
+                                      title={battingTeam}
+                                    >
+                                      {teamAbbr}
                                     </div>
+                                    {/* Description */}
+                                    <div className="text-xs font-sans text-slate-700 flex-1">
+                                      {translatePlay(play.description)}
+                                    </div>
+                                    {/* Score */}
                                     <div className="font-mono font-bold text-slate-800 text-xs shrink-0 mt-0.5 bg-slate-50 px-1.5 rounded">
                                       {play.score}
                                     </div>
@@ -1594,7 +1717,9 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       );
                     })()}
                   </div>
-                )}
+                  );
+                })()}
+
               </div>
             )}
 
