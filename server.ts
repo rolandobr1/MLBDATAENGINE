@@ -4058,16 +4058,34 @@ app.post("/api/harvest", async (req, res) => {
       const getLineupVsHandProjection = (lineup: any[], pitcherHand: string) => {
         if (!lineup.length) return { kPct: null, contactPct: null };
         const isLefty = pitcherHand === "L";
-      const kValues = lineup
-        .map((p: any) => safeFloat(isLefty ? p.k_pct_vs_lhp : p.k_pct_vs_rhp) ?? safeFloat(p.strikeout_pct) ?? safeFloat(p.kPct))
-        .filter((value): value is number => value !== null && value > 0);
-        const contactValues = lineup
-          .map((p: any) => safeFloat(isLefty ? p.contact_pct_vs_lhp : p.contact_pct_vs_rhp))
-          .filter((value): value is number => value !== null && value > 0);
-        const kPct = average(kValues, 1);
+        
+        const validKPlayers = lineup.map((p: any) => ({
+          val: safeFloat(isLefty ? p.k_pct_vs_lhp : p.k_pct_vs_rhp) ?? safeFloat(p.strikeout_pct) ?? safeFloat(p.kPct),
+          pa: (p.pa && p.pa > 0) ? p.pa : 50,
+        })).filter(p => p.val !== null && p.val > 0);
+
+        let kPct = null;
+        if (validKPlayers.length > 0) {
+          const totalWeightedK = validKPlayers.reduce((sum, p) => sum + (p.val! * p.pa), 0);
+          const totalPA = validKPlayers.reduce((sum, p) => sum + p.pa, 0);
+          kPct = totalPA > 0 ? totalWeightedK / totalPA : null;
+        }
+
+        const validContactPlayers = lineup.map((p: any) => ({
+          val: safeFloat(isLefty ? p.contact_pct_vs_lhp : p.contact_pct_vs_rhp),
+          pa: (p.pa && p.pa > 0) ? p.pa : 50,
+        })).filter(p => p.val !== null && p.val > 0);
+
+        let contactPct = null;
+        if (validContactPlayers.length > 0) {
+          const totalWeightedContact = validContactPlayers.reduce((sum, p) => sum + (p.val! * p.pa), 0);
+          const totalPAContact = validContactPlayers.reduce((sum, p) => sum + p.pa, 0);
+          contactPct = totalPAContact > 0 ? totalWeightedContact / totalPAContact : null;
+        }
+
         return {
           kPct,
-          contactPct: contactValues.length > 0 ? average(contactValues, 1) : null
+          contactPct
         };
       };
 
@@ -4651,8 +4669,18 @@ async function runStartupFirestoreSync() {
 // Serve static assets in production or connect Vite in development
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { default: tailwindcss } = await import('@tailwindcss/vite');
+    const { default: react } = await import('@vitejs/plugin-react');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      configFile: false,
+      plugins: [react(), tailwindcss()],
+      server: { 
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR !== 'true',
+        watch: process.env.DISABLE_HMR === 'true' ? null : {
+          ignored: ['**/mlb_database.json', '**/mlb_errors.json', '**/datastreak_*.json', '**/odds_cache_*.json', '**/savant_*.json', '**/games_db*.json'],
+        }
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);

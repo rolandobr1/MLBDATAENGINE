@@ -66,8 +66,25 @@ export const generateMLBCsvString = (games: MLBGame[]): string => {
 
     const safeVal = (val: any) => (val !== undefined && val !== null) ? val : "";
 
-    const homeLineupKPct = game.lineups?.home ? game.lineups.home.reduce((sum, p) => sum + (p.kPct || 0), 0) / (game.lineups.home.filter(p => p.kPct !== undefined).length || 1) : "";
-    const awayLineupKPct = game.lineups?.away ? game.lineups.away.reduce((sum, p) => sum + (p.kPct || 0), 0) / (game.lineups.away.filter(p => p.kPct !== undefined).length || 1) : "";
+    const calculateWeightedKPct = (lineup: any[]) => {
+      if (!lineup || !lineup.length) return "";
+      const validPlayers = lineup.filter(p => p.kPct !== undefined && p.kPct !== null);
+      if (!validPlayers.length) return "";
+      
+      let totalWeightedK = 0;
+      let totalPA = 0;
+      
+      validPlayers.forEach(p => {
+        const pa = (p.pa && p.pa > 0) ? p.pa : 50; // Fallback weight for rookies with missing/0 PA
+        totalWeightedK += (p.kPct || 0) * pa;
+        totalPA += pa;
+      });
+      
+      return totalPA > 0 ? totalWeightedK / totalPA : "";
+    };
+
+    const homeLineupKPct = calculateWeightedKPct(game.lineups?.home || []);
+    const awayLineupKPct = calculateWeightedKPct(game.lineups?.away || []);
 
     const row = [
       // Metadata

@@ -246,9 +246,14 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
   }
 
   if (bet.betTypeKey === "pitcher_k") {
-    const pitchers = game.liveBoxscore?.[bet.teamSide]?.pitchers ?? [];
-    const pitcherIndex = pitchers.findIndex(p => p.name === bet.subject);
-    const pitcher = pitcherIndex >= 0 ? pitchers[pitcherIndex] : pitchers[0];
+    let pitchers = game.liveBoxscore?.[bet.teamSide]?.pitchers ?? [];
+    let pitcherIndex = pitchers.findIndex(p => p.name === bet.subject || (bet.subject.split(" ").length > 1 && p.name.toLowerCase().includes(bet.subject.split(" ").pop()!.toLowerCase())));
+    if (pitcherIndex < 0) {
+      const otherSide = bet.teamSide === "home" ? "away" : "home";
+      pitchers = game.liveBoxscore?.[otherSide]?.pitchers ?? [];
+      pitcherIndex = pitchers.findIndex(p => p.name === bet.subject || (bet.subject.split(" ").length > 1 && p.name.toLowerCase().includes(bet.subject.split(" ").pop()!.toLowerCase())));
+    }
+    const pitcher = pitcherIndex >= 0 ? pitchers[pitcherIndex] : undefined;
     const current = pitcher?.k ?? 0;
     const exceeded = current >= bet.line;
     const isPulled = (isLive || isFinal) && pitcherIndex >= 0 && pitchers.slice(pitcherIndex + 1).some(p => (p.pitches || 0) > 0 || (p.ip && p.ip !== "0.0" && p.ip !== "0"));
@@ -274,8 +279,13 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
   }
 
   if (bet.betTypeKey === "batter_tb") {
-    const batters = game.liveBoxscore?.[bet.teamSide]?.batters ?? [];
-    const batter = batters.find(b => b.name === bet.subject);
+    let batters = game.liveBoxscore?.[bet.teamSide]?.batters ?? [];
+    let batter = batters.find(b => b.name === bet.subject || (bet.subject.split(" ").length > 1 && b.name.toLowerCase().includes(bet.subject.split(" ").pop()!.toLowerCase())));
+    if (!batter) {
+      const otherSide = bet.teamSide === "home" ? "away" : "home";
+      batters = game.liveBoxscore?.[otherSide]?.batters ?? [];
+      batter = batters.find(b => b.name === bet.subject || (bet.subject.split(" ").length > 1 && b.name.toLowerCase().includes(bet.subject.split(" ").pop()!.toLowerCase())));
+    }
     const current = batter?.total_bases ?? 0;
     const exceeded = current >= bet.line;
     const pct = bet.line > 0 ? Math.min(100, Math.round((current / bet.line) * 100)) : 0;
@@ -620,13 +630,14 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
   const [amount, setAmount] = useState("");
   const [odds, setOdds] = useState("");
   const [note, setNote] = useState("");
+  const [editStatus, setEditStatus] = useState<BetStatus>("pending");
   const [showSmartPaste, setShowSmartPaste] = useState(false);
   const [smartPasteText, setSmartPasteText] = useState("");
   const [smartPasteError, setSmartPasteError] = useState("");
 
   const potentialWin = useMemo(() => calcPotentialWin(parseFloat(amount) || 0, odds, oddsFormat), [amount, odds, oddsFormat]);
 
-  const selectedGame = useMemo(() => games.find(g => String(g.id) === selectedGameId) ?? null, [games, selectedGameId]);
+  const selectedGame = useMemo(() => (games.find(g => String(g.id) === selectedGameId) || dateGames.find(g => String(g.id) === selectedGameId)) ?? null, [games, dateGames, selectedGameId]);
   const teamName = selectedGame ? (selectedTeamSide === "home" ? selectedGame.metadata.homeTeam : selectedGame.metadata.awayTeam) : "";
   const opponentName = selectedGame ? (selectedTeamSide === "home" ? selectedGame.metadata.awayTeam : selectedGame.metadata.homeTeam) : "";
   const pitcherName = selectedGame && selectedTeamSide ? (selectedTeamSide === "home" ? selectedGame.pitchers.home.name : selectedGame.pitchers.away.name) : "";
@@ -650,6 +661,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     setStep(1); setSelectedGameId(""); setSelectedTeamSide(""); setCategory("");
     setSubject(""); setBetTypeKey(""); setBetLabel(""); setIsOver(true);
     setLine(""); setBookmaker(""); setAmount(""); setOdds(""); setNote("");
+    setEditStatus("pending");
     setShowSmartPaste(false); setSmartPasteText(""); setSmartPasteError("");
   };
 
@@ -793,6 +805,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
         odds: odds.trim() || "—",
         potentialWin,
         note: note.trim(),
+        status: editStatus,
       } : b));
     } else {
       const newBet: Bet = {
@@ -836,7 +849,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     setAmount(bet.amount ? String(bet.amount) : "");
     setOdds(oddsForFormat(bet.odds, oddsFormat));
     setNote(bet.note || "");
-    setNote(bet.note || "");
+    setEditStatus(bet.status);
     setStep(5);
   };
 
@@ -1447,6 +1460,19 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                   <textarea placeholder='Ej. "Pitcher cansado, steam move..."' value={note} onChange={e => setNote(e.target.value)} rows={2}
                     className="w-full border border-slate-200 rounded-lg p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white resize-none" />
                 </div>
+
+                {editingBetId && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Estado de la apuesta</label>
+                    <select value={editStatus} onChange={e => setEditStatus(e.target.value as BetStatus)}
+                      className="w-full border border-slate-200 rounded-lg p-2.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white">
+                      <option value="pending">Pendiente</option>
+                      <option value="won">Ganada</option>
+                      <option value="lost">Perdida</option>
+                      <option value="void">Anulada (Push/Void)</option>
+                    </select>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1533,11 +1559,19 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                     let statsText = "";
                     if (bet.betCategory === "pitcher") {
                       const side = bet.teamSide;
-                      const p = game.liveBoxscore?.[side]?.pitchers?.find(p => p.name === bet.subject) || game.liveBoxscore?.[side]?.pitchers?.[0];
+                      let p = game.liveBoxscore?.[side]?.pitchers?.find(p => p.name === bet.subject || (bet.subject.split(" ").length > 1 && p.name.toLowerCase().includes(bet.subject.split(" ").pop()!.toLowerCase())));
+                      if (!p) {
+                        const otherSide = side === "home" ? "away" : "home";
+                        p = game.liveBoxscore?.[otherSide]?.pitchers?.find(p => p.name === bet.subject || (bet.subject.split(" ").length > 1 && p.name.toLowerCase().includes(bet.subject.split(" ").pop()!.toLowerCase())));
+                      }
                       if (p) statsText = `IP: ${p.ip || "0.0"} | Picheos: ${p.pitches || 0} | ER: ${p.er || 0}`;
                     } else if (bet.betCategory === "batter") {
                       const side = bet.teamSide;
-                      const b = game.liveBoxscore?.[side]?.batters?.find(b => b.name === bet.subject) || game.liveBoxscore?.[side]?.batters?.[0];
+                      let b = game.liveBoxscore?.[side]?.batters?.find(b => b.name === bet.subject || (bet.subject.split(" ").length > 1 && b.name.toLowerCase().includes(bet.subject.split(" ").pop()!.toLowerCase())));
+                      if (!b) {
+                        const otherSide = side === "home" ? "away" : "home";
+                        b = game.liveBoxscore?.[otherSide]?.batters?.find(b => b.name === bet.subject || (bet.subject.split(" ").length > 1 && b.name.toLowerCase().includes(bet.subject.split(" ").pop()!.toLowerCase())));
+                      }
                       if (b) statsText = `AB: ${b.ab || 0} | H: ${b.h || 0} | R: ${b.r || 0} | RBI: ${b.rbi || 0} | K: ${b.k || 0}`;
                     }
 
@@ -1563,11 +1597,19 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                             <span className="font-bold text-sm text-slate-800 truncate">{bet.subject}</span>
                             <span className="text-xs text-slate-500 truncate hidden sm:inline">· {bet.betLabel}</span>
                           </div>
-                          <div className="flex items-center gap-3 shrink-0">
+                          <div className="flex items-center gap-2 shrink-0">
                             <span className="font-bold text-sm text-slate-800">${bet.amount}</span>
-                            {bet.potentialWin > 0 && <span className="text-xs font-bold text-emerald-600 hidden sm:inline">+${bet.potentialWin.toFixed(2)}</span>}
-                            <button className="text-slate-400 hover:text-violet-600 transition-colors">
-                              <ChevronDown size={14} />
+                            {bet.status === "won" && bet.potentialWin > 0 && <span className="text-xs font-bold text-emerald-600 hidden sm:inline">+${bet.potentialWin.toFixed(2)}</span>}
+                            {bet.status === "lost" && <span className="text-xs font-bold text-red-500 hidden sm:inline">-${bet.amount.toFixed(2)}</span>}
+                            {bet.status === "pending" && bet.potentialWin > 0 && <span className="text-xs font-bold text-slate-400 hidden sm:inline">Pot: +${bet.potentialWin.toFixed(2)}</span>}
+                            {bet.status === "void" && <span className="text-xs font-bold text-slate-500 hidden sm:inline">Void</span>}
+                            <button onClick={(e) => { e.stopPropagation(); handleRefreshBet(bet.gameId); }} disabled={isRefreshing}
+                              className="p-1.5 bg-slate-50 hover:bg-slate-100 rounded-md text-slate-400 hover:text-violet-600 transition-colors disabled:opacity-40"
+                              title="Actualizar">
+                              <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
+                            </button>
+                            <button className="text-slate-400 hover:text-violet-600 transition-colors p-1.5">
+                              <ChevronDown size={16} />
                             </button>
                           </div>
                         </div>
@@ -1596,17 +1638,27 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                           <div className="text-right shrink-0 space-y-0.5">
                             <p className="text-xs text-slate-400 font-semibold">{bet.userName}</p>
                             <p className="text-sm font-bold text-slate-800">{bet.amount > 0 ? `$${bet.amount}` : "—"}</p>
-                            {bet.potentialWin > 0 && (
+                            {bet.status === "won" && bet.potentialWin > 0 && (
                               <p className="text-[11px] font-bold text-emerald-600">+${bet.potentialWin.toFixed(2)}</p>
+                            )}
+                            {bet.status === "lost" && (
+                              <p className="text-[11px] font-bold text-red-500">-${bet.amount.toFixed(2)}</p>
+                            )}
+                            {bet.status === "pending" && bet.potentialWin > 0 && (
+                              <p className="text-[11px] font-bold text-slate-400">Pot: +${bet.potentialWin.toFixed(2)}</p>
+                            )}
+                            {bet.status === "void" && (
+                              <p className="text-[11px] font-bold text-slate-500">Void</p>
                             )}
                             <p className="text-xs font-semibold text-slate-500">{formatOddsDisplay(bet.odds)}</p>
                             <p className="text-[10px] text-slate-400">{bet.createdAt}</p>
-                            <div className="flex items-center justify-end gap-2 mt-1">
+                            <div className="flex items-center justify-end gap-2 mt-2">
                               <button onClick={(e) => { e.stopPropagation(); handleRefreshBet(bet.gameId); }} disabled={isRefreshing}
-                                className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-violet-600 transition-colors disabled:opacity-40 font-semibold">
-                                <RefreshCw size={10} className={isRefreshing ? "animate-spin" : ""} />
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 rounded-md text-xs text-slate-500 hover:text-violet-600 transition-colors disabled:opacity-40 font-semibold border border-slate-200">
+                                <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
+                                <span>Actualizar</span>
                               </button>
-                              <button className="inline-flex items-center text-slate-400 hover:text-violet-600 transition-colors">
+                              <button className="inline-flex items-center text-slate-400 hover:text-violet-600 transition-colors p-1.5 bg-slate-50 hover:bg-slate-100 rounded-md border border-slate-200">
                                 <ChevronUp size={14} />
                               </button>
                             </div>
