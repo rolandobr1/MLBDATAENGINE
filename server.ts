@@ -523,6 +523,7 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
     home_pitcher_last3_vs_team_ks_avg: g.advanced_pitching?.home?.last3VsTeamKsAvg ?? null,
     home_pitcher_last3_vs_team_bf_avg: g.advanced_pitching?.home?.last3VsTeamBfAvg ?? null,
     home_pitcher_projected_pitches: g.advanced_pitching?.home?.projectedPitchCount ?? null,
+    home_pitcher_projected_innings: g.advanced_pitching?.home?.projectedInnings ?? null,
     home_pitcher_bf_per_start: g.advanced_pitching?.home?.battersFacedPerStart ?? null,
     away_pitcher_xera: g.advanced_pitching?.away?.xEra ?? null,
     away_pitcher_fip: g.advanced_pitching?.away?.fip ?? null,
@@ -555,6 +556,7 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
     away_pitcher_last3_vs_team_ks_avg: g.advanced_pitching?.away?.last3VsTeamKsAvg ?? null,
     away_pitcher_last3_vs_team_bf_avg: g.advanced_pitching?.away?.last3VsTeamBfAvg ?? null,
     away_pitcher_projected_pitches: g.advanced_pitching?.away?.projectedPitchCount ?? null,
+    away_pitcher_projected_innings: g.advanced_pitching?.away?.projectedInnings ?? null,
     away_pitcher_bf_per_start: g.advanced_pitching?.away?.battersFacedPerStart ?? null,
     home_offense_woba: g.advanced_offense?.home?.wOba ?? null,
     home_offense_xwoba: g.advanced_offense?.home?.xwOba ?? null,
@@ -1233,6 +1235,140 @@ function calculateProjectedPitchCount(
   }
 
   return finalValue;
+}
+
+function calculateProjectedInnings(pitching: Partial<AdvancedPitchingStats>): number | null {
+  const projectedPitches = pitching.projectedPitchCount;
+  if (projectedPitches === null || projectedPitches === undefined || projectedPitches <= 0) {
+    return null;
+  }
+  
+  const last5Pitches = pitching.last5PitchCountAvg;
+  const last5Ip = pitching.last5IpAvg;
+  
+  let pitchesPerInning = 16.5; // fallback
+  if (last5Pitches != null && last5Ip != null && last5Ip > 0) {
+    pitchesPerInning = last5Pitches / last5Ip;
+  }
+  pitchesPerInning = Math.min(25, Math.max(12, pitchesPerInning));
+  
+  const rawInnings = projectedPitches / pitchesPerInning;
+  const totalOuts = Math.round(rawInnings * 3);
+  if (totalOuts <= 0) return 0;
+  
+  const wholeInnings = Math.floor(totalOuts / 3);
+  const remainingOuts = totalOuts % 3;
+  return wholeInnings + (remainingOuts / 10);
+}
+
+function calculateVortexProjectedKs(
+  pitching: Partial<AdvancedPitchingStats>, 
+  opposingOffense: any,
+  fatigue: any
+): number | null {
+  const bfPerStart = pitching.battersFacedPerStart ?? 0;
+  if (bfPerStart <= 0) return null; // No projection possible without BF base
+
+  const last5BfAvg = pitching.last5BfAvg ?? bfPerStart;
+  const projectedPitches = pitching.projectedPitchCount;
+  
+  // 1. Calculate Pitches_per_BF and BF_from_Projected_Pitches
+  let pitchesPerBf = 3.95;
+  const bbPct = pitching.walkRate ?? 8.5; // typical avg
+  if (bbPct < 6.0) pitchesPerBf = 3.75;
+  else if (bbPct > 10.0) pitchesPerBf = 4.15;
+
+  let bfFromProjected = projectedPitches ? projectedPitches / pitchesPerBf : null;
+
+  // Expected_BF_raw
+  let expectedBfRaw = 0;
+  if (projectedPitches && pitching.last5BfAvg != null) {
+    expectedBfRaw = 0.40 * bfPerStart + 0.35 * last5BfAvg + 0.25 * bfFromProjected!;
+  } else if (!pitching.last5BfAvg && projectedPitches) {
+    expectedBfRaw = 0.55 * bfPerStart + 0.45 * bfFromProjected!;
+  } else if (!projectedPitches && pitching.last5BfAvg != null) {
+    expectedBfRaw = 0.55 * bfPerStart + 0.45 * last5BfAvg;
+  } else {
+    expectedBfRaw = bfPerStart;
+  }
+
+  // 3. Caps by Role
+  const role = getPitcherRoleFromBfPerStart(bfPerStart);
+  let expectedBf = expectedBfRaw;
+  
+  let capMin = 10, capMax = 30;
+  if (role.roleFlag.includes("OPENER") || role.roleFlag.includes("SHORT")) {
+    capMin = 6; capMax = 15;
+  } else if (role.roleFlag.includes("LIMITED") || expectedBfRaw < 18) {
+     capMin = 14; capMax = 20; 
+  } else if (expectedBfRaw < 21) {
+     capMin = 17; capMax = 23; 
+  } else if (expectedBfRaw > 24) {
+     capMin = 23; capMax = 30; 
+  } else {
+     capMin = 20; capMax = 27; 
+  }
+  expectedBf = clampNumber(expectedBfRaw, capMin, capMax);
+
+  // 4. Calculate Expected_K_pct
+  const pitcherKSkill = pitching.strikeoutRate ?? (pitching.last5KsAvg && last5BfAvg > 0 ? (pitching.last5KsAvg / last5BfAvg) * 100 : 20.0);
+  
+  const recentKPct = (pitching.last5KsAvg != null && last5BfAvg > 0) ? (pitching.last5KsAvg / last5BfAvg) * 100 : pitcherKSkill;
+  
+  const rawMatchup = opposingOffense?.projectedLineupKPct;
+  const matchupKPct = rawMatchup != null ? (rawMatchup < 1 ? rawMatchup * 100 : rawMatchup) : 22.0;
+
+  // Stuff K Score 
+  let stuffKScore = pitcherKSkill;
+  if (pitching.swingingStrikePct != null || pitching.cswPct != null) {
+     const swStr = pitching.swingingStrikePct ?? (pitching.cswPct ? pitching.cswPct - 17 : 11);
+     const csw = pitching.cswPct ?? (swStr + 17);
+     stuffKScore = (swStr * 1.5) + (csw * 0.35);
+  }
+
+  // Context Adjustment 
+  const rawContact = opposingOffense?.projectedLineupContactPctVsHand;
+  const contactPct = rawContact != null ? (rawContact <= 1 ? rawContact * 100 : rawContact) : null;
+  const contextAdjustment = contactPct != null ? (100 - contactPct) : pitcherKSkill;
+
+  let expectedKPct = 0.45 * pitcherKSkill + 0.20 * recentKPct + 0.20 * matchupKPct + 0.10 * stuffKScore + 0.05 * contextAdjustment;
+
+  // 7. Raw_Ks_Projection
+  const rawKs = expectedBf * (expectedKPct / 100);
+
+  // 8. Adjustments
+  let fatigueMultiplier = 1.0;
+  if (fatigue) {
+    if (fatigue.daysSinceLastStart != null) {
+       if (fatigue.daysSinceLastStart <= 3) fatigueMultiplier -= 0.04;
+       if (fatigue.daysSinceLastStart >= 5) fatigueMultiplier += 0.02;
+    }
+    if (fatigue.pitchesLastStart != null && fatigue.pitchesLastStart > 105) fatigueMultiplier -= 0.03;
+    if (fatigue.pitchesLast3Starts != null && fatigue.pitchesLast3Starts > 300) fatigueMultiplier -= 0.03;
+  }
+  fatigueMultiplier = clampNumber(fatigueMultiplier, 0.90, 1.05);
+
+  let varianceMultiplier = 0.98; 
+  if (pitching.last5KsStd != null) {
+     if (pitching.last5KsStd >= 3.0) varianceMultiplier = 0.93;
+     else if (pitching.last5KsStd >= 2.5) varianceMultiplier = 0.96;
+     else if (pitching.last5KsStd <= 1.5) varianceMultiplier = 1.02;
+     else varianceMultiplier = 1.00;
+  }
+
+  let efficiencyMultiplier = 1.00;
+  if (bbPct >= 10.5) efficiencyMultiplier -= 0.02;
+  else if (bbPct <= 5.5) efficiencyMultiplier += 0.01;
+  efficiencyMultiplier = clampNumber(efficiencyMultiplier, 0.97, 1.02);
+
+  const biasCorrection = 0.00;
+
+  const totalMultiplier = fatigueMultiplier * varianceMultiplier * efficiencyMultiplier;
+  const clampedMultiplier = clampNumber(totalMultiplier, 0.85, 1.12);
+
+  const projectedKsBase = rawKs * clampedMultiplier + biasCorrection;
+
+  return Number(projectedKsBase.toFixed(2));
 }
 
 function isFinalGameStatus(status: any): boolean {
@@ -2421,7 +2557,7 @@ async function fetchAdvancedPitching(pitcherId: number, season: string): Promise
   const defaults: AdvancedPitchingStats = {
     xEra: null, fip: null, xFip: null, siera: null,
     hardHitPct: null, barrelPct: null, groundBallPct: null, flyBallPct: null,
-    strikeoutRate: null, walkRate: null, swingingStrikePct: null
+    strikeoutRate: null, walkRate: null, swingingStrikePct: null, projectedInnings: null
   };
   if (!pitcherId) return defaults;
   try {
@@ -2538,7 +2674,7 @@ async function fetchAdvancedPitchingLast7(pitcherId: number, season: string, tar
   const defaults: AdvancedPitchingStats = {
     xEra: null, fip: null, xFip: null, siera: null,
     hardHitPct: null, barrelPct: null, groundBallPct: null, flyBallPct: null,
-    strikeoutRate: null, walkRate: null, swingingStrikePct: null
+    strikeoutRate: null, walkRate: null, swingingStrikePct: null, projectedInnings: null
   };
   if (!pitcherId) return defaults;
   try {
@@ -2804,7 +2940,7 @@ async function fetchAdvancedPitchingVsOpp(pitcherId: number, opposingTeamId: num
   const defaults: AdvancedPitchingStats = {
     xEra: null, fip: null, xFip: null, siera: null,
     hardHitPct: null, barrelPct: null, groundBallPct: null, flyBallPct: null,
-    strikeoutRate: null, walkRate: null, swingingStrikePct: null
+    strikeoutRate: null, walkRate: null, swingingStrikePct: null, projectedInnings: null
   };
   if (!pitcherId || !opposingTeamId) return defaults;
   try {
@@ -4100,6 +4236,10 @@ app.post("/api/harvest", async (req, res) => {
       Object.assign(awayAdvPitching, awayLast5Profile, awayLast3VsTeam);
       homeAdvPitching.projectedPitchCount = calculateProjectedPitchCount(homeAdvPitching, fatigue.pitchers?.home);
       awayAdvPitching.projectedPitchCount = calculateProjectedPitchCount(awayAdvPitching, fatigue.pitchers?.away);
+      homeAdvPitching.projectedInnings = calculateProjectedInnings(homeAdvPitching);
+      awayAdvPitching.projectedInnings = calculateProjectedInnings(awayAdvPitching);
+      homeAdvPitching.projectedStrikeoutsBase = calculateVortexProjectedKs(homeAdvPitching, awayAdvOffense, fatigue.pitchers?.home);
+      awayAdvPitching.projectedStrikeoutsBase = calculateVortexProjectedKs(awayAdvPitching, homeAdvOffense, fatigue.pitchers?.away);
 
       gameDataParsed.advanced_pitching = {
         home: homeAdvPitching,
@@ -4473,6 +4613,10 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
   Object.assign(awayAdvPitching, awayLast5Profile, awayLast3VsTeam);
   homeAdvPitching.projectedPitchCount = calculateProjectedPitchCount(homeAdvPitching, fatigue.pitchers?.home);
   awayAdvPitching.projectedPitchCount = calculateProjectedPitchCount(awayAdvPitching, fatigue.pitchers?.away);
+  homeAdvPitching.projectedInnings = calculateProjectedInnings(homeAdvPitching);
+  awayAdvPitching.projectedInnings = calculateProjectedInnings(awayAdvPitching);
+  homeAdvPitching.projectedStrikeoutsBase = calculateVortexProjectedKs(homeAdvPitching, awayAdvOffense, fatigue.pitchers?.home);
+  awayAdvPitching.projectedStrikeoutsBase = calculateVortexProjectedKs(awayAdvPitching, homeAdvOffense, fatigue.pitchers?.away);
 
   gameDataParsed.advanced_pitching = {
     home: homeAdvPitching,

@@ -169,6 +169,8 @@ export interface AdvancedPitchingStats {
   swingingStrikePct?: number | null;
   cswPct?: number | null;
   projectedPitchCount?: number | null;
+  projectedInnings?: number | null;
+  projectedStrikeoutsBase?: number | null;
   battersFacedPerStart?: number | null;
   actualStrikeouts?: number | null;
   last5KsAvg?: number | null;

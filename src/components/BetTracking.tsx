@@ -666,114 +666,203 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
   };
 
   // ── Smart Paste Parser ──────────────────────────────────────────────────
+  // Motor de extracción tolerante al formato. No asume orden ni estructura fija.
+  // Funciona con slips de DraftKings, FanDuel, BetMGM, texto copiado de Telegram, etc.
   const parseSmartPaste = () => {
     setSmartPasteError("");
-    const text = smartPasteText;
-    if (!text.trim()) { setSmartPasteError("Pega el texto de la apuesta."); return; }
+    const raw = smartPasteText;
+    if (!raw.trim()) { setSmartPasteError("Pega el texto de la apuesta."); return; }
 
-    // Extract teams
-    const teamsMatch = text.match(/(?:Juego:)?\s*([A-Z][A-Za-z\s\.]+)\s+vs\.?\s+([A-Z][A-Za-z\s\.]+)(?:\r?\n|$)/i) || text.match(/([A-Z][A-Za-z\s\.]+)\s+vs\.?\s+([A-Z][A-Za-z\s\.]+)/i);
-    const awayTeamRaw = teamsMatch ? teamsMatch[1].trim() : "";
-    const homeTeamRaw = teamsMatch ? teamsMatch[2].trim() : "";
+    // ── Normalizar texto ───────────────────────────────────────────────────
+    const text = raw.replace(/[\u200B-\u200D\uFEFF]/g, "").trim(); // quitar chars invisibles
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const lower = text.toLowerCase();
 
-    // Find matching game
+    // ── Helpers ────────────────────────────────────────────────────────────
+    const fuzzyMatch = (a: string, b: string, minLen = 4) => {
+      const al = a.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const bl = b.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const len = Math.min(minLen, Math.min(al.length, bl.length));
+      return al.slice(0, len) === bl.slice(0, len) || al.includes(bl.slice(0, len)) || bl.includes(al.slice(0, len));
+    };
+
+    const extractFirst = (patterns: RegExp[]): string | null => {
+      for (const p of patterns) {
+        const m = text.match(p);
+        if (m) return m[1]?.trim() || null;
+      }
+      return null;
+    };
+
+    const extractAll = (patterns: RegExp[]): RegExpMatchArray | null => {
+      for (const p of patterns) {
+        const m = text.match(p);
+        if (m) return m;
+      }
+      return null;
+    };
+
+    // ── 1. Extraer equipos ─────────────────────────────────────────────────
+    // Soporta: "TeamA vs TeamB", "TeamA @ TeamB", "TeamA - TeamB", con o sin prefijo
+    const vsMatch = extractAll([
+      /([A-Z][A-Za-zÀ-ÿ\s'.]+?)\s+(?:vs\.?|@|at)\s+([A-Z][A-Za-zÀ-ÿ\s'.]+?)(?:\s*[-—|,\n]|$)/im,
+      /([A-Z]{2,})\s+(?:vs\.?|@)\s+([A-Z]{2,})/i,
+    ]);
+
+    let awayTeamRaw = vsMatch ? vsMatch[1].trim() : "";
+    let homeTeamRaw = vsMatch ? vsMatch[2].trim() : "";
+
+    // Limpiar artefactos comunes al final del nombre de equipo
+    const cleanTeamName = (t: string) => t.replace(/\s*([\-—|:].*)?$/, "").trim();
+    awayTeamRaw = cleanTeamName(awayTeamRaw);
+    homeTeamRaw = cleanTeamName(homeTeamRaw);
+
+    // ── 2. Buscar juego en la lista de juegos ──────────────────────────────
     const allGames = [...games, ...dateGames];
     let matchedGame: typeof games[0] | null = null;
     let matchedSide: "home" | "away" = "away";
-    for (const g of allGames) {
-      const home = g.metadata.homeTeam.toLowerCase();
-      const away = g.metadata.awayTeam.toLowerCase();
-      const h6 = homeTeamRaw.toLowerCase().slice(0, 6);
-      const a6 = awayTeamRaw.toLowerCase().slice(0, 6);
-      if ((home.includes(h6) || h6.includes(home.slice(0, 6))) &&
-        (away.includes(a6) || a6.includes(away.slice(0, 6)))) {
-        matchedGame = g; break;
+
+    // Intentar match por VS primero
+    if (awayTeamRaw && homeTeamRaw) {
+      for (const g of allGames) {
+        if (fuzzyMatch(g.metadata.homeTeam, homeTeamRaw) && fuzzyMatch(g.metadata.awayTeam, awayTeamRaw)) {
+          matchedGame = g; break;
+        }
+        // Invertido (algunos slips ponen local primero)
+        if (fuzzyMatch(g.metadata.homeTeam, awayTeamRaw) && fuzzyMatch(g.metadata.awayTeam, homeTeamRaw)) {
+          matchedGame = g; 
+          [awayTeamRaw, homeTeamRaw] = [homeTeamRaw, awayTeamRaw]; // corregir inversión
+          break;
+        }
       }
     }
+
+    // Si no matcheó por VS, buscar cualquier equipo mencionado en el texto
     if (!matchedGame) {
-      setSmartPasteError("No se encontró el juego. Verifica que los datos estén cargados.");
+      for (const g of allGames) {
+        const homeWords = g.metadata.homeTeam.split(" ").filter(w => w.length > 3);
+        const awayWords = g.metadata.awayTeam.split(" ").filter(w => w.length > 3);
+        const homeHit = homeWords.some(w => lower.includes(w.toLowerCase()));
+        const awayHit = awayWords.some(w => lower.includes(w.toLowerCase()));
+        if (homeHit || awayHit) { matchedGame = g; break; }
+      }
+    }
+
+    if (!matchedGame) {
+      setSmartPasteError("No se encontró el juego. Verifica que los datos estén cargados para esta fecha.");
       return;
     }
 
-    // Extract subject and pick
-    const explicitSubject = text.match(/(?:🎯|Target:|Player:|1️⃣)\s*([^\n—\-]+)/i);
-    const explicitPick = text.match(/(?:📌\s*(?:Pick|Lean|Play|Apuesta):?|📌|(?:Pick|Lean|Play|Apuesta):)\s*([^\n]+)/i);
-    const firstLineMatch = text.match(/(?:^|\n)(?:.*?)\b([A-Za-z\s\.]+?)\s*[—\-]\s*([^\n]+)/i);
+    // ── 3. Extraer nombre del jugador / subject ────────────────────────────
+    // Estrategia: buscar explícito → buscar en líneas por posición → inferir
+    const subjectRaw = (
+      extractFirst([
+        /(?:🎯|👤|Player:|Jugador:|Target:|1️⃣)\s*([A-Za-zÀ-ÿ\s'.,-]+?)(?:\s*[-—|,\n]|$)/i,
+        /^([A-Z][a-zÀ-ÿ]+(?:\s+[A-Z][a-zÀ-ÿ]+){1,3})\s*[-—|]\s*/m,  // "Name - something"
+      ]) ||
+      // buscar línea que contiene nombre de pitcher
+      lines.find(l => {
+        const lw = l.toLowerCase();
+        const hp = (matchedGame!.pitchers?.home?.name || "").toLowerCase();
+        const ap = (matchedGame!.pitchers?.away?.name || "").toLowerCase();
+        return (hp.length > 3 && lw.includes(hp.slice(0, 5))) || (ap.length > 3 && lw.includes(ap.slice(0, 5)));
+      })?.split(/[-—|]/)[0].trim() || ""
+    ).replace(/^(pick|lean|play|apuesta|target)[:\s]*/i, "").trim();
 
-    const subjectRaw = explicitSubject ? explicitSubject[1].trim() : (firstLineMatch ? firstLineMatch[1].trim() : "");
-    const pickLine = explicitPick ? explicitPick[1].trim() : (firstLineMatch ? firstLineMatch[2].trim() : text);
-
-    // Over/Under & line value
-    const overUnderMatch = pickLine.match(/(over|under)\s*([\d.]+)/i);
-    const isOverParsed = overUnderMatch ? overUnderMatch[1].toLowerCase() === "over" : true;
-    const lineParsed = overUnderMatch ? overUnderMatch[2] : "";
-
-    // Bet type detection
-    let betTypeParsed: BetTypeKey = "pitcher_k";
-    let betLabelParsed = pickLine;
-    let categoryParsed: BetCategory = "pitcher";
-    if (/\bk\b|strikeout|ponche/i.test(pickLine)) {
-      betTypeParsed = "pitcher_k"; categoryParsed = "pitcher";
-      betLabelParsed = `${isOverParsed ? "Over" : "Under"} ${lineParsed} Ks`;
-    } else if (/total base|tb\b/i.test(pickLine)) {
-      betTypeParsed = "batter_tb"; categoryParsed = "batter";
-      betLabelParsed = `${isOverParsed ? "Over" : "Under"} ${lineParsed} TB`;
-    } else if (/\bml\b|moneyline/i.test(pickLine)) {
-      betTypeParsed = "team_ml"; categoryParsed = "team";
-      betLabelParsed = "Moneyline";
-    } else if (/\bf5\b|first 5/i.test(pickLine)) {
-      betTypeParsed = "team_f5"; categoryParsed = "team";
-      betLabelParsed = "First 5 Innings";
-    }
-
-    // Odds
-    let oddsParsed = "";
-    const oddsMatch = text.match(/(?:@|Cuota:\s*)([+-]?\d+(?:\.\d+)?)(?:\s*\/\s*([+-]?\d+(?:\.\d+)?))?/i);
-    if (oddsMatch) {
-      const val1 = oddsMatch[1];
-      const val2 = oddsMatch[2];
-      if (val2) {
-        const isVal1American = val1.startsWith('+') || val1.startsWith('-') || Math.abs(parseFloat(val1)) >= 100;
-        const val1MatchesFormat = (oddsFormat === "american" && isVal1American) || (oddsFormat === "decimal" && !isVal1American);
-        oddsParsed = val1MatchesFormat ? val1 : val2;
-      } else {
-        oddsParsed = val1;
-      }
-      oddsParsed = oddsForFormat(oddsParsed, oddsFormat);
-    }
-
-    // Amount
-    const amountMatch = text.match(/(?:monto|amount|stake)[:\s]*\$?([\d.]+)/i) || text.match(/\$([\d.]+)/i);
-    const amountParsed = amountMatch ? amountMatch[1] : "";
-
-    // Determine team side
+    // ── 4. Determinar el lado (home/away) del jugador ─────────────────────
     if (subjectRaw) {
       const homePitcher = matchedGame.pitchers?.home?.name || "";
       const awayPitcher = matchedGame.pitchers?.away?.name || "";
       const homeLineup = (matchedGame.lineups?.home || []).map((p: any) => (p.name || "").toLowerCase());
       const awayLineup = (matchedGame.lineups?.away || []).map((p: any) => (p.name || "").toLowerCase());
-      const s6 = subjectRaw.toLowerCase().slice(0, 6);
-      if (homePitcher.toLowerCase().includes(s6) || homeLineup.some((n: string) => n.includes(s6))) {
+
+      if (fuzzyMatch(homePitcher, subjectRaw, 5) || homeLineup.some(n => fuzzyMatch(n, subjectRaw, 5))) {
         matchedSide = "home";
-      } else if (awayPitcher.toLowerCase().includes(s6) || awayLineup.some((n: string) => n.includes(s6))) {
+      } else if (fuzzyMatch(awayPitcher, subjectRaw, 5) || awayLineup.some(n => fuzzyMatch(n, subjectRaw, 5))) {
         matchedSide = "away";
       } else {
-        matchedSide = text.toLowerCase().includes(matchedGame.metadata.homeTeam.toLowerCase().slice(0, 6)) ? "home" : "away";
+        // Inferir por equipos mencionados en texto
+        const homeWords = matchedGame.metadata.homeTeam.split(" ").filter(w => w.length > 3);
+        const awayWords = matchedGame.metadata.awayTeam.split(" ").filter(w => w.length > 3);
+        const homeScore = homeWords.filter(w => lower.includes(w.toLowerCase())).length;
+        const awayScore = awayWords.filter(w => lower.includes(w.toLowerCase())).length;
+        matchedSide = homeScore >= awayScore ? "home" : "away";
       }
     }
 
-    // Fill form fields
+    // ── 5. Extraer la línea y Over/Under ──────────────────────────────────
+    // Soporta: "Over 4.5", "OVER4.5", "O 4.5", "U 2.5", "Under 2.5", "+4.5K", etc.
+    const ouMatch = extractAll([
+      /\b(over|under|o|u)\s*([0-9]+(?:\.[0-9]+)?)\s*(?:k|ks|tb|bases|strikeout|ponche)?/i,
+      /([0-9]+(?:\.[0-9]+)?)\s*\+\s*(?:k|ks|strikeout)/i,  // "4.5+ Ks"
+    ]);
+    const isOverParsed = ouMatch 
+      ? /^(over|o)$/i.test(ouMatch[1]) 
+      : !lower.includes("under") && !lower.includes(" u ");
+    const lineParsed = ouMatch ? ouMatch[2] : (extractFirst([/([0-9]+\.[0-9]+)/]) || "");
+
+    // ── 6. Detectar tipo de apuesta ───────────────────────────────────────
+    let betTypeParsed: BetTypeKey = "pitcher_k";
+    let betLabelParsed = "";
+    let categoryParsed: BetCategory = "pitcher";
+
+    if (/\bk\b|strikeout|ponche|ks\b/i.test(text)) {
+      betTypeParsed = "pitcher_k"; categoryParsed = "pitcher";
+      betLabelParsed = `${isOverParsed ? "Over" : "Under"} ${lineParsed} Ks`;
+    } else if (/total.?base|bases\s+totales|\btb\b/i.test(text)) {
+      betTypeParsed = "batter_tb"; categoryParsed = "batter";
+      betLabelParsed = `${isOverParsed ? "Over" : "Under"} ${lineParsed} TB`;
+    } else if (/moneyline|money.?line|\bml\b/i.test(text)) {
+      betTypeParsed = "team_ml"; categoryParsed = "team";
+      betLabelParsed = "Moneyline";
+    } else if (/first\s+5|f5\s+innings|\bf5\b/i.test(text)) {
+      betTypeParsed = "team_f5"; categoryParsed = "team";
+      betLabelParsed = "First 5 Innings";
+    } else {
+      // Inferir por contexto: si hay pitcher y línea numérica → Ks por defecto
+      const hasPitcherContext = (matchedGame.pitchers?.home?.name && fuzzyMatch(matchedGame.pitchers.home.name, subjectRaw, 4))
+        || (matchedGame.pitchers?.away?.name && fuzzyMatch(matchedGame.pitchers.away.name, subjectRaw, 4));
+      if (hasPitcherContext && lineParsed) {
+        betTypeParsed = "pitcher_k"; categoryParsed = "pitcher";
+        betLabelParsed = `${isOverParsed ? "Over" : "Under"} ${lineParsed} Ks`;
+      }
+    }
+
+    // ── 7. Extraer cuotas (odds) ───────────────────────────────────────────
+    // Soporta: "@-168", "@ +105", "Cuota: -168", "Odds: 1.85", "(−115)"
+    let oddsParsed = "";
+    const oddsMatch = extractAll([
+      /(?:@|odds:|cuota:)\s*([+-]?\d{3,4}(?:\.\d+)?)/i,   // americanas
+      /(?:@|odds:|cuota:)\s*([12]\.?\d{2,3})/i,            // decimales
+      /\(\s*([+\-−]\d{3,4})\s*\)/,                         // (−115)
+      /\b([+\-]\d{3,4})\b/,                                 // +105 o -168 suelto
+    ]);
+    if (oddsMatch) {
+      let raw = oddsMatch[1].replace("−", "-"); // unicode minus → regular
+      oddsParsed = oddsForFormat(raw, oddsFormat);
+    }
+
+    // ── 8. Extraer monto ──────────────────────────────────────────────────
+    // Soporta: "$55", "Monto: 55", "Stake: 100", "50u", "Unidades: 2"
+    const amountMatch = extractAll([
+      /(?:monto|amount|stake|jugado|wager|riesgo)[:\s]*\$?\s*([0-9]+(?:\.[0-9]+)?)/i,
+      /\$\s*([0-9]+(?:\.[0-9]+)?)/,
+      /([0-9]+(?:\.[0-9]+)?)\s*(?:u\b|unidades?)/i,
+    ]);
+    const amountParsed = amountMatch ? amountMatch[1] : "";
+
+    // ── 9. Aplicar al formulario ──────────────────────────────────────────
     setSelectedGameId(String(matchedGame.id));
     setSelectedTeamSide(matchedSide);
     setCategory(categoryParsed);
     setSubject(subjectRaw || (matchedSide === "home" ? matchedGame.metadata.homeTeam : matchedGame.metadata.awayTeam));
     setBetTypeKey(betTypeParsed);
-    setBetLabel(betLabelParsed);
+    setBetLabel(betLabelParsed || `${isOverParsed ? "Over" : "Under"} ${lineParsed}`);
     setIsOver(isOverParsed);
     setLine(lineParsed);
     if (oddsParsed) setOdds(oddsParsed);
     if (amountParsed) setAmount(amountParsed);
-    
+
     setStep(5);
     setShowSmartPaste(false);
     setSmartPasteText("");

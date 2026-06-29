@@ -382,6 +382,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
     const teamName = side === "home" ? game.metadata.homeTeam : game.metadata.awayTeam;
     const opponentName = side === "home" ? game.metadata.awayTeam : game.metadata.homeTeam;
     const projected = seasonAdv?.projectedPitchCount;
+    const projectedInnings = seasonAdv?.projectedInnings;
     const bfPerStart = seasonAdv?.battersFacedPerStart;
     const roleLabel = getPitcherRoleLabel(bfPerStart, projected);
 
@@ -422,6 +423,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
 
     const projections = [
       ["Pitcheos proyectados", projected],
+      ["Innings proyectados", formatNumber(projectedInnings, 1)],
       ["Rol estimado", roleLabel],
       ["BF/start", formatNumber(bfPerStart, 1)],
       ["Descanso", fatigue?.daysSinceLastStart != null ? `${fatigue.daysSinceLastStart} días` : "N/D"],
@@ -909,6 +911,28 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                 <div className="bg-white border border-slate-200 rounded px-1 py-1"><span className="block text-slate-400 uppercase">Record</span><strong className="text-slate-800">{awayStats.record}</strong></div>
               </div>
 
+              <div className="mt-2.5 pt-2 border-t border-slate-200/60">
+                <div className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span> Proyección de Hoy</div>
+                <div className="grid grid-cols-4 gap-1 text-[10px] font-mono text-center">
+                   <div className="bg-slate-100/80 border border-slate-100 rounded py-1 flex flex-col justify-center">
+                      <span className="text-[8px] text-slate-400 uppercase leading-none mb-0.5" title="Innings Proyectados">IP</span>
+                      <strong className="text-slate-800 leading-none">{game.advanced_pitching?.away?.projectedInnings != null ? formatNumber(game.advanced_pitching.away.projectedInnings, 1) : "-"}</strong>
+                   </div>
+                   <div className="bg-slate-100/80 border border-slate-100 rounded py-1 flex flex-col justify-center">
+                      <span className="text-[8px] text-slate-400 uppercase leading-none mb-0.5" title="Pitcheos Proyectados">PITCH</span>
+                      <strong className="text-slate-800 leading-none">{game.advanced_pitching?.away?.projectedPitchCount ?? "-"}</strong>
+                   </div>
+                   <div className="bg-slate-100/80 border border-slate-100 rounded py-1 flex flex-col justify-center">
+                      <span className="text-[8px] text-slate-400 uppercase leading-none mb-0.5" title="Bateadores Enfrentados">BF</span>
+                      <strong className="text-slate-800 leading-none">{game.advanced_pitching?.away?.battersFacedPerStart != null ? formatNumber(game.advanced_pitching.away.battersFacedPerStart, 1) : "-"}</strong>
+                   </div>
+                   <div className="bg-slate-100/80 border border-slate-100 rounded py-1 flex flex-col justify-center">
+                      <span className="text-[8px] text-slate-400 uppercase leading-none mb-0.5" title="Ponches Proyectados">K's</span>
+                      <strong className="text-slate-800 leading-none">{game.advanced_pitching?.away?.projectedStrikeoutsBase != null ? formatNumber(game.advanced_pitching.away.projectedStrikeoutsBase, 2) : "-"}</strong>
+                   </div>
+                </div>
+              </div>
+
               <div className="mt-3 space-y-1 text-[11px] font-mono text-slate-600">
                 <div className="flex justify-between"><span title="Efectividad (Earned Run Average): Promedio de carreras limpias permitidas por cada 9 entradas." className="cursor-help border-b border-dotted border-slate-400">ERA:</span> <strong className="text-slate-800">{awayStats.era}</strong></div>
                 <div className="flex justify-between"><span title="FIP (Fielding Independent Pitching): Estima la efectividad basada sólo en ponches, boletos, HBP y HR." className="cursor-help border-b border-dotted border-slate-400">FIP:</span> <strong className="text-slate-800">{awayStats.fip}</strong></div>
@@ -958,6 +982,28 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                 <div className="bg-white border border-slate-200 rounded px-1 py-1"><span className="block text-slate-400 uppercase">IP</span><strong className="text-slate-800">{formatPitcherValue(game.pitchers.home.ip)}</strong></div>
                 <div className="bg-white border border-slate-200 rounded px-1 py-1"><span className="block text-slate-400 uppercase">K/IP</span><strong className="text-slate-800">{formatKPerIp(game.pitchers.home)}</strong></div>
                 <div className="bg-white border border-slate-200 rounded px-1 py-1"><span className="block text-slate-400 uppercase">Record</span><strong className="text-slate-800">{homeStats.record}</strong></div>
+              </div>
+
+              <div className="mt-2.5 pt-2 border-t border-slate-200/60">
+                <div className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-400"></span> Proyección de Hoy</div>
+                <div className="grid grid-cols-4 gap-1 text-[10px] font-mono text-center">
+                   <div className="bg-slate-100/80 border border-slate-100 rounded py-1 flex flex-col justify-center">
+                      <span className="text-[8px] text-slate-400 uppercase leading-none mb-0.5" title="Innings Proyectados">IP</span>
+                      <strong className="text-slate-800 leading-none">{game.advanced_pitching?.home?.projectedInnings != null ? formatNumber(game.advanced_pitching.home.projectedInnings, 1) : "-"}</strong>
+                   </div>
+                   <div className="bg-slate-100/80 border border-slate-100 rounded py-1 flex flex-col justify-center">
+                      <span className="text-[8px] text-slate-400 uppercase leading-none mb-0.5" title="Pitcheos Proyectados">PITCH</span>
+                      <strong className="text-slate-800 leading-none">{game.advanced_pitching?.home?.projectedPitchCount ?? "-"}</strong>
+                   </div>
+                   <div className="bg-slate-100/80 border border-slate-100 rounded py-1 flex flex-col justify-center">
+                      <span className="text-[8px] text-slate-400 uppercase leading-none mb-0.5" title="Bateadores Enfrentados">BF</span>
+                      <strong className="text-slate-800 leading-none">{game.advanced_pitching?.home?.battersFacedPerStart != null ? formatNumber(game.advanced_pitching.home.battersFacedPerStart, 1) : "-"}</strong>
+                   </div>
+                   <div className="bg-slate-100/80 border border-slate-100 rounded py-1 flex flex-col justify-center">
+                      <span className="text-[8px] text-slate-400 uppercase leading-none mb-0.5" title="Ponches Proyectados">K's</span>
+                      <strong className="text-slate-800 leading-none">{game.advanced_pitching?.home?.projectedStrikeoutsBase != null ? formatNumber(game.advanced_pitching.home.projectedStrikeoutsBase, 2) : "-"}</strong>
+                   </div>
+                </div>
               </div>
 
               <div className="mt-3 space-y-1 text-[11px] font-mono text-slate-600">
