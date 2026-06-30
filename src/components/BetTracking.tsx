@@ -617,6 +617,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
 
   // ── Wizard ────────────────────────────────────────────────────────────────
   const [editingBetId, setEditingBetId] = useState<number | null>(null);
+  const [editUserName, setEditUserName] = useState<string>("");
   const [step, setStep] = useState(1);
   const [selectedGameId, setSelectedGameId] = useState("");
   const [selectedTeamSide, setSelectedTeamSide] = useState<"home" | "away" | "">("");
@@ -663,6 +664,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     setLine(""); setBookmaker(""); setAmount(""); setOdds(""); setNote("");
     setEditStatus("pending");
     setShowSmartPaste(false); setSmartPasteText(""); setSmartPasteError("");
+    setEditUserName("");
   };
 
   // ── Smart Paste Parser ──────────────────────────────────────────────────
@@ -791,14 +793,34 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     }
 
     // ── 5. Extraer la línea y Over/Under ──────────────────────────────────
-    // Soporta: "Over 4.5", "OVER4.5", "O 4.5", "U 2.5", "Under 2.5", "+4.5K", etc.
-    const ouMatch = extractAll([
-      /\b(over|under|o|u)\s*([0-9]+(?:\.[0-9]+)?)\s*(?:k|ks|tb|bases|strikeout|ponche)?/i,
+    // Soporta: "Over 4.5", "OVER4.5", "O 4.5", "U 2.5", "Más de 4.5", "Menos de 7.5",
+    // "Más de (Over) 7.5", "4.5+ Ks", etc.
+
+    // Normalizar primero: remover paréntesis redundantes como "(Over)" → "Over"
+    const textNorm = text
+      .replace(/más\s+de\s*\(over\)/gi, "over")
+      .replace(/menos\s+de\s*\(under\)/gi, "under")
+      .replace(/más\s+de/gi, "over")
+      .replace(/menos\s+de/gi, "under")
+      .replace(/\(over\)/gi, "over")
+      .replace(/\(under\)/gi, "under");
+
+    const extractNorm = (patterns: RegExp[]): RegExpMatchArray | null => {
+      for (const p of patterns) {
+        const m = textNorm.match(p);
+        if (m) return m;
+      }
+      return null;
+    };
+
+    const ouMatch = extractNorm([
+      /\b(over|under)\s*([0-9]+(?:\.[0-9]+)?)\s*(?:k|ks|tb|bases|strikeout|ponche)?/i,
+      /\b(o|u)\s+([0-9]+(?:\.[0-9]+)?)\s*(?:k|ks|tb|bases|strikeout|ponche)?/i,
       /([0-9]+(?:\.[0-9]+)?)\s*\+\s*(?:k|ks|strikeout)/i,  // "4.5+ Ks"
     ]);
-    const isOverParsed = ouMatch 
-      ? /^(over|o)$/i.test(ouMatch[1]) 
-      : !lower.includes("under") && !lower.includes(" u ");
+    const isOverParsed = ouMatch
+      ? /^(over|o)$/i.test(ouMatch[1])
+      : !lower.includes("under") && !lower.includes("menos de") && !lower.includes(" u ");
     const lineParsed = ouMatch ? ouMatch[2] : (extractFirst([/([0-9]+\.[0-9]+)/]) || "");
 
     // ── 6. Detectar tipo de apuesta ───────────────────────────────────────
@@ -895,6 +917,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
         potentialWin,
         note: note.trim(),
         status: editStatus,
+        userName: editUserName || b.userName,
       } : b));
     } else {
       const newBet: Bet = {
@@ -939,6 +962,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     setOdds(oddsForFormat(bet.odds, oddsFormat));
     setNote(bet.note || "");
     setEditStatus(bet.status);
+    setEditUserName(bet.userName || "");
     setStep(5);
   };
 
@@ -1432,15 +1456,21 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                   <>
                     <div className="grid grid-cols-2 gap-2">
                       {[
-                        { key: category === "pitcher" ? "pitcher_k" : "batter_tb", label: category === "pitcher" ? "Más de (Over) K's" : "Más de (Over) Bases", over: true },
-                        { key: category === "pitcher" ? "pitcher_k" : "batter_tb", label: category === "pitcher" ? "Menos de (Under) K's" : "Menos de (Under) Bases", over: false },
-                      ].map(opt => (
-                        <button key={opt.label} type="button"
-                          onClick={() => { setBetTypeKey(opt.key as BetTypeKey); setIsOver(opt.over); setBetLabel(opt.label); }}
-                          className={`py-2.5 px-2 rounded-lg border text-xs font-bold transition-all ${betLabel === opt.label ? "bg-violet-600 text-white border-violet-600 shadow" : "bg-white border-slate-200 text-slate-700 hover:border-violet-300"}`}>
-                          {opt.label}
-                        </button>
-                      ))}
+                        { key: category === "pitcher" ? "pitcher_k" : "batter_tb", label: category === "pitcher" ? "Over K's" : "Over Bases", baseLabel: category === "pitcher" ? "Over {LINE} Ks" : "Over {LINE} TB", over: true },
+                        { key: category === "pitcher" ? "pitcher_k" : "batter_tb", label: category === "pitcher" ? "Under K's" : "Under Bases", baseLabel: category === "pitcher" ? "Under {LINE} Ks" : "Under {LINE} TB", over: false },
+                      ].map(opt => {
+                        const dir = opt.over ? "Over" : "Under";
+                        const suffix = category === "pitcher" ? "Ks" : "TB";
+                        const fullLabel = line ? `${dir} ${line} ${suffix}` : opt.label;
+                        const isSelected = isOver === opt.over && betTypeKey === opt.key;
+                        return (
+                          <button key={opt.label} type="button"
+                            onClick={() => { setBetTypeKey(opt.key as BetTypeKey); setIsOver(opt.over); setBetLabel(fullLabel); }}
+                            className={`py-2.5 px-2 rounded-lg border text-xs font-bold transition-all ${isSelected ? "bg-violet-600 text-white border-violet-600 shadow" : "bg-white border-slate-200 text-slate-700 hover:border-violet-300"}`}>
+                            {opt.label}
+                          </button>
+                        );
+                      })}
                     </div>
                     {betLabel && (
                       <div>
@@ -1551,15 +1581,29 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                 </div>
 
                 {editingBetId && (
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Estado de la apuesta</label>
-                    <select value={editStatus} onChange={e => setEditStatus(e.target.value as BetStatus)}
-                      className="w-full border border-slate-200 rounded-lg p-2.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white">
-                      <option value="pending">Pendiente</option>
-                      <option value="won">Ganada</option>
-                      <option value="lost">Perdida</option>
-                      <option value="void">Anulada (Push/Void)</option>
-                    </select>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Estado de la apuesta</label>
+                      <select value={editStatus} onChange={e => setEditStatus(e.target.value as BetStatus)}
+                        className="w-full border border-slate-200 rounded-lg p-2.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white">
+                        <option value="pending">Pendiente</option>
+                        <option value="won">Ganada</option>
+                        <option value="lost">Perdida</option>
+                        <option value="void">Anulada (Push/Void)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Usuario que registró</label>
+                      <select
+                        value={editUserName}
+                        onChange={e => setEditUserName(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg p-2.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
+                      >
+                        {getRegisteredUsers().map(u => (
+                          <option key={u} value={u}>{u}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1684,7 +1728,30 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                           <div className="flex items-center gap-2 truncate min-w-0">
                             <div className="shrink-0"><StatusBadge status={bet.status} /></div>
                             <span className="font-bold text-sm text-slate-800 truncate">{bet.subject}</span>
-                            <span className="text-xs text-slate-500 truncate hidden sm:inline">· {bet.betLabel}</span>
+                            {/* Over/Under pill + label — compact */}
+                            <span className="hidden sm:flex items-center gap-1 shrink-0">
+                              {(bet.betTypeKey === "pitcher_k" || bet.betTypeKey === "batter_tb") && (
+                                <span className={`text-[9px] font-extrabold px-1 py-0.5 rounded leading-tight ${
+                                  bet.isOver
+                                    ? "bg-emerald-100 text-emerald-700 border border-emerald-200"
+                                    : "bg-orange-100 text-orange-700 border border-orange-200"
+                                }`}>
+                                  {bet.isOver ? "▲ OVER" : "▼ UNDER"}
+                                </span>
+                              )}
+                              <span className="text-xs text-slate-500 truncate">
+                                {(() => {
+                                  const lbl = (bet.betLabel || "")
+                                    .replace(/más\s+de\s*(\(over\))?/gi, "")
+                                    .replace(/menos\s+de\s*(\(under\))?/gi, "")
+                                    .replace(/\(over\)/gi, "")
+                                    .replace(/\(under\)/gi, "")
+                                    .replace(/^(over|under)\s*/i, "")
+                                    .trim();
+                                  return lbl || bet.betLabel;
+                                })()}
+                              </span>
+                            </span>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
                             <span className="font-bold text-sm text-slate-800">${bet.amount}</span>
@@ -1717,7 +1784,33 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
                             </div>
                             <p className="font-bold text-sm text-slate-800 truncate">{bet.subject}</p>
                             <p className="text-xs text-slate-500">{bet.teamName} <span className="text-slate-300">vs</span> {bet.opponentName}</p>
-                            <p className="text-xs font-semibold text-slate-700">{bet.betLabel}</p>
+                            {/* Rich bet label pill */}
+                            {(() => {
+                              const lbl = (bet.betLabel || "")
+                                .replace(/más\s+de\s*(\(over\))?/gi, "Over ")
+                                .replace(/menos\s+de\s*(\(under\))?/gi, "Under ")
+                                .replace(/\(over\)/gi, "Over")
+                                .replace(/\(under\)/gi, "Under")
+                                .trim();
+                              const isOv = bet.isOver;
+                              const hasDir = /^(over|under)/i.test(lbl);
+                              const dirWord = hasDir ? lbl.split(/\s/)[0] : (isOv ? "Over" : "Under");
+                              const rest = hasDir ? lbl.slice(dirWord.length).trim() : lbl;
+                              return (
+                                <p className="flex items-center gap-1.5 mt-0.5">
+                                  {(bet.betTypeKey === "pitcher_k" || bet.betTypeKey === "batter_tb") && (
+                                    <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${
+                                      isOv
+                                        ? "bg-emerald-100 text-emerald-700 border border-emerald-200"
+                                        : "bg-orange-100 text-orange-700 border border-orange-200"
+                                    }`}>
+                                      {isOv ? "▲ OVER" : "▼ UNDER"}
+                                    </span>
+                                  )}
+                                  <span className="text-xs font-semibold text-slate-700">{rest || lbl}</span>
+                                </p>
+                              );
+                            })()}
                             {bet.note && (
                               <p className="text-[10px] italic text-slate-400 flex items-start gap-1 mt-1">
                                 <StickyNote size={10} className="shrink-0 mt-0.5" />{bet.note}
