@@ -719,6 +719,28 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     awayTeamRaw = cleanTeamName(awayTeamRaw);
     homeTeamRaw = cleanTeamName(homeTeamRaw);
 
+    // ── Resolver abreviaciones MLB (STL → St. Louis Cardinals, etc.) ───────
+    const MLB_ABBR: Record<string, string> = {
+      ARI: "Arizona Diamondbacks", ATL: "Atlanta Braves", BAL: "Baltimore Orioles",
+      BOS: "Boston Red Sox",       CHC: "Chicago Cubs",   CWS: "Chicago White Sox",
+      CIN: "Cincinnati Reds",      CLE: "Cleveland Guardians", COL: "Colorado Rockies",
+      DET: "Detroit Tigers",       HOU: "Houston Astros", KC:  "Kansas City Royals",
+      KCR: "Kansas City Royals",   LAA: "Los Angeles Angels", LAD: "Los Angeles Dodgers",
+      MIA: "Miami Marlins",        MIL: "Milwaukee Brewers",  MIN: "Minnesota Twins",
+      NYM: "New York Mets",        NYY: "New York Yankees",   OAK: "Oakland Athletics",
+      ATH: "Oakland Athletics",    PHI: "Philadelphia Phillies", PIT: "Pittsburgh Pirates",
+      SD:  "San Diego Padres",     SDP: "San Diego Padres",   SF:  "San Francisco Giants",
+      SFG: "San Francisco Giants", SEA: "Seattle Mariners",   STL: "St. Louis Cardinals",
+      TB:  "Tampa Bay Rays",       TBR: "Tampa Bay Rays",     TEX: "Texas Rangers",
+      TOR: "Toronto Blue Jays",    WSH: "Washington Nationals", WAS: "Washington Nationals",
+    };
+    const resolveTeamName = (t: string): string => {
+      const upper = t.toUpperCase().trim();
+      return MLB_ABBR[upper] || t;
+    };
+    awayTeamRaw = resolveTeamName(awayTeamRaw);
+    homeTeamRaw = resolveTeamName(homeTeamRaw);
+
     // ── 2. Buscar juego en la lista de juegos ──────────────────────────────
     const allGames = [...games, ...dateGames];
     let matchedGame: typeof games[0] | null = null;
@@ -867,7 +889,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     // ── 8. Extraer monto ──────────────────────────────────────────────────
     // Soporta: "$55", "Monto: 55", "Stake: 100", "50u", "Unidades: 2"
     const amountMatch = extractAll([
-      /(?:monto|amount|stake|jugado|wager|riesgo)[:\s]*\$?\s*([0-9]+(?:\.[0-9]+)?)/i,
+      /(?:monto|amount|stake|jugado|wager|riesgo)[:\s]*\$?\s*([0-9]+(?:\.[0-9]+)?)(?!\s*%)/i,
       /\$\s*([0-9]+(?:\.[0-9]+)?)/,
       /([0-9]+(?:\.[0-9]+)?)\s*(?:u\b|unidades?)/i,
     ]);
@@ -898,6 +920,12 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     }
     if (!selectedGame || !category || !subject || !betLabel || !betTypeKey) return;
 
+    const needsLine = betTypeKey === "pitcher_k" || betTypeKey === "batter_tb";
+    let finalBetLabel = betLabel;
+    if (needsLine && line && !finalBetLabel.includes(String(line))) {
+      finalBetLabel = finalBetLabel.replace(/K's|Ks|TB|Bases/i, `${line} $&`);
+    }
+
     if (editingBetId) {
       updateBets(prev => prev.map(b => b.id === editingBetId ? {
         ...b,
@@ -906,7 +934,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
         opponentName,
         teamSide: selectedTeamSide as "home" | "away",
         subject,
-        betLabel,
+        betLabel: finalBetLabel,
         betCategory: category as BetCategory,
         line: parseFloat(line) || 0,
         isOver,
@@ -929,7 +957,7 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
         opponentName,
         teamSide: selectedTeamSide as "home" | "away",
         subject,
-        betLabel,
+        betLabel: finalBetLabel,
         betCategory: category as BetCategory,
         line: parseFloat(line) || 0,
         isOver,
@@ -1502,7 +1530,13 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
               <div className="space-y-3 animate-fade-in">
                 {/* Bet summary pill */}
                 <div className={`p-2.5 rounded-lg border text-xs font-semibold ${CATEGORY_CFG[category as BetCategory]?.bg} ${CATEGORY_CFG[category as BetCategory]?.color}`}>
-                  <strong>{subject}</strong> · {betLabel}{needsLine && line ? ` ${line}` : ""}
+                  <strong>{subject}</strong> · {(() => {
+                    const needsLine = betTypeKey === "pitcher_k" || betTypeKey === "batter_tb";
+                    if (needsLine && line && !betLabel.includes(String(line))) {
+                      return betLabel.replace(/K's|Ks|TB|Bases/i, `${line} $&`);
+                    }
+                    return betLabel;
+                  })()}
                   <br /><span className="font-normal opacity-80">{teamName} vs {opponentName}</span>
                 </div>
 
