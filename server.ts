@@ -558,6 +558,119 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
     away_pitcher_projected_pitches: g.advanced_pitching?.away?.projectedPitchCount ?? null,
     away_pitcher_projected_innings: g.advanced_pitching?.away?.projectedInnings ?? null,
     away_pitcher_bf_per_start: g.advanced_pitching?.away?.battersFacedPerStart ?? null,
+    // --- Derived: Primary/Secondary Pitch + Pitch Efficiency + Rest Status ---
+    home_pitcher_primary_pitch: (() => {
+      const ap = g.advanced_pitching?.home;
+      if (!ap) return null;
+      const arr = [
+        { name: 'fastball', pct: ap.fastballPct || 0 },
+        { name: 'slider', pct: ap.sliderPct || 0 },
+        { name: 'curve', pct: ap.curvePct || 0 },
+        { name: 'changeup', pct: ap.changeupPct || 0 },
+        { name: 'splitter', pct: ap.splitterPct || 0 },
+      ].sort((a, b) => b.pct - a.pct);
+      return arr[0].pct > 0 ? arr[0].name : null;
+    })(),
+    home_pitcher_primary_pitch_usage_pct: (() => {
+      const ap = g.advanced_pitching?.home;
+      if (!ap) return null;
+      const arr = [ap.fastballPct||0, ap.sliderPct||0, ap.curvePct||0, ap.changeupPct||0, ap.splitterPct||0].sort((a,b)=>b-a);
+      return arr[0] > 0 ? arr[0] : null;
+    })(),
+    home_pitcher_secondary_pitch: (() => {
+      const ap = g.advanced_pitching?.home;
+      if (!ap) return null;
+      const arr = [
+        { name: 'fastball', pct: ap.fastballPct || 0 },
+        { name: 'slider', pct: ap.sliderPct || 0 },
+        { name: 'curve', pct: ap.curvePct || 0 },
+        { name: 'changeup', pct: ap.changeupPct || 0 },
+        { name: 'splitter', pct: ap.splitterPct || 0 },
+      ].sort((a, b) => b.pct - a.pct);
+      return arr[1].pct > 0 ? arr[1].name : null;
+    })(),
+    home_pitcher_secondary_pitch_usage_pct: (() => {
+      const ap = g.advanced_pitching?.home;
+      if (!ap) return null;
+      const arr = [ap.fastballPct||0, ap.sliderPct||0, ap.curvePct||0, ap.changeupPct||0, ap.splitterPct||0].sort((a,b)=>b-a);
+      return arr[1] > 0 ? arr[1] : null;
+    })(),
+    home_pitcher_pitches_per_bf_last5: (() => {
+      const ap = g.advanced_pitching?.home;
+      if (ap?.last5PitchCountAvg != null && ap?.last5BfAvg != null && ap.last5BfAvg > 0)
+        return ap.last5PitchCountAvg / ap.last5BfAvg;
+      return null;
+    })(),
+    home_pitcher_pitches_per_ip_last5: (() => {
+      const ap = g.advanced_pitching?.home;
+      if (ap?.last5PitchCountAvg != null && ap?.last5IpAvg != null && ap.last5IpAvg > 0)
+        return ap.last5PitchCountAvg / ap.last5IpAvg;
+      return null;
+    })(),
+    home_pitcher_avg_pitches_last5: g.advanced_pitching?.home?.last5PitchCountAvg ?? null,
+    home_pitcher_rest_status: (() => {
+      const days = fPitchers?.home?.daysSinceLastStart;
+      if (days == null) return null;
+      if (days <= 4) return 'Short Rest';
+      if (days === 5) return 'Normal';
+      return 'Extra Rest';
+    })(),
+    away_pitcher_primary_pitch: (() => {
+      const ap = g.advanced_pitching?.away;
+      if (!ap) return null;
+      const arr = [
+        { name: 'fastball', pct: ap.fastballPct || 0 },
+        { name: 'slider', pct: ap.sliderPct || 0 },
+        { name: 'curve', pct: ap.curvePct || 0 },
+        { name: 'changeup', pct: ap.changeupPct || 0 },
+        { name: 'splitter', pct: ap.splitterPct || 0 },
+      ].sort((a, b) => b.pct - a.pct);
+      return arr[0].pct > 0 ? arr[0].name : null;
+    })(),
+    away_pitcher_primary_pitch_usage_pct: (() => {
+      const ap = g.advanced_pitching?.away;
+      if (!ap) return null;
+      const arr = [ap.fastballPct||0, ap.sliderPct||0, ap.curvePct||0, ap.changeupPct||0, ap.splitterPct||0].sort((a,b)=>b-a);
+      return arr[0] > 0 ? arr[0] : null;
+    })(),
+    away_pitcher_secondary_pitch: (() => {
+      const ap = g.advanced_pitching?.away;
+      if (!ap) return null;
+      const arr = [
+        { name: 'fastball', pct: ap.fastballPct || 0 },
+        { name: 'slider', pct: ap.sliderPct || 0 },
+        { name: 'curve', pct: ap.curvePct || 0 },
+        { name: 'changeup', pct: ap.changeupPct || 0 },
+        { name: 'splitter', pct: ap.splitterPct || 0 },
+      ].sort((a, b) => b.pct - a.pct);
+      return arr[1].pct > 0 ? arr[1].name : null;
+    })(),
+    away_pitcher_secondary_pitch_usage_pct: (() => {
+      const ap = g.advanced_pitching?.away;
+      if (!ap) return null;
+      const arr = [ap.fastballPct||0, ap.sliderPct||0, ap.curvePct||0, ap.changeupPct||0, ap.splitterPct||0].sort((a,b)=>b-a);
+      return arr[1] > 0 ? arr[1] : null;
+    })(),
+    away_pitcher_pitches_per_bf_last5: (() => {
+      const ap = g.advanced_pitching?.away;
+      if (ap?.last5PitchCountAvg != null && ap?.last5BfAvg != null && ap.last5BfAvg > 0)
+        return ap.last5PitchCountAvg / ap.last5BfAvg;
+      return null;
+    })(),
+    away_pitcher_pitches_per_ip_last5: (() => {
+      const ap = g.advanced_pitching?.away;
+      if (ap?.last5PitchCountAvg != null && ap?.last5IpAvg != null && ap.last5IpAvg > 0)
+        return ap.last5PitchCountAvg / ap.last5IpAvg;
+      return null;
+    })(),
+    away_pitcher_avg_pitches_last5: g.advanced_pitching?.away?.last5PitchCountAvg ?? null,
+    away_pitcher_rest_status: (() => {
+      const days = fPitchers?.away?.daysSinceLastStart;
+      if (days == null) return null;
+      if (days <= 4) return 'Short Rest';
+      if (days === 5) return 'Normal';
+      return 'Extra Rest';
+    })(),
     home_offense_woba: g.advanced_offense?.home?.wOba ?? null,
     home_offense_xwoba: g.advanced_offense?.home?.xwOba ?? null,
     home_offense_wrcplus: g.advanced_offense?.home?.wrcPlus ?? null,

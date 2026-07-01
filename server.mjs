@@ -1,32 +1,65 @@
 // src/etl/extractors/pybaseballApi.ts
 import { exec } from "child_process";
 import path from "path";
+import fs from "fs";
 var PYTHON_SCRIPT = path.join(process.cwd(), "src", "etl", "extractors", "pybaseball_scraper.py");
 var VENV_PYTHON = path.join(process.cwd(), "venv", "Scripts", "python.exe");
+var PYTHON_BIN = fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : "python";
+var CACHE_DIR = path.join(process.cwd(), "cache");
+if (!fs.existsSync(CACHE_DIR)) {
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+}
+function getCacheFilename(action, extraKey = "") {
+  const dateStr = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+  const safeExtraKey = extraKey.replace(/[^a-z0-9_-]/gi, "_");
+  return path.join(CACHE_DIR, `pybaseball_${action}_${dateStr}${safeExtraKey ? "_" + safeExtraKey : ""}.json`);
+}
+async function withCache(action, extraKey, fn) {
+  const cacheFile = getCacheFilename(action, extraKey);
+  if (fs.existsSync(cacheFile)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+      console.log(`[PyBaseball Cache] Using cached data for ${action} ${extraKey}`);
+      return data;
+    } catch (e) {
+      console.warn(`[PyBaseball Cache] Failed to read cache for ${action}, fetching fresh data...`);
+    }
+  }
+  const result = await fn();
+  try {
+    fs.writeFileSync(cacheFile, JSON.stringify(result));
+    console.log(`[PyBaseball Cache] Saved fresh data for ${action} ${extraKey}`);
+  } catch (e) {
+    console.error(`[PyBaseball Cache] Failed to write cache for ${action}`);
+  }
+  return result;
+}
 var getRecentStatcast = (startDate, endDate) => {
-  return new Promise((resolve, reject) => {
-    const command = `"${VENV_PYTHON}" "${PYTHON_SCRIPT}" --action recent_statcast --start "${startDate}" --end "${endDate}"`;
-    exec(command, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
-      if (error) {
-        console.error(`exec error: ${error}`);
-        return reject(error);
-      }
-      try {
-        const jsonStart = stdout.indexOf("{");
-        const jsonStr = jsonStart >= 0 ? stdout.substring(jsonStart) : stdout;
-        const jsonResponse = JSON.parse(jsonStr);
-        resolve(jsonResponse);
-      } catch (parseError) {
-        console.error("Failed to parse Python output:", stdout);
-        reject(parseError);
-      }
+  return withCache("recent_statcast", `${startDate}_${endDate}`, () => {
+    return new Promise((resolve, reject) => {
+      const command = `"${PYTHON_BIN}" "${PYTHON_SCRIPT}" --action recent_statcast --start "${startDate}" --end "${endDate}"`;
+      exec(command, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+        if (error) {
+          console.error(`exec error: ${error}`);
+          return reject(error);
+        }
+        try {
+          const jsonStart = stdout.indexOf("{");
+          const jsonStr = jsonStart >= 0 ? stdout.substring(jsonStart) : stdout;
+          const jsonResponse = JSON.parse(jsonStr);
+          resolve(jsonResponse);
+        } catch (parseError) {
+          console.error("Failed to parse Python output:", stdout);
+          reject(parseError);
+        }
+      });
     });
   });
 };
 
 // server.ts
 import dotenv from "dotenv";
-import fs from "fs";
+import fs2 from "fs";
 import path2 from "path";
 import express from "express";
 import { createServer as createViteServer } from "vite";
@@ -629,6 +662,7 @@ function generateMLDatasetCSV(games) {
     "home_pitcher_last3_vs_team_bf_avg",
     "home_pitcher_bvp_pa_vs_team",
     "home_pitcher_projected_pitches",
+    "home_pitcher_projected_innings",
     "home_pitcher_bf_per_start",
     "home_pitcher_fastball_pct",
     "home_pitcher_slider_pct",
@@ -669,6 +703,7 @@ function generateMLDatasetCSV(games) {
     "away_pitcher_last3_vs_team_bf_avg",
     "away_pitcher_bvp_pa_vs_team",
     "away_pitcher_projected_pitches",
+    "away_pitcher_projected_innings",
     "away_pitcher_bf_per_start",
     "away_pitcher_fastball_pct",
     "away_pitcher_slider_pct",
@@ -747,8 +782,16 @@ function generateMLDatasetCSV(games) {
     "home_pitcher_primary_pitch_usage_pct",
     "home_pitcher_secondary_pitch",
     "home_pitcher_secondary_pitch_usage_pct",
+    "home_pitcher_pitches_per_bf",
     "home_pitcher_pitches_per_bf_last5",
     "home_pitcher_pitches_per_ip_last5",
+    "away_pitcher_primary_pitch",
+    "away_pitcher_primary_pitch_usage_pct",
+    "away_pitcher_secondary_pitch",
+    "away_pitcher_secondary_pitch_usage_pct",
+    "away_pitcher_pitches_per_bf",
+    "away_pitcher_pitches_per_bf_last5",
+    "away_pitcher_pitches_per_ip_last5",
     "home_pitcher_avg_pitches_last3",
     "home_pitcher_rest_status",
     "away_pitcher_avg_pitches_last3",
@@ -772,8 +815,6 @@ function generateMLDatasetCSV(games) {
     "away_wOba",
     "home_pitcher_recent_velocity",
     "away_pitcher_recent_velocity",
-    "home_pitcher_csw_pct",
-    "away_pitcher_csw_pct",
     "game_weather_temp",
     "game_weather_windSpeed",
     "game_weather_rainProbability",
@@ -1072,8 +1113,6 @@ function generateMLDatasetCSV(games) {
       g.advanced_offense?.away?.wOba ?? "",
       g.pitchers?.home_starter?.pitcher_recent_velocity ?? g.pitchers?.home?.pitcher_recent_velocity ?? "",
       g.pitchers?.away_starter?.pitcher_recent_velocity ?? g.pitchers?.away?.pitcher_recent_velocity ?? "",
-      g.pitchers?.home_starter?.pitcher_csw_pct ?? g.pitchers?.home?.pitcher_csw_pct ?? "",
-      g.pitchers?.away_starter?.pitcher_csw_pct ?? g.pitchers?.away?.pitcher_csw_pct ?? "",
       g.weather?.temp ?? "",
       g.weather?.windSpeed ?? "",
       g.weather?.rainProbability ?? "",
@@ -1216,13 +1255,6 @@ function generateBattersCSV(games) {
     "contact_pct_vs_lhp",
     "whiff_pct",
     "chase_pct",
-    "total_bases_prop",
-    "total_bases_prop_over_odds",
-    "total_bases_prop_under_odds",
-    "total_bases_prop_book",
-    "total_bases_prop_source",
-    "total_bases_prop_hit_rate",
-    "total_bases_prop_hit_rate_display",
     "opposing_pitcher",
     "opposing_pitcher_hand",
     "pitcher_allowed_avg_vs_lhb",
@@ -1368,6 +1400,7 @@ function generateBattersCSV(games) {
     "home_pitcher_last3_vs_team_bf_avg",
     "home_pitcher_bvp_pa_vs_team",
     "home_pitcher_projected_pitches",
+    "home_pitcher_projected_innings",
     "home_pitcher_bf_per_start",
     "home_pitcher_fastball_pct",
     "home_pitcher_slider_pct",
@@ -1408,6 +1441,7 @@ function generateBattersCSV(games) {
     "away_pitcher_last3_vs_team_bf_avg",
     "away_pitcher_bvp_pa_vs_team",
     "away_pitcher_projected_pitches",
+    "away_pitcher_projected_innings",
     "away_pitcher_bf_per_start",
     "away_pitcher_fastball_pct",
     "away_pitcher_slider_pct",
@@ -1487,8 +1521,16 @@ function generateBattersCSV(games) {
     "home_pitcher_primary_pitch_usage_pct",
     "home_pitcher_secondary_pitch",
     "home_pitcher_secondary_pitch_usage_pct",
+    "home_pitcher_pitches_per_bf",
     "home_pitcher_pitches_per_bf_last5",
     "home_pitcher_pitches_per_ip_last5",
+    "away_pitcher_primary_pitch",
+    "away_pitcher_primary_pitch_usage_pct",
+    "away_pitcher_secondary_pitch",
+    "away_pitcher_secondary_pitch_usage_pct",
+    "away_pitcher_pitches_per_bf",
+    "away_pitcher_pitches_per_bf_last5",
+    "away_pitcher_pitches_per_ip_last5",
     "home_pitcher_avg_pitches_last3",
     "home_pitcher_rest_status",
     "away_pitcher_avg_pitches_last3",
@@ -1512,8 +1554,6 @@ function generateBattersCSV(games) {
     "away_wOba",
     "home_pitcher_recent_velocity",
     "away_pitcher_recent_velocity",
-    "home_pitcher_csw_pct",
-    "away_pitcher_csw_pct",
     "game_weather_temp",
     "game_weather_windSpeed",
     "game_weather_rainProbability",
@@ -1820,8 +1860,6 @@ function generateBattersCSV(games) {
       game.advanced_offense?.away?.wOba ?? "",
       game.pitchers?.home_starter?.pitcher_recent_velocity ?? game.pitchers?.home?.pitcher_recent_velocity ?? "",
       game.pitchers?.away_starter?.pitcher_recent_velocity ?? game.pitchers?.away?.pitcher_recent_velocity ?? "",
-      game.pitchers?.home_starter?.pitcher_csw_pct ?? game.pitchers?.home?.pitcher_csw_pct ?? "",
-      game.pitchers?.away_starter?.pitcher_csw_pct ?? game.pitchers?.away?.pitcher_csw_pct ?? "",
       game.weather?.temp ?? "",
       game.weather?.windSpeed ?? "",
       game.weather?.rainProbability ?? "",
@@ -1874,13 +1912,6 @@ function generateBattersCSV(games) {
           roundCsvNumber(p.contact_pct_vs_lhp),
           roundCsvNumber(p.whiff_pct),
           roundCsvNumber(p.chase_pct),
-          p.totalBasesProp ?? "",
-          p.totalBasesPropOverOdds ?? "",
-          p.totalBasesPropUnderOdds ?? "",
-          escapeStr(p.totalBasesPropBook),
-          escapeStr(p.totalBasesPropSource),
-          p.totalBasesPropHitRate ?? "",
-          escapeStr(p.totalBasesPropHitRateDisplay),
           escapeStr(oppPitcherName),
           escapeStr(oppPitcherHand),
           pitcherAllowedAvgLhb,
@@ -2231,7 +2262,7 @@ var envPaths = [
   path2.join("/etc", "secrets", "env.local")
 ];
 for (const envPath of envPaths) {
-  if (fs.existsSync(envPath)) {
+  if (fs2.existsSync(envPath)) {
     dotenv.config({ path: envPath });
     console.log(`[ENV] Cargado desde: ${envPath}`);
   }
@@ -2253,19 +2284,19 @@ var ERRORS_PATH = path2.join(process.cwd(), "mlb_errors.json");
 var gamesDbCache = null;
 var gamesDbCacheMtime = 0;
 var oddsApiBackfillsInFlight = /* @__PURE__ */ new Set();
-if (!fs.existsSync(DB_PATH)) {
-  fs.writeFileSync(DB_PATH, JSON.stringify({}, null, 2));
+if (!fs2.existsSync(DB_PATH)) {
+  fs2.writeFileSync(DB_PATH, JSON.stringify({}, null, 2));
 }
-if (!fs.existsSync(ERRORS_PATH)) {
-  fs.writeFileSync(ERRORS_PATH, JSON.stringify([], null, 2));
+if (!fs2.existsSync(ERRORS_PATH)) {
+  fs2.writeFileSync(ERRORS_PATH, JSON.stringify([], null, 2));
 }
 function readGamesDB() {
   try {
-    const stat = fs.statSync(DB_PATH);
+    const stat = fs2.statSync(DB_PATH);
     if (gamesDbCache && stat.mtimeMs === gamesDbCacheMtime) {
       return gamesDbCache;
     }
-    const raw = fs.readFileSync(DB_PATH, "utf-8");
+    const raw = fs2.readFileSync(DB_PATH, "utf-8");
     gamesDbCache = JSON.parse(raw);
     gamesDbCacheMtime = stat.mtimeMs;
     return gamesDbCache || {};
@@ -2276,8 +2307,8 @@ function readGamesDB() {
 }
 function writeGamesDB(data) {
   try {
-    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-    const stat = fs.statSync(DB_PATH);
+    fs2.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+    const stat = fs2.statSync(DB_PATH);
     gamesDbCache = data;
     gamesDbCacheMtime = stat.mtimeMs;
   } catch (err) {
@@ -2331,7 +2362,7 @@ function maybeBackfillTheOddsApiForDate(date, dateGames) {
   if (!process.env.ODDS_API_KEY) return;
   if (oddsApiBackfillsInFlight.has(date)) return;
   const cacheFile = path2.join(process.cwd(), `odds_cache_${date}.json`);
-  const hasOddsCache = fs.existsSync(cacheFile);
+  const hasOddsCache = fs2.existsSync(cacheFile);
   const apiPropsCount = getTheOddsApiPropsCountForGames(dateGames);
   if (hasOddsCache && apiPropsCount > 0) return;
   oddsApiBackfillsInFlight.add(date);
@@ -2393,7 +2424,7 @@ async function syncFirestoreToLocalDB(reason = "manual") {
 }
 function readErrorsDB() {
   try {
-    const raw = fs.readFileSync(ERRORS_PATH, "utf-8");
+    const raw = fs2.readFileSync(ERRORS_PATH, "utf-8");
     return JSON.parse(raw);
   } catch (err) {
     console.error("Error reading errors database:", err);
@@ -2402,7 +2433,7 @@ function readErrorsDB() {
 }
 function writeErrorsDB(errors) {
   try {
-    fs.writeFileSync(ERRORS_PATH, JSON.stringify(errors, null, 2));
+    fs2.writeFileSync(ERRORS_PATH, JSON.stringify(errors, null, 2));
   } catch (err) {
     console.error("Error writing errors database:", err);
   }
@@ -2663,6 +2694,119 @@ function flattenGameToJSON(g) {
     away_pitcher_projected_pitches: g.advanced_pitching?.away?.projectedPitchCount ?? null,
     away_pitcher_projected_innings: g.advanced_pitching?.away?.projectedInnings ?? null,
     away_pitcher_bf_per_start: g.advanced_pitching?.away?.battersFacedPerStart ?? null,
+    // --- Derived: Primary/Secondary Pitch + Pitch Efficiency + Rest Status ---
+    home_pitcher_primary_pitch: (() => {
+      const ap = g.advanced_pitching?.home;
+      if (!ap) return null;
+      const arr = [
+        { name: "fastball", pct: ap.fastballPct || 0 },
+        { name: "slider", pct: ap.sliderPct || 0 },
+        { name: "curve", pct: ap.curvePct || 0 },
+        { name: "changeup", pct: ap.changeupPct || 0 },
+        { name: "splitter", pct: ap.splitterPct || 0 }
+      ].sort((a, b) => b.pct - a.pct);
+      return arr[0].pct > 0 ? arr[0].name : null;
+    })(),
+    home_pitcher_primary_pitch_usage_pct: (() => {
+      const ap = g.advanced_pitching?.home;
+      if (!ap) return null;
+      const arr = [ap.fastballPct || 0, ap.sliderPct || 0, ap.curvePct || 0, ap.changeupPct || 0, ap.splitterPct || 0].sort((a, b) => b - a);
+      return arr[0] > 0 ? arr[0] : null;
+    })(),
+    home_pitcher_secondary_pitch: (() => {
+      const ap = g.advanced_pitching?.home;
+      if (!ap) return null;
+      const arr = [
+        { name: "fastball", pct: ap.fastballPct || 0 },
+        { name: "slider", pct: ap.sliderPct || 0 },
+        { name: "curve", pct: ap.curvePct || 0 },
+        { name: "changeup", pct: ap.changeupPct || 0 },
+        { name: "splitter", pct: ap.splitterPct || 0 }
+      ].sort((a, b) => b.pct - a.pct);
+      return arr[1].pct > 0 ? arr[1].name : null;
+    })(),
+    home_pitcher_secondary_pitch_usage_pct: (() => {
+      const ap = g.advanced_pitching?.home;
+      if (!ap) return null;
+      const arr = [ap.fastballPct || 0, ap.sliderPct || 0, ap.curvePct || 0, ap.changeupPct || 0, ap.splitterPct || 0].sort((a, b) => b - a);
+      return arr[1] > 0 ? arr[1] : null;
+    })(),
+    home_pitcher_pitches_per_bf_last5: (() => {
+      const ap = g.advanced_pitching?.home;
+      if (ap?.last5PitchCountAvg != null && ap?.last5BfAvg != null && ap.last5BfAvg > 0)
+        return ap.last5PitchCountAvg / ap.last5BfAvg;
+      return null;
+    })(),
+    home_pitcher_pitches_per_ip_last5: (() => {
+      const ap = g.advanced_pitching?.home;
+      if (ap?.last5PitchCountAvg != null && ap?.last5IpAvg != null && ap.last5IpAvg > 0)
+        return ap.last5PitchCountAvg / ap.last5IpAvg;
+      return null;
+    })(),
+    home_pitcher_avg_pitches_last5: g.advanced_pitching?.home?.last5PitchCountAvg ?? null,
+    home_pitcher_rest_status: (() => {
+      const days = fPitchers?.home?.daysSinceLastStart;
+      if (days == null) return null;
+      if (days <= 4) return "Short Rest";
+      if (days === 5) return "Normal";
+      return "Extra Rest";
+    })(),
+    away_pitcher_primary_pitch: (() => {
+      const ap = g.advanced_pitching?.away;
+      if (!ap) return null;
+      const arr = [
+        { name: "fastball", pct: ap.fastballPct || 0 },
+        { name: "slider", pct: ap.sliderPct || 0 },
+        { name: "curve", pct: ap.curvePct || 0 },
+        { name: "changeup", pct: ap.changeupPct || 0 },
+        { name: "splitter", pct: ap.splitterPct || 0 }
+      ].sort((a, b) => b.pct - a.pct);
+      return arr[0].pct > 0 ? arr[0].name : null;
+    })(),
+    away_pitcher_primary_pitch_usage_pct: (() => {
+      const ap = g.advanced_pitching?.away;
+      if (!ap) return null;
+      const arr = [ap.fastballPct || 0, ap.sliderPct || 0, ap.curvePct || 0, ap.changeupPct || 0, ap.splitterPct || 0].sort((a, b) => b - a);
+      return arr[0] > 0 ? arr[0] : null;
+    })(),
+    away_pitcher_secondary_pitch: (() => {
+      const ap = g.advanced_pitching?.away;
+      if (!ap) return null;
+      const arr = [
+        { name: "fastball", pct: ap.fastballPct || 0 },
+        { name: "slider", pct: ap.sliderPct || 0 },
+        { name: "curve", pct: ap.curvePct || 0 },
+        { name: "changeup", pct: ap.changeupPct || 0 },
+        { name: "splitter", pct: ap.splitterPct || 0 }
+      ].sort((a, b) => b.pct - a.pct);
+      return arr[1].pct > 0 ? arr[1].name : null;
+    })(),
+    away_pitcher_secondary_pitch_usage_pct: (() => {
+      const ap = g.advanced_pitching?.away;
+      if (!ap) return null;
+      const arr = [ap.fastballPct || 0, ap.sliderPct || 0, ap.curvePct || 0, ap.changeupPct || 0, ap.splitterPct || 0].sort((a, b) => b - a);
+      return arr[1] > 0 ? arr[1] : null;
+    })(),
+    away_pitcher_pitches_per_bf_last5: (() => {
+      const ap = g.advanced_pitching?.away;
+      if (ap?.last5PitchCountAvg != null && ap?.last5BfAvg != null && ap.last5BfAvg > 0)
+        return ap.last5PitchCountAvg / ap.last5BfAvg;
+      return null;
+    })(),
+    away_pitcher_pitches_per_ip_last5: (() => {
+      const ap = g.advanced_pitching?.away;
+      if (ap?.last5PitchCountAvg != null && ap?.last5IpAvg != null && ap.last5IpAvg > 0)
+        return ap.last5PitchCountAvg / ap.last5IpAvg;
+      return null;
+    })(),
+    away_pitcher_avg_pitches_last5: g.advanced_pitching?.away?.last5PitchCountAvg ?? null,
+    away_pitcher_rest_status: (() => {
+      const days = fPitchers?.away?.daysSinceLastStart;
+      if (days == null) return null;
+      if (days <= 4) return "Short Rest";
+      if (days === 5) return "Normal";
+      return "Extra Rest";
+    })(),
     home_offense_woba: g.advanced_offense?.home?.wOba ?? null,
     home_offense_xwoba: g.advanced_offense?.home?.xwOba ?? null,
     home_offense_wrcplus: g.advanced_offense?.home?.wrcPlus ?? null,
@@ -3271,9 +3415,9 @@ function fetchWithTimeout(url, ms = 8e3) {
 }
 async function fetchDataStreakSheetRows(date, statKey, cachePrefix, forceRefresh = false, excludeInjured = true) {
   const cacheFile = path2.join(process.cwd(), `${cachePrefix}${excludeInjured ? "" : "_all"}_${date}.json`);
-  if (!forceRefresh && fs.existsSync(cacheFile)) {
+  if (!forceRefresh && fs2.existsSync(cacheFile)) {
     try {
-      return JSON.parse(fs.readFileSync(cacheFile, "utf-8"));
+      return JSON.parse(fs2.readFileSync(cacheFile, "utf-8"));
     } catch (e) {
       console.warn(`Error leyendo cache de DataStreak ${statKey}, se descargara nuevamente.`, e);
     }
@@ -3287,7 +3431,7 @@ async function fetchDataStreakSheetRows(date, statKey, cachePrefix, forceRefresh
     }
     const data = await res.json();
     const rows = Array.isArray(data?.rows) ? data.rows : [];
-    fs.writeFileSync(cacheFile, JSON.stringify(rows, null, 2));
+    fs2.writeFileSync(cacheFile, JSON.stringify(rows, null, 2));
     return rows;
   } catch (err) {
     console.warn(`Error al obtener ${statKey} de DataStreak:`, err);
@@ -3449,10 +3593,10 @@ async function enrichGamesWithTotalBasesProps(games) {
 }
 async function fetchRealBettingLines(date, forceRefreshOdds = false, gamesList = []) {
   const cacheFile = path2.join(process.cwd(), `odds_cache_${date}.json`);
-  if (!forceRefreshOdds && fs.existsSync(cacheFile)) {
+  if (!forceRefreshOdds && fs2.existsSync(cacheFile)) {
     try {
       console.log(`Leyendo cuotas desde el cach\xE9 local: odds_cache_${date}.json`);
-      const cached = fs.readFileSync(cacheFile, "utf-8");
+      const cached = fs2.readFileSync(cacheFile, "utf-8");
       return JSON.parse(cached);
     } catch (e) {
       console.warn("Error leyendo el cach\xE9 de cuotas, se ignorar\xE1 y se descargar\xE1 nuevamente.", e);
@@ -3490,7 +3634,7 @@ async function fetchRealBettingLines(date, forceRefreshOdds = false, gamesList =
   }
   if (!activeKey || !data) {
     console.error("[Odds API] Todas las keys de The Odds API agotaron su cuota o fallaron.");
-    fs.writeFileSync(cacheFile, JSON.stringify([]));
+    fs2.writeFileSync(cacheFile, JSON.stringify([]));
     return null;
   }
   try {
@@ -3530,7 +3674,7 @@ async function fetchRealBettingLines(date, forceRefreshOdds = false, gamesList =
     const dataStreakPitcherKs = await fetchDataStreakPitcherStrikeoutProps(date, forceRefreshOdds);
     const eventsWithDataStreakProps = mergeDataStreakPitcherStrikeouts(eventsWithProps, dataStreakPitcherKs);
     try {
-      fs.writeFileSync(cacheFile, JSON.stringify(eventsWithDataStreakProps, null, 2));
+      fs2.writeFileSync(cacheFile, JSON.stringify(eventsWithDataStreakProps, null, 2));
       console.log(`Cuotas guardadas en cache: odds_cache_${date}.json`);
     } catch (e) {
       console.warn("No se pudo guardar el cache de cuotas.", e);
