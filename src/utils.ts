@@ -4,6 +4,7 @@
  */
 
 import { MLBGame } from "./types";
+import { enrichWithVortexMetrics } from "./etl/transformers/vortexMetrics";
 
 function escapeCsvValue(val: any): string {
   if (val === undefined || val === null || val === "") return "";
@@ -16,6 +17,25 @@ function roundCsvNumber(val: any, decimals = 1): number | string {
   if (!Number.isFinite(parsed)) return "";
   const factor = Math.pow(10, decimals);
   return Math.round(parsed * factor) / factor;
+}
+
+function parseNum(val: any): number | null {
+  if (val === null || val === undefined || val === "") return null;
+  const n = Number(val);
+  return isNaN(n) ? null : n;
+}
+
+function calcLast3Stats(v1: any, v2: any, v3: any) {
+  const nums = [parseNum(v1), parseNum(v2), parseNum(v3)].filter((n): n is number => n !== null);
+  if (nums.length === 0) return { avg: "", min: "", under15: "", under18: "" };
+  
+  const sum = nums.reduce((a, b) => a + b, 0);
+  const avg = (sum / nums.length).toFixed(1);
+  const min = Math.min(...nums).toString();
+  const under15 = nums.filter(v => v < 15).length.toString();
+  const under18 = nums.filter(v => v < 18).length.toString();
+  
+  return { avg, min, under15, under18 };
 }
 
 const MLB_TEAM_ABBR: Record<string, string> = {
@@ -59,8 +79,27 @@ function getTeamAbbr(teamName: string): string | null {
 
 function getLineupAverageKPct(lineup: any[] | undefined): string {
   if (!lineup || !Array.isArray(lineup) || lineup.length === 0) return "";
-  const sum = lineup.reduce((acc, p) => acc + (p.strikeout_pct ?? p.kPct ?? 0), 0);
-  return (sum / lineup.length).toFixed(2);
+  
+  let totalPA = 0;
+  let totalSO = 0;
+  
+  for (const p of lineup) {
+    const kPct = p.strikeout_pct ?? p.kPct ?? 0;
+    const pa = p.pa || 0;
+    
+    if (pa > 0) {
+      totalPA += pa;
+      totalSO += (kPct / 100) * pa;
+    }
+  }
+
+  // Fallback a promedio simple si ninguno tiene PA (muy raro)
+  if (totalPA === 0) {
+    const sum = lineup.reduce((acc, p) => acc + (p.strikeout_pct ?? p.kPct ?? 0), 0);
+    return (sum / lineup.length).toFixed(1);
+  }
+
+  return ((totalSO / totalPA) * 100).toFixed(1);
 }
 
 function isFinalGameStatus(status: any): boolean {
@@ -336,28 +375,23 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
     "home_bullpen_ip_3d", "home_bullpen_ip_7d_recent", "home_bullpen_relievers_yesterday", "home_bullpen_relievers_2d", "home_bullpen_available",
     "away_bullpen_ip_3d", "away_bullpen_ip_7d_recent", "away_bullpen_relievers_yesterday", "away_bullpen_relievers_2d", "away_bullpen_available",
     // Advanced Pitching
-    "home_pitcher_xera", "home_pitcher_fip", "home_pitcher_xfip", "home_pitcher_siera", "home_pitcher_hardhit_pct", "home_pitcher_barrel_pct", "home_pitcher_gb_pct", "home_pitcher_fb_pct", "home_pitcher_so_rate", "home_pitcher_bb_rate", "home_pitcher_swstr_pct", "home_pitcher_csw_pct", "home_pitcher_actual_ks", "home_pitcher_last5_ks_avg", "home_pitcher_last5_ks_std", "home_pitcher_last5_ip_avg", "home_pitcher_last5_bf_avg", "home_pitcher_last5_pitch_count_avg", "home_pitcher_last3_ks_1", "home_pitcher_last3_ks_2", "home_pitcher_last3_ks_3", "home_pitcher_last3_ip_1", "home_pitcher_last3_ip_2", "home_pitcher_last3_ip_3", "home_pitcher_last3_bf_1", "home_pitcher_last3_bf_2", "home_pitcher_last3_bf_3", "home_pitcher_career_k_pct_vs_team", "home_pitcher_last3_vs_team_ks_avg", "home_pitcher_last3_vs_team_bf_avg", "home_pitcher_bvp_pa_vs_team", "home_pitcher_projected_pitches", "home_pitcher_projected_innings", "home_pitcher_bf_per_start", "home_pitcher_fastball_pct", "home_pitcher_slider_pct", "home_pitcher_curve_pct", "home_pitcher_changeup_pct", "home_pitcher_splitter_pct", "home_catcher_name", "home_catcher_framing_runs",
-    "away_pitcher_xera", "away_pitcher_fip", "away_pitcher_xfip", "away_pitcher_siera", "away_pitcher_hardhit_pct", "away_pitcher_barrel_pct", "away_pitcher_gb_pct", "away_pitcher_fb_pct", "away_pitcher_so_rate", "away_pitcher_bb_rate", "away_pitcher_swstr_pct", "away_pitcher_csw_pct", "away_pitcher_actual_ks", "away_pitcher_last5_ks_avg", "away_pitcher_last5_ks_std", "away_pitcher_last5_ip_avg", "away_pitcher_last5_bf_avg", "away_pitcher_last5_pitch_count_avg", "away_pitcher_last3_ks_1", "away_pitcher_last3_ks_2", "away_pitcher_last3_ks_3", "away_pitcher_last3_ip_1", "away_pitcher_last3_ip_2", "away_pitcher_last3_ip_3", "away_pitcher_last3_bf_1", "away_pitcher_last3_bf_2", "away_pitcher_last3_bf_3", "away_pitcher_career_k_pct_vs_team", "away_pitcher_last3_vs_team_ks_avg", "away_pitcher_last3_vs_team_bf_avg", "away_pitcher_bvp_pa_vs_team", "away_pitcher_projected_pitches", "away_pitcher_projected_innings", "away_pitcher_bf_per_start", "away_pitcher_fastball_pct", "away_pitcher_slider_pct", "away_pitcher_curve_pct", "away_pitcher_changeup_pct", "away_pitcher_splitter_pct", "away_catcher_name", "away_catcher_framing_runs",
+    "home_pitcher_xera", "home_pitcher_fip", "home_pitcher_xfip", "home_pitcher_siera", "home_pitcher_hardhit_pct", "home_pitcher_barrel_pct", "home_pitcher_gb_pct", "home_pitcher_fb_pct", "home_pitcher_so_rate", "home_pitcher_bb_rate", "home_pitcher_swstr_pct", "home_pitcher_csw_pct", "home_pitcher_actual_ks", "home_pitcher_last5_ks_avg", "home_pitcher_last5_ks_std", "home_pitcher_last5_ip_avg", "home_pitcher_last5_bf_avg", "home_pitcher_last5_pitch_count_avg", "home_pitcher_last3_ks_1", "home_pitcher_last3_ks_2", "home_pitcher_last3_ks_3", "home_pitcher_last3_ip_1", "home_pitcher_last3_ip_2", "home_pitcher_last3_ip_3", "home_pitcher_last3_bf_1", "home_pitcher_last3_bf_2", "home_pitcher_last3_bf_3", "home_pitcher_career_k_pct_vs_team", "home_pitcher_last3_vs_team_ks_avg", "home_pitcher_last3_vs_team_bf_avg", "home_pitcher_bvp_pa_vs_team", "home_pitcher_projected_pitches", "home_pitcher_projected_innings", "home_pitcher_bf_per_start", "home_pitcher_fastball_pct", "home_pitcher_slider_pct", "home_pitcher_curve_pct", "home_pitcher_changeup_pct", "home_pitcher_splitter_pct", "home_catcher_name", "home_catcher_framing_runs", "home_pitcher_last3_bf_avg", "home_pitcher_last3_ip_avg", "home_pitcher_last3_ks_avg", "home_pitcher_last3_min_bf", "home_pitcher_last3_min_ip", "home_pitcher_last3_bf_under_15_count", "home_pitcher_last3_bf_under_18_count",
+    "away_pitcher_xera", "away_pitcher_fip", "away_pitcher_xfip", "away_pitcher_siera", "away_pitcher_hardhit_pct", "away_pitcher_barrel_pct", "away_pitcher_gb_pct", "away_pitcher_fb_pct", "away_pitcher_so_rate", "away_pitcher_bb_rate", "away_pitcher_swstr_pct", "away_pitcher_csw_pct", "away_pitcher_actual_ks", "away_pitcher_last5_ks_avg", "away_pitcher_last5_ks_std", "away_pitcher_last5_ip_avg", "away_pitcher_last5_bf_avg", "away_pitcher_last5_pitch_count_avg", "away_pitcher_last3_ks_1", "away_pitcher_last3_ks_2", "away_pitcher_last3_ks_3", "away_pitcher_last3_ip_1", "away_pitcher_last3_ip_2", "away_pitcher_last3_ip_3", "away_pitcher_last3_bf_1", "away_pitcher_last3_bf_2", "away_pitcher_last3_bf_3", "away_pitcher_career_k_pct_vs_team", "away_pitcher_last3_vs_team_ks_avg", "away_pitcher_last3_vs_team_bf_avg", "away_pitcher_bvp_pa_vs_team", "away_pitcher_projected_pitches", "away_pitcher_projected_innings", "away_pitcher_bf_per_start", "away_pitcher_fastball_pct", "away_pitcher_slider_pct", "away_pitcher_curve_pct", "away_pitcher_changeup_pct", "away_pitcher_splitter_pct", "away_catcher_name", "away_catcher_framing_runs", "away_pitcher_last3_bf_avg", "away_pitcher_last3_ip_avg", "away_pitcher_last3_ks_avg", "away_pitcher_last3_min_bf", "away_pitcher_last3_min_ip", "away_pitcher_last3_bf_under_15_count", "away_pitcher_last3_bf_under_18_count",
     // Advanced Offense
-    "home_offense_woba", "home_offense_xwoba", "home_offense_iso", "home_offense_babip", "home_offense_hardhit_pct", "home_offense_barrel_pct", "home_offense_contact_pct", "home_offense_k_pct_vs_pitch_hand", "home_offense_projected_lineup_k_pct", "home_projected_lineup_k_pct_vs_hand", "home_projected_lineup_contact_pct_vs_hand", "home_projected_lineup_whiff_pct_vs_hand", "home_offense_whiff_pct_vs_fastball", "home_offense_whiff_pct_vs_slider", "home_offense_whiff_pct_vs_curve", "home_offense_whiff_pct_vs_changeup", "home_offense_whiff_pct_vs_splitter",
-    "away_offense_woba", "away_offense_xwoba", "away_offense_iso", "away_offense_babip", "away_offense_hardhit_pct", "away_offense_barrel_pct", "away_offense_contact_pct", "away_offense_k_pct_vs_pitch_hand", "away_offense_projected_lineup_k_pct", "away_projected_lineup_k_pct_vs_hand", "away_projected_lineup_contact_pct_vs_hand", "away_projected_lineup_whiff_pct_vs_hand", "away_offense_whiff_pct_vs_fastball", "away_offense_whiff_pct_vs_slider", "away_offense_whiff_pct_vs_curve", "away_offense_whiff_pct_vs_changeup", "away_offense_whiff_pct_vs_splitter",
+    "home_offense_woba", "home_offense_xwoba", "home_offense_iso", "home_offense_babip", "home_offense_hardhit_pct", "home_offense_barrel_pct", "home_offense_contact_pct", "home_offense_k_pct_vs_pitch_hand", "home_projected_lineup_k_pct_vs_hand", "home_projected_lineup_contact_pct_vs_hand", "home_projected_lineup_whiff_pct_vs_hand", "home_offense_whiff_pct_vs_fastball", "home_offense_whiff_pct_vs_slider", "home_offense_whiff_pct_vs_curve", "home_offense_whiff_pct_vs_changeup", "home_offense_whiff_pct_vs_splitter",
+    "away_offense_woba", "away_offense_xwoba", "away_offense_iso", "away_offense_babip", "away_offense_hardhit_pct", "away_offense_barrel_pct", "away_offense_contact_pct", "away_offense_k_pct_vs_pitch_hand", "away_projected_lineup_k_pct_vs_hand", "away_projected_lineup_contact_pct_vs_hand", "away_projected_lineup_whiff_pct_vs_hand", "away_offense_whiff_pct_vs_fastball", "away_offense_whiff_pct_vs_slider", "away_offense_whiff_pct_vs_curve", "away_offense_whiff_pct_vs_changeup", "away_offense_whiff_pct_vs_splitter",
     // Model Features
     "diff_era", "diff_xera", "diff_fip", "diff_ops", "diff_xwoba", "diff_bullpen_era", "diff_runs_per_game", "diff_record_last10", "diff_record_home_away", "diff_starter_rest", "diff_bullpen_fatigue",
     // Game Results / ML Target Labels
     "resultado_carreras_home", "resultado_carreras_visitante", "resultado_ganador", "resultado_estado",
     // VORTEX V10.3 METRICS (47 Variables)
     "lineup_confirmed", "lineup_source", "lineup_updated_at",
-    "home_babip", "home_hardHitPct", "home_kPctVsPitchHand", "home_projectedLineupContactPctVsHand", "home_projectedLineupWhiffPctVsHand",
-    "away_babip", "away_hardHitPct", "away_kPctVsPitchHand",
-    "home_whiffPctVsFastball", "away_whiffPctVsFastball",
     "home_pitcher_primary_pitch", "home_pitcher_primary_pitch_usage_pct", "home_pitcher_secondary_pitch", "home_pitcher_secondary_pitch_usage_pct", "home_pitcher_pitches_per_bf", "home_pitcher_pitches_per_bf_last5", "home_pitcher_pitches_per_ip_last5",
     "away_pitcher_primary_pitch", "away_pitcher_primary_pitch_usage_pct", "away_pitcher_secondary_pitch", "away_pitcher_secondary_pitch_usage_pct", "away_pitcher_pitches_per_bf", "away_pitcher_pitches_per_bf_last5", "away_pitcher_pitches_per_ip_last5",
     "home_pitcher_avg_pitches_last3", "home_pitcher_rest_status", "away_pitcher_avg_pitches_last3", "away_pitcher_rest_status", "home_pitcher_pitchHand", "away_pitcher_pitchHand",
     "bullpen_home_ipLast3Days", "bullpen_home_ipLast7Days", "bullpen_away_ipLast3Days", "bullpen_away_ipLast7Days", "bullpen_home_relieversUsedYesterday",
     "home_lineup_contact_stress_score", "home_lineup_pitch_count_risk_score", "home_lineup_high_hardhit_batters_count", "away_lineup_contact_stress_score", "away_lineup_pitch_count_risk_score", "away_lineup_high_hardhit_batters_count",
-    "home_projectedLineupKPct", "away_projectedLineupKPct", "home_wOba", "away_wOba",
-    "home_pitcher_recent_velocity", "away_pitcher_recent_velocity",
-    "game_weather_temp", "game_weather_windSpeed", "game_weather_rainProbability", "game_weather_skyStatus"
+    "home_pitcher_recent_velocity", "away_pitcher_recent_velocity"
   ];
 
   const escapeStr = (val: any) => {
@@ -376,6 +410,47 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
     const fPitchers = g.fatigue_metrics?.pitchers;
     const fBullpen = g.fatigue_metrics?.bullpen;
     const canUseActualKs = isFinalGameStatus(g.game_result?.gameStatus);
+
+      const hL3Bf = calcLast3Stats(g.advanced_pitching?.home?.last3Bf1, g.advanced_pitching?.home?.last3Bf2, g.advanced_pitching?.home?.last3Bf3);
+      const hL3Ip = calcLast3Stats(g.advanced_pitching?.home?.last3Ip1, g.advanced_pitching?.home?.last3Ip2, g.advanced_pitching?.home?.last3Ip3);
+      const hL3K = calcLast3Stats(g.advanced_pitching?.home?.last3Ks1, g.advanced_pitching?.home?.last3Ks2, g.advanced_pitching?.home?.last3Ks3);
+      const aL3Bf = calcLast3Stats(g.advanced_pitching?.away?.last3Bf1, g.advanced_pitching?.away?.last3Bf2, g.advanced_pitching?.away?.last3Bf3);
+      const aL3Ip = calcLast3Stats(g.advanced_pitching?.away?.last3Ip1, g.advanced_pitching?.away?.last3Ip2, g.advanced_pitching?.away?.last3Ip3);
+      const aL3K = calcLast3Stats(g.advanced_pitching?.away?.last3Ks1, g.advanced_pitching?.away?.last3Ks2, g.advanced_pitching?.away?.last3Ks3);
+
+    const homePitcherMetrics = getPitcherDerivedMetrics(g, 'home');
+    const awayPitcherMetrics = getPitcherDerivedMetrics(g, 'away');
+
+    const getLineupMetrics = (side: 'home' | 'away') => {
+      let contactScore = (g as any).advanced_offense?.[side]?.lineup_contact_stress_score;
+      let pitchRisk = (g as any).advanced_offense?.[side]?.lineup_pitch_count_risk_score;
+      let hardhit = (g as any).advanced_offense?.[side]?.lineup_high_hardhit_batters_count;
+      
+      if (contactScore === undefined || contactScore === "") {
+        const batters = (g as any).lineups?.[side];
+        if (batters && Array.isArray(batters) && batters.length > 0) {
+          let lineupContactStress = 0;
+          let lineupPitchRisk = 0;
+          let highHardhitCount = 0;
+          for (const batter of batters) {
+            const contactFactor = batter.contact_pct_vs_rhp || 0.8; 
+            const kFactor = batter.kPct || batter.strikeout_pct || 0.2;
+            const batterStress = (contactFactor * 100) - (kFactor * 100);
+            lineupContactStress += Math.max(0, batterStress);
+            if ((batter.hardHitPct || 0) > 0.40) highHardhitCount++;
+            const bbPct = batter.walk_pct || 0.08;
+            lineupPitchRisk += (bbPct * 100);
+          }
+          contactScore = lineupContactStress / batters.length;
+          pitchRisk = lineupPitchRisk / batters.length;
+          hardhit = highHardhitCount;
+        }
+      }
+      return { contactScore: contactScore ?? "", pitchRisk: pitchRisk ?? "", hardhit: hardhit ?? "" };
+    };
+
+    const homeLineupMetrics = getLineupMetrics('home');
+    const awayLineupMetrics = getLineupMetrics('away');
 
     return [
       // ... (Keep metadata and pitchers logic exactly same)
@@ -522,6 +597,7 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
       g.advanced_pitching?.home?.splitterPct ?? "",
       escapeStr(g.advanced_pitching?.home?.catcherName),
       g.advanced_pitching?.home?.catcherFramingRuns ?? "",
+      hL3Bf.avg, hL3Ip.avg, hL3K.avg, hL3Bf.min, hL3Ip.min, hL3Bf.under15, hL3Bf.under18,
       g.advanced_pitching?.away?.xEra ?? "",
       g.advanced_pitching?.away?.fip ?? "",
       g.advanced_pitching?.away?.xFip ?? "",
@@ -563,6 +639,7 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
       g.advanced_pitching?.away?.splitterPct ?? "",
       escapeStr(g.advanced_pitching?.away?.catcherName),
       g.advanced_pitching?.away?.catcherFramingRuns ?? "",
+      aL3Bf.avg, aL3Ip.avg, aL3K.avg, aL3Bf.min, aL3Ip.min, aL3Bf.under15, aL3Bf.under18,
       // Advanced Offense
       g.advanced_offense?.home?.wOba ?? "",
       g.advanced_offense?.home?.xwOba ?? "",
@@ -572,7 +649,6 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
       g.advanced_offense?.home?.barrelPct ?? "",
       g.advanced_offense?.home?.contactPct ?? "",
       g.advanced_offense?.home?.kPctVsPitchHand ?? "",
-      g.advanced_offense?.home?.projectedLineupKPct ?? "",
       g.advanced_offense?.home?.projectedLineupKPct ?? "",
       g.advanced_offense?.home?.projectedLineupContactPctVsHand ?? "",
       g.advanced_offense?.home?.projectedLineupWhiffPctVsHand ?? "",
@@ -589,7 +665,6 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
       g.advanced_offense?.away?.barrelPct ?? "",
       g.advanced_offense?.away?.contactPct ?? "",
       g.advanced_offense?.away?.kPctVsPitchHand ?? "",
-      g.advanced_offense?.away?.projectedLineupKPct ?? "",
       g.advanced_offense?.away?.projectedLineupKPct ?? "",
       g.advanced_offense?.away?.projectedLineupContactPctVsHand ?? "",
       g.advanced_offense?.away?.projectedLineupWhiffPctVsHand ?? "",
@@ -620,26 +695,24 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
       (g as any).lineups?.lineup_confirmed ? 1 : 0,
       escapeStr((g as any).lineups?.lineup_source),
       escapeStr((g as any).lineups?.lineup_updated_at),
-      g.advanced_offense?.home?.babip ?? "",
-      g.advanced_offense?.home?.hardHitPct ?? "",
-      g.advanced_offense?.home?.kPctVsPitchHand ?? "",
-      (g as any).advanced_offense?.home?.projectedLineupContactPctVsHand ?? "",
-      (g as any).advanced_offense?.home?.projectedLineupWhiffPctVsHand ?? "",
-      g.advanced_offense?.away?.babip ?? "",
-      g.advanced_offense?.away?.hardHitPct ?? "",
-      g.advanced_offense?.away?.kPctVsPitchHand ?? "",
-      (g as any).advanced_offense?.home?.whiffPctVsFastball ?? "",
-      (g as any).advanced_offense?.away?.whiffPctVsFastball ?? "",
-      escapeStr((g as any).pitchers?.home_starter?.pitcher_primary_pitch ?? (g as any).pitchers?.home?.pitcher_primary_pitch),
-      (g as any).pitchers?.home_starter?.pitcher_primary_pitch_usage_pct ?? (g as any).pitchers?.home?.pitcher_primary_pitch_usage_pct ?? "",
-      escapeStr((g as any).pitchers?.home_starter?.pitcher_secondary_pitch ?? (g as any).pitchers?.home?.pitcher_secondary_pitch),
-      (g as any).pitchers?.home_starter?.pitcher_secondary_pitch_usage_pct ?? (g as any).pitchers?.home?.pitcher_secondary_pitch_usage_pct ?? "",
-      (g as any).pitchers?.home_starter?.pitcher_pitches_per_bf_last5 ?? (g as any).pitchers?.home?.pitcher_pitches_per_bf_last5 ?? "",
-      (g as any).pitchers?.home_starter?.pitcher_pitches_per_ip_last5 ?? (g as any).pitchers?.home?.pitcher_pitches_per_ip_last5 ?? "",
+      homePitcherMetrics.primary_pitch,
+      homePitcherMetrics.primary_usage,
+      homePitcherMetrics.secondary_pitch,
+      homePitcherMetrics.secondary_usage,
+      homePitcherMetrics.pitches_per_bf,
+      homePitcherMetrics.pitches_per_bf_last5,
+      homePitcherMetrics.pitches_per_ip_last5,
+      awayPitcherMetrics.primary_pitch,
+      awayPitcherMetrics.primary_usage,
+      awayPitcherMetrics.secondary_pitch,
+      awayPitcherMetrics.secondary_usage,
+      awayPitcherMetrics.pitches_per_bf,
+      awayPitcherMetrics.pitches_per_bf_last5,
+      awayPitcherMetrics.pitches_per_ip_last5,
       (g as any).pitchers?.home_starter?.pitcher_avg_pitches_last3 ?? (g as any).pitchers?.home?.pitcher_avg_pitches_last3 ?? "",
-      escapeStr((g as any).pitchers?.home_starter?.pitcher_rest_status ?? (g as any).pitchers?.home?.pitcher_rest_status),
+      escapeStr(homePitcherMetrics.rest_status),
       (g as any).pitchers?.away_starter?.pitcher_avg_pitches_last3 ?? (g as any).pitchers?.away?.pitcher_avg_pitches_last3 ?? "",
-      escapeStr((g as any).pitchers?.away_starter?.pitcher_rest_status ?? (g as any).pitchers?.away?.pitcher_rest_status),
+      escapeStr(awayPitcherMetrics.rest_status),
       escapeStr((g as any).pitchers?.home_starter?.pitchHand ?? (g as any).pitchers?.home?.pitchHand),
       escapeStr((g as any).pitchers?.away_starter?.pitchHand ?? (g as any).pitchers?.away?.pitchHand),
       g.bullpen?.home?.ipLast3Days ?? fBullpen?.home?.ipLast3Days ?? "",
@@ -647,22 +720,14 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
       g.bullpen?.away?.ipLast3Days ?? fBullpen?.away?.ipLast3Days ?? "",
       g.bullpen?.away?.ipLast7Days ?? fBullpen?.away?.ipLast7Days ?? "",
       (g as any).bullpen?.home?.relieversUsedYesterday ?? fBullpen?.home?.relieversUsedYesterday ?? "",
-      (g as any).advanced_offense?.home?.lineup_contact_stress_score ?? "",
-      (g as any).advanced_offense?.home?.lineup_pitch_count_risk_score ?? "",
-      (g as any).advanced_offense?.home?.lineup_high_hardhit_batters_count ?? "",
-      (g as any).advanced_offense?.away?.lineup_contact_stress_score ?? "",
-      (g as any).advanced_offense?.away?.lineup_pitch_count_risk_score ?? "",
-      (g as any).advanced_offense?.away?.lineup_high_hardhit_batters_count ?? "",
-      (g as any).advanced_offense?.home?.projectedLineupKPct ?? "",
-      (g as any).advanced_offense?.away?.projectedLineupKPct ?? "",
-      g.advanced_offense?.home?.wOba ?? "",
-      g.advanced_offense?.away?.wOba ?? "",
+      homeLineupMetrics.contactScore,
+      homeLineupMetrics.pitchRisk,
+      homeLineupMetrics.hardhit,
+      awayLineupMetrics.contactScore,
+      awayLineupMetrics.pitchRisk,
+      awayLineupMetrics.hardhit,
       (g as any).pitchers?.home_starter?.pitcher_recent_velocity ?? (g as any).pitchers?.home?.pitcher_recent_velocity ?? "",
-      (g as any).pitchers?.away_starter?.pitcher_recent_velocity ?? (g as any).pitchers?.away?.pitcher_recent_velocity ?? "",
-      g.weather?.temp ?? "",
-      g.weather?.windSpeed ?? "",
-      g.weather?.rainProbability ?? "",
-      escapeStr(g.weather?.skyStatus)
+      (g as any).pitchers?.away_starter?.pitcher_recent_velocity ?? (g as any).pitchers?.away?.pitcher_recent_velocity ?? ""
     ];
   });
 
@@ -785,7 +850,12 @@ export function generateDailyPlayerResultsCSV(games: MLBGame[]): string {
   ].join("\n");
 }
 
-export function generateBattersCSV(games: MLBGame[]): string {
+export function generateBattersCSV(games: any[]): string {
+  if (!games || games.length === 0) return "";
+  
+  // Fuerza el enriquecimiento para asegurar que existan las métricas en caché/DB viejo
+  games.forEach(g => enrichWithVortexMetrics(g));
+
   const headers = [
     // --- Batter Info & Stats (36 columns) ---
     "game_id",
@@ -858,28 +928,23 @@ export function generateBattersCSV(games: MLBGame[]): string {
     "home_bullpen_ip_3d", "home_bullpen_ip_7d_recent", "home_bullpen_relievers_yesterday", "home_bullpen_relievers_2d", "home_bullpen_available",
     "away_bullpen_ip_3d", "away_bullpen_ip_7d_recent", "away_bullpen_relievers_yesterday", "away_bullpen_relievers_2d", "away_bullpen_available",
     // Advanced Pitching
-    "home_pitcher_xera", "home_pitcher_fip", "home_pitcher_xfip", "home_pitcher_siera", "home_pitcher_hardhit_pct", "home_pitcher_barrel_pct", "home_pitcher_gb_pct", "home_pitcher_fb_pct", "home_pitcher_so_rate", "home_pitcher_bb_rate", "home_pitcher_swstr_pct", "home_pitcher_csw_pct", "home_pitcher_actual_ks", "home_pitcher_last5_ks_avg", "home_pitcher_last5_ks_std", "home_pitcher_last5_ip_avg", "home_pitcher_last5_bf_avg", "home_pitcher_last5_pitch_count_avg", "home_pitcher_last3_ks_1", "home_pitcher_last3_ks_2", "home_pitcher_last3_ks_3", "home_pitcher_last3_ip_1", "home_pitcher_last3_ip_2", "home_pitcher_last3_ip_3", "home_pitcher_last3_bf_1", "home_pitcher_last3_bf_2", "home_pitcher_last3_bf_3", "home_pitcher_career_k_pct_vs_team", "home_pitcher_last3_vs_team_ks_avg", "home_pitcher_last3_vs_team_bf_avg", "home_pitcher_bvp_pa_vs_team", "home_pitcher_projected_pitches", "home_pitcher_projected_innings", "home_pitcher_bf_per_start", "home_pitcher_fastball_pct", "home_pitcher_slider_pct", "home_pitcher_curve_pct", "home_pitcher_changeup_pct", "home_pitcher_splitter_pct", "home_catcher_name", "home_catcher_framing_runs",
-    "away_pitcher_xera", "away_pitcher_fip", "away_pitcher_xfip", "away_pitcher_siera", "away_pitcher_hardhit_pct", "away_pitcher_barrel_pct", "away_pitcher_gb_pct", "away_pitcher_fb_pct", "away_pitcher_so_rate", "away_pitcher_bb_rate", "away_pitcher_swstr_pct", "away_pitcher_csw_pct", "away_pitcher_actual_ks", "away_pitcher_last5_ks_avg", "away_pitcher_last5_ks_std", "away_pitcher_last5_ip_avg", "away_pitcher_last5_bf_avg", "away_pitcher_last5_pitch_count_avg", "away_pitcher_last3_ks_1", "away_pitcher_last3_ks_2", "away_pitcher_last3_ks_3", "away_pitcher_last3_ip_1", "away_pitcher_last3_ip_2", "away_pitcher_last3_ip_3", "away_pitcher_last3_bf_1", "away_pitcher_last3_bf_2", "away_pitcher_last3_bf_3", "away_pitcher_career_k_pct_vs_team", "away_pitcher_last3_vs_team_ks_avg", "away_pitcher_last3_vs_team_bf_avg", "away_pitcher_bvp_pa_vs_team", "away_pitcher_projected_pitches", "away_pitcher_projected_innings", "away_pitcher_bf_per_start", "away_pitcher_fastball_pct", "away_pitcher_slider_pct", "away_pitcher_curve_pct", "away_pitcher_changeup_pct", "away_pitcher_splitter_pct", "away_catcher_name", "away_catcher_framing_runs",
+    "home_pitcher_xera", "home_pitcher_fip", "home_pitcher_xfip", "home_pitcher_siera", "home_pitcher_hardhit_pct", "home_pitcher_barrel_pct", "home_pitcher_gb_pct", "home_pitcher_fb_pct", "home_pitcher_so_rate", "home_pitcher_bb_rate", "home_pitcher_swstr_pct", "home_pitcher_csw_pct", "home_pitcher_actual_ks", "home_pitcher_last5_ks_avg", "home_pitcher_last5_ks_std", "home_pitcher_last5_ip_avg", "home_pitcher_last5_bf_avg", "home_pitcher_last5_pitch_count_avg", "home_pitcher_last3_ks_1", "home_pitcher_last3_ks_2", "home_pitcher_last3_ks_3", "home_pitcher_last3_ip_1", "home_pitcher_last3_ip_2", "home_pitcher_last3_ip_3", "home_pitcher_last3_bf_1", "home_pitcher_last3_bf_2", "home_pitcher_last3_bf_3", "home_pitcher_career_k_pct_vs_team", "home_pitcher_last3_vs_team_ks_avg", "home_pitcher_last3_vs_team_bf_avg", "home_pitcher_bvp_pa_vs_team", "home_pitcher_projected_pitches", "home_pitcher_projected_innings", "home_pitcher_bf_per_start", "home_pitcher_fastball_pct", "home_pitcher_slider_pct", "home_pitcher_curve_pct", "home_pitcher_changeup_pct", "home_pitcher_splitter_pct", "home_catcher_name", "home_catcher_framing_runs", "home_pitcher_last3_bf_avg", "home_pitcher_last3_ip_avg", "home_pitcher_last3_ks_avg", "home_pitcher_last3_min_bf", "home_pitcher_last3_min_ip", "home_pitcher_last3_bf_under_15_count", "home_pitcher_last3_bf_under_18_count",
+    "away_pitcher_xera", "away_pitcher_fip", "away_pitcher_xfip", "away_pitcher_siera", "away_pitcher_hardhit_pct", "away_pitcher_barrel_pct", "away_pitcher_gb_pct", "away_pitcher_fb_pct", "away_pitcher_so_rate", "away_pitcher_bb_rate", "away_pitcher_swstr_pct", "away_pitcher_csw_pct", "away_pitcher_actual_ks", "away_pitcher_last5_ks_avg", "away_pitcher_last5_ks_std", "away_pitcher_last5_ip_avg", "away_pitcher_last5_bf_avg", "away_pitcher_last5_pitch_count_avg", "away_pitcher_last3_ks_1", "away_pitcher_last3_ks_2", "away_pitcher_last3_ks_3", "away_pitcher_last3_ip_1", "away_pitcher_last3_ip_2", "away_pitcher_last3_ip_3", "away_pitcher_last3_bf_1", "away_pitcher_last3_bf_2", "away_pitcher_last3_bf_3", "away_pitcher_career_k_pct_vs_team", "away_pitcher_last3_vs_team_ks_avg", "away_pitcher_last3_vs_team_bf_avg", "away_pitcher_bvp_pa_vs_team", "away_pitcher_projected_pitches", "away_pitcher_projected_innings", "away_pitcher_bf_per_start", "away_pitcher_fastball_pct", "away_pitcher_slider_pct", "away_pitcher_curve_pct", "away_pitcher_changeup_pct", "away_pitcher_splitter_pct", "away_catcher_name", "away_catcher_framing_runs", "away_pitcher_last3_bf_avg", "away_pitcher_last3_ip_avg", "away_pitcher_last3_ks_avg", "away_pitcher_last3_min_bf", "away_pitcher_last3_min_ip", "away_pitcher_last3_bf_under_15_count", "away_pitcher_last3_bf_under_18_count",
     // Advanced Offense
-    "home_offense_woba", "home_offense_xwoba", "home_offense_iso", "home_offense_babip", "home_offense_hardhit_pct", "home_offense_barrel_pct", "home_offense_contact_pct", "home_offense_k_pct_vs_pitch_hand", "home_offense_projected_lineup_k_pct", "home_projected_lineup_k_pct_vs_hand", "home_projected_lineup_contact_pct_vs_hand", "home_projected_lineup_whiff_pct_vs_hand", "home_offense_whiff_pct_vs_fastball", "home_offense_whiff_pct_vs_slider", "home_offense_whiff_pct_vs_curve", "home_offense_whiff_pct_vs_changeup", "home_offense_whiff_pct_vs_splitter",
-    "away_offense_woba", "away_offense_xwoba", "away_offense_iso", "away_offense_babip", "away_offense_hardhit_pct", "away_offense_barrel_pct", "away_offense_contact_pct", "away_offense_k_pct_vs_pitch_hand", "away_offense_projected_lineup_k_pct", "away_projected_lineup_k_pct_vs_hand", "away_projected_lineup_contact_pct_vs_hand", "away_projected_lineup_whiff_pct_vs_hand", "away_offense_whiff_pct_vs_fastball", "away_offense_whiff_pct_vs_slider", "away_offense_whiff_pct_vs_curve", "away_offense_whiff_pct_vs_changeup", "away_offense_whiff_pct_vs_splitter",
+    "home_offense_woba", "home_offense_xwoba", "home_offense_iso", "home_offense_babip", "home_offense_hardhit_pct", "home_offense_barrel_pct", "home_offense_contact_pct", "home_offense_k_pct_vs_pitch_hand", "home_projected_lineup_k_pct_vs_hand", "home_projected_lineup_contact_pct_vs_hand", "home_projected_lineup_whiff_pct_vs_hand", "home_offense_whiff_pct_vs_fastball", "home_offense_whiff_pct_vs_slider", "home_offense_whiff_pct_vs_curve", "home_offense_whiff_pct_vs_changeup", "home_offense_whiff_pct_vs_splitter",
+    "away_offense_woba", "away_offense_xwoba", "away_offense_iso", "away_offense_babip", "away_offense_hardhit_pct", "away_offense_barrel_pct", "away_offense_contact_pct", "away_offense_k_pct_vs_pitch_hand", "away_projected_lineup_k_pct_vs_hand", "away_projected_lineup_contact_pct_vs_hand", "away_projected_lineup_whiff_pct_vs_hand", "away_offense_whiff_pct_vs_fastball", "away_offense_whiff_pct_vs_slider", "away_offense_whiff_pct_vs_curve", "away_offense_whiff_pct_vs_changeup", "away_offense_whiff_pct_vs_splitter",
     // Model Features
     "diff_era", "diff_xera", "diff_fip", "diff_ops", "diff_xwoba", "diff_bullpen_era", "diff_runs_per_game", "diff_record_last10", "diff_record_home_away", "diff_starter_rest", "diff_bullpen_fatigue", "line_source",
     // Game Results / ML Target Labels
     "resultado_carreras_home", "resultado_carreras_visitante", "resultado_ganador", "resultado_estado",
     // VORTEX V10.3 METRICS (47 Variables)
     "lineup_confirmed", "lineup_source", "lineup_updated_at",
-    "home_babip", "home_hardHitPct", "home_kPctVsPitchHand", "home_projectedLineupContactPctVsHand", "home_projectedLineupWhiffPctVsHand",
-    "away_babip", "away_hardHitPct", "away_kPctVsPitchHand",
-    "home_whiffPctVsFastball", "away_whiffPctVsFastball",
     "home_pitcher_primary_pitch", "home_pitcher_primary_pitch_usage_pct", "home_pitcher_secondary_pitch", "home_pitcher_secondary_pitch_usage_pct", "home_pitcher_pitches_per_bf", "home_pitcher_pitches_per_bf_last5", "home_pitcher_pitches_per_ip_last5",
     "away_pitcher_primary_pitch", "away_pitcher_primary_pitch_usage_pct", "away_pitcher_secondary_pitch", "away_pitcher_secondary_pitch_usage_pct", "away_pitcher_pitches_per_bf", "away_pitcher_pitches_per_bf_last5", "away_pitcher_pitches_per_ip_last5",
     "home_pitcher_avg_pitches_last3", "home_pitcher_rest_status", "away_pitcher_avg_pitches_last3", "away_pitcher_rest_status", "home_pitcher_pitchHand", "away_pitcher_pitchHand",
     "bullpen_home_ipLast3Days", "bullpen_home_ipLast7Days", "bullpen_away_ipLast3Days", "bullpen_away_ipLast7Days", "bullpen_home_relieversUsedYesterday",
     "home_lineup_contact_stress_score", "home_lineup_pitch_count_risk_score", "home_lineup_high_hardhit_batters_count", "away_lineup_contact_stress_score", "away_lineup_pitch_count_risk_score", "away_lineup_high_hardhit_batters_count",
-    "home_projectedLineupKPct", "away_projectedLineupKPct", "home_wOba", "away_wOba",
-    "home_pitcher_recent_velocity", "away_pitcher_recent_velocity",
-    "game_weather_temp", "game_weather_windSpeed", "game_weather_rainProbability", "game_weather_skyStatus"
+    "home_pitcher_recent_velocity", "away_pitcher_recent_velocity"
   ];
 
   const escapeStr = (val: any) => {
@@ -899,6 +964,13 @@ export function generateBattersCSV(games: MLBGame[]): string {
     const fBullpen = game.fatigue_metrics?.bullpen;
     const canUseActualKs = isFinalGameStatus(game.game_result?.gameStatus);
     const canUseBettingLines = hasRealBettingLines(game);
+
+    const hL3Bf = calcLast3Stats(game.advanced_pitching?.home?.last3Bf1, game.advanced_pitching?.home?.last3Bf2, game.advanced_pitching?.home?.last3Bf3);
+    const hL3Ip = calcLast3Stats(game.advanced_pitching?.home?.last3Ip1, game.advanced_pitching?.home?.last3Ip2, game.advanced_pitching?.home?.last3Ip3);
+    const hL3K = calcLast3Stats(game.advanced_pitching?.home?.last3Ks1, game.advanced_pitching?.home?.last3Ks2, game.advanced_pitching?.home?.last3Ks3);
+    const aL3Bf = calcLast3Stats(game.advanced_pitching?.away?.last3Bf1, game.advanced_pitching?.away?.last3Bf2, game.advanced_pitching?.away?.last3Bf3);
+    const aL3Ip = calcLast3Stats(game.advanced_pitching?.away?.last3Ip1, game.advanced_pitching?.away?.last3Ip2, game.advanced_pitching?.away?.last3Ip3);
+    const aL3K = calcLast3Stats(game.advanced_pitching?.away?.last3Ks1, game.advanced_pitching?.away?.last3Ks2, game.advanced_pitching?.away?.last3Ks3);
 
     const gameContextRow = [
       escapeStr(game.metadata.time),
@@ -1050,6 +1122,7 @@ export function generateBattersCSV(games: MLBGame[]): string {
       game.advanced_pitching?.home?.splitterPct ?? "",
       escapeStr(game.advanced_pitching?.home?.catcherName),
       game.advanced_pitching?.home?.catcherFramingRuns ?? "",
+      hL3Bf.avg, hL3Ip.avg, hL3K.avg, hL3Bf.min, hL3Ip.min, hL3Bf.under15, hL3Bf.under18,
       game.advanced_pitching?.away?.xEra ?? "",
       game.advanced_pitching?.away?.fip ?? "",
       game.advanced_pitching?.away?.xFip ?? "",
@@ -1091,6 +1164,7 @@ export function generateBattersCSV(games: MLBGame[]): string {
       game.advanced_pitching?.away?.splitterPct ?? "",
       escapeStr(game.advanced_pitching?.away?.catcherName),
       game.advanced_pitching?.away?.catcherFramingRuns ?? "",
+      aL3Bf.avg, aL3Ip.avg, aL3K.avg, aL3Bf.min, aL3Ip.min, aL3Bf.under15, aL3Bf.under18,
       // Advanced Offense
       game.advanced_offense?.home?.wOba ?? "",
       game.advanced_offense?.home?.xwOba ?? "",
@@ -1100,7 +1174,6 @@ export function generateBattersCSV(games: MLBGame[]): string {
       game.advanced_offense?.home?.barrelPct ?? "",
       game.advanced_offense?.home?.contactPct ?? "",
       game.advanced_offense?.home?.kPctVsPitchHand ?? "",
-      game.advanced_offense?.home?.projectedLineupKPct ?? "",
       game.advanced_offense?.home?.projectedLineupKPct ?? "",
       game.advanced_offense?.home?.projectedLineupContactPctVsHand ?? "",
       game.advanced_offense?.home?.projectedLineupWhiffPctVsHand ?? "",
@@ -1117,7 +1190,6 @@ export function generateBattersCSV(games: MLBGame[]): string {
       game.advanced_offense?.away?.barrelPct ?? "",
       game.advanced_offense?.away?.contactPct ?? "",
       game.advanced_offense?.away?.kPctVsPitchHand ?? "",
-      game.advanced_offense?.away?.projectedLineupKPct ?? "",
       game.advanced_offense?.away?.projectedLineupKPct ?? "",
       game.advanced_offense?.away?.projectedLineupContactPctVsHand ?? "",
       game.advanced_offense?.away?.projectedLineupWhiffPctVsHand ?? "",
@@ -1149,26 +1221,24 @@ export function generateBattersCSV(games: MLBGame[]): string {
       (game as any).lineups?.lineup_confirmed ? 1 : 0,
       escapeStr((game as any).lineups?.lineup_source),
       escapeStr((game as any).lineups?.lineup_updated_at),
-      game.advanced_offense?.home?.babip ?? "",
-      game.advanced_offense?.home?.hardHitPct ?? "",
-      game.advanced_offense?.home?.kPctVsPitchHand ?? "",
-      (game as any).advanced_offense?.home?.projectedLineupContactPctVsHand ?? "",
-      (game as any).advanced_offense?.home?.projectedLineupWhiffPctVsHand ?? "",
-      game.advanced_offense?.away?.babip ?? "",
-      game.advanced_offense?.away?.hardHitPct ?? "",
-      game.advanced_offense?.away?.kPctVsPitchHand ?? "",
-      (game as any).advanced_offense?.home?.whiffPctVsFastball ?? "",
-      (game as any).advanced_offense?.away?.whiffPctVsFastball ?? "",
-      escapeStr((game as any).pitchers?.home_starter?.pitcher_primary_pitch ?? (game as any).pitchers?.home?.pitcher_primary_pitch),
-      (game as any).pitchers?.home_starter?.pitcher_primary_pitch_usage_pct ?? (game as any).pitchers?.home?.pitcher_primary_pitch_usage_pct ?? "",
-      escapeStr((game as any).pitchers?.home_starter?.pitcher_secondary_pitch ?? (game as any).pitchers?.home?.pitcher_secondary_pitch),
-      (game as any).pitchers?.home_starter?.pitcher_secondary_pitch_usage_pct ?? (game as any).pitchers?.home?.pitcher_secondary_pitch_usage_pct ?? "",
-      (game as any).pitchers?.home_starter?.pitcher_pitches_per_bf_last5 ?? (game as any).pitchers?.home?.pitcher_pitches_per_bf_last5 ?? "",
-      (game as any).pitchers?.home_starter?.pitcher_pitches_per_ip_last5 ?? (game as any).pitchers?.home?.pitcher_pitches_per_ip_last5 ?? "",
-      (game as any).pitchers?.home_starter?.pitcher_avg_pitches_last3 ?? (game as any).pitchers?.home?.pitcher_avg_pitches_last3 ?? "",
-      escapeStr((game as any).pitchers?.home_starter?.pitcher_rest_status ?? (game as any).pitchers?.home?.pitcher_rest_status),
-      (game as any).pitchers?.away_starter?.pitcher_avg_pitches_last3 ?? (game as any).pitchers?.away?.pitcher_avg_pitches_last3 ?? "",
-      escapeStr((game as any).pitchers?.away_starter?.pitcher_rest_status ?? (game as any).pitchers?.away?.pitcher_rest_status),
+      escapeStr((game as any).pitchers?.home_starter?.pitcher_primary_pitch ?? (game as any).pitchers?.home?.pitcher_primary_pitch ?? (() => { const ap = game.advanced_pitching?.home; if (!ap) return null; const arr = [{ n: 'fastball', p: ap.fastballPct||0 }, { n: 'slider', p: ap.sliderPct||0 }, { n: 'curve', p: ap.curvePct||0 }, { n: 'changeup', p: ap.changeupPct||0 }, { n: 'splitter', p: ap.splitterPct||0 }].sort((a,b)=>b.p-a.p); return arr[0].p > 0 ? arr[0].n : null; })()),
+      (game as any).pitchers?.home_starter?.pitcher_primary_pitch_usage_pct ?? (game as any).pitchers?.home?.pitcher_primary_pitch_usage_pct ?? (() => { const ap = game.advanced_pitching?.home; if (!ap) return ''; const arr = [ap.fastballPct||0, ap.sliderPct||0, ap.curvePct||0, ap.changeupPct||0, ap.splitterPct||0].sort((a,b)=>b-a); return arr[0] > 0 ? arr[0] : ''; })(),
+      escapeStr((game as any).pitchers?.home_starter?.pitcher_secondary_pitch ?? (game as any).pitchers?.home?.pitcher_secondary_pitch ?? (() => { const ap = game.advanced_pitching?.home; if (!ap) return null; const arr = [{ n: 'fastball', p: ap.fastballPct||0 }, { n: 'slider', p: ap.sliderPct||0 }, { n: 'curve', p: ap.curvePct||0 }, { n: 'changeup', p: ap.changeupPct||0 }, { n: 'splitter', p: ap.splitterPct||0 }].sort((a,b)=>b.p-a.p); return arr[1].p > 0 ? arr[1].n : null; })()),
+      (game as any).pitchers?.home_starter?.pitcher_secondary_pitch_usage_pct ?? (game as any).pitchers?.home?.pitcher_secondary_pitch_usage_pct ?? (() => { const ap = game.advanced_pitching?.home; if (!ap) return ''; const arr = [ap.fastballPct||0, ap.sliderPct||0, ap.curvePct||0, ap.changeupPct||0, ap.splitterPct||0].sort((a,b)=>b-a); return arr[1] > 0 ? arr[1] : ''; })(),
+      (game as any).pitchers?.home_starter?.pitcher_pitches_per_bf ?? (game as any).pitchers?.home?.pitcher_pitches_per_bf ?? game.advanced_pitching?.home?.pitcher_pitches_per_bf ?? "",
+      (game as any).pitchers?.home_starter?.pitcher_pitches_per_bf_last5 ?? (game as any).pitchers?.home?.pitcher_pitches_per_bf_last5 ?? game.advanced_pitching?.home?.pitcher_pitches_per_bf_last5 ?? "",
+      (game as any).pitchers?.home_starter?.pitcher_pitches_per_ip_last5 ?? (game as any).pitchers?.home?.pitcher_pitches_per_ip_last5 ?? game.advanced_pitching?.home?.pitcher_pitches_per_ip_last5 ?? "",
+      escapeStr((game as any).pitchers?.away_starter?.pitcher_primary_pitch ?? (game as any).pitchers?.away?.pitcher_primary_pitch ?? (() => { const ap = game.advanced_pitching?.away; if (!ap) return null; const arr = [{ n: 'fastball', p: ap.fastballPct||0 }, { n: 'slider', p: ap.sliderPct||0 }, { n: 'curve', p: ap.curvePct||0 }, { n: 'changeup', p: ap.changeupPct||0 }, { n: 'splitter', p: ap.splitterPct||0 }].sort((a,b)=>b.p-a.p); return arr[0].p > 0 ? arr[0].n : null; })()),
+      (game as any).pitchers?.away_starter?.pitcher_primary_pitch_usage_pct ?? (game as any).pitchers?.away?.pitcher_primary_pitch_usage_pct ?? (() => { const ap = game.advanced_pitching?.away; if (!ap) return ''; const arr = [ap.fastballPct||0, ap.sliderPct||0, ap.curvePct||0, ap.changeupPct||0, ap.splitterPct||0].sort((a,b)=>b-a); return arr[0] > 0 ? arr[0] : ''; })(),
+      escapeStr((game as any).pitchers?.away_starter?.pitcher_secondary_pitch ?? (game as any).pitchers?.away?.pitcher_secondary_pitch ?? (() => { const ap = game.advanced_pitching?.away; if (!ap) return null; const arr = [{ n: 'fastball', p: ap.fastballPct||0 }, { n: 'slider', p: ap.sliderPct||0 }, { n: 'curve', p: ap.curvePct||0 }, { n: 'changeup', p: ap.changeupPct||0 }, { n: 'splitter', p: ap.splitterPct||0 }].sort((a,b)=>b.p-a.p); return arr[1].p > 0 ? arr[1].n : null; })()),
+      (game as any).pitchers?.away_starter?.pitcher_secondary_pitch_usage_pct ?? (game as any).pitchers?.away?.pitcher_secondary_pitch_usage_pct ?? (() => { const ap = game.advanced_pitching?.away; if (!ap) return ''; const arr = [ap.fastballPct||0, ap.sliderPct||0, ap.curvePct||0, ap.changeupPct||0, ap.splitterPct||0].sort((a,b)=>b-a); return arr[1] > 0 ? arr[1] : ''; })(),
+      (game as any).pitchers?.away_starter?.pitcher_pitches_per_bf ?? (game as any).pitchers?.away?.pitcher_pitches_per_bf ?? game.advanced_pitching?.away?.pitcher_pitches_per_bf ?? "",
+      (game as any).pitchers?.away_starter?.pitcher_pitches_per_bf_last5 ?? (game as any).pitchers?.away?.pitcher_pitches_per_bf_last5 ?? game.advanced_pitching?.away?.pitcher_pitches_per_bf_last5 ?? "",
+      (game as any).pitchers?.away_starter?.pitcher_pitches_per_ip_last5 ?? (game as any).pitchers?.away?.pitcher_pitches_per_ip_last5 ?? game.advanced_pitching?.away?.pitcher_pitches_per_ip_last5 ?? "",
+      (game as any).pitchers?.home_starter?.pitcher_avg_pitches_last3 ?? (game as any).pitchers?.home?.pitcher_avg_pitches_last3 ?? game.advanced_pitching?.home?.pitcher_avg_pitches_last3 ?? "",
+      escapeStr((game as any).pitchers?.home_starter?.pitcher_rest_status ?? (game as any).pitchers?.home?.pitcher_rest_status ?? game.advanced_pitching?.home?.pitcher_rest_status),
+      (game as any).pitchers?.away_starter?.pitcher_avg_pitches_last3 ?? (game as any).pitchers?.away?.pitcher_avg_pitches_last3 ?? game.advanced_pitching?.away?.pitcher_avg_pitches_last3 ?? "",
+      escapeStr((game as any).pitchers?.away_starter?.pitcher_rest_status ?? (game as any).pitchers?.away?.pitcher_rest_status ?? game.advanced_pitching?.away?.pitcher_rest_status),
       escapeStr((game as any).pitchers?.home_starter?.pitchHand ?? (game as any).pitchers?.home?.pitchHand),
       escapeStr((game as any).pitchers?.away_starter?.pitchHand ?? (game as any).pitchers?.away?.pitchHand),
       game.bullpen?.home?.ipLast3Days ?? fBullpen?.home?.ipLast3Days ?? "",
@@ -1182,16 +1252,8 @@ export function generateBattersCSV(games: MLBGame[]): string {
       (game as any).advanced_offense?.away?.lineup_contact_stress_score ?? "",
       (game as any).advanced_offense?.away?.lineup_pitch_count_risk_score ?? "",
       (game as any).advanced_offense?.away?.lineup_high_hardhit_batters_count ?? "",
-      (game as any).advanced_offense?.home?.projectedLineupKPct ?? "",
-      (game as any).advanced_offense?.away?.projectedLineupKPct ?? "",
-      game.advanced_offense?.home?.wOba ?? "",
-      game.advanced_offense?.away?.wOba ?? "",
       (game as any).pitchers?.home_starter?.pitcher_recent_velocity ?? (game as any).pitchers?.home?.pitcher_recent_velocity ?? "",
-      (game as any).pitchers?.away_starter?.pitcher_recent_velocity ?? (game as any).pitchers?.away?.pitcher_recent_velocity ?? "",
-      game.weather?.temp ?? "",
-      game.weather?.windSpeed ?? "",
-      game.weather?.rainProbability ?? "",
-      escapeStr(game.weather?.skyStatus)
+      (game as any).pitchers?.away_starter?.pitcher_recent_velocity ?? (game as any).pitchers?.away?.pitcher_recent_velocity ?? ""
     ];
 
     const processTeamLineup = (lineup: any[], teamName: string, isHomeTeam: boolean) => {

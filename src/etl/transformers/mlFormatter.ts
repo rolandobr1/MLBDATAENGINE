@@ -8,6 +8,7 @@ export const flattenGameForML = (gameDoc: any): any[] => {
   const currentLines = gameDoc.betting_lines?.current || {};
 
   const advancedOffense = gameDoc.advanced_offense || {};
+  const advancedPitching = gameDoc.advanced_pitching || {};
   const bullpen = gameDoc.bullpen || {};
 
   return [
@@ -45,20 +46,20 @@ export const flattenGameForML = (gameDoc: any): any[] => {
     advancedOffense.away?.whiffPctVsFastball || '',
 
     // 14-19. Arsenal y Pitches del Pitcher
-    pitchers.home_starter?.pitcher_primary_pitch || '',
-    pitchers.home_starter?.pitcher_primary_pitch_usage_pct || '',
-    pitchers.home_starter?.pitcher_secondary_pitch || '',
-    pitchers.home_starter?.pitcher_secondary_pitch_usage_pct || '',
-    pitchers.home_starter?.pitcher_pitches_per_bf_last5 || '',
-    pitchers.home_starter?.pitcher_pitches_per_ip_last5 || '',
+    advancedPitching.home?.pitcher_primary_pitch || pitchers.home_starter?.pitcher_primary_pitch || '',
+    advancedPitching.home?.pitcher_primary_pitch_usage_pct || pitchers.home_starter?.pitcher_primary_pitch_usage_pct || '',
+    advancedPitching.home?.pitcher_secondary_pitch || pitchers.home_starter?.pitcher_secondary_pitch || '',
+    advancedPitching.home?.pitcher_secondary_pitch_usage_pct || pitchers.home_starter?.pitcher_secondary_pitch_usage_pct || '',
+    advancedPitching.home?.pitcher_pitches_per_bf_last5 || pitchers.home_starter?.pitcher_pitches_per_bf_last5 || '',
+    advancedPitching.home?.pitcher_pitches_per_ip_last5 || pitchers.home_starter?.pitcher_pitches_per_ip_last5 || '',
 
     // 20-25. Límites y Rol del Pitcher
-    pitchers.home_starter?.pitcher_avg_pitches_last3 || '',
-    pitchers.home_starter?.pitcher_rest_status || '',
-    pitchers.away_starter?.pitcher_avg_pitches_last3 || '',
-    pitchers.away_starter?.pitcher_rest_status || '',
-    pitchers.home_starter?.pitchHand || '',
-    pitchers.away_starter?.pitchHand || '',
+    advancedPitching.home?.pitcher_avg_pitches_last3 || pitchers.home_starter?.pitcher_avg_pitches_last3 || '',
+    advancedPitching.home?.pitcher_rest_status || pitchers.home_starter?.pitcher_rest_status || '',
+    advancedPitching.away?.pitcher_avg_pitches_last3 || pitchers.away_starter?.pitcher_avg_pitches_last3 || '',
+    advancedPitching.away?.pitcher_rest_status || pitchers.away_starter?.pitcher_rest_status || '',
+    pitchers.home_starter?.pitchHand || pitchers.home?.pitchHand || '',
+    pitchers.away_starter?.pitchHand || pitchers.away?.pitchHand || '',
 
     // 26-30. Detalles del Bullpen
     bullpen.home?.ipLast3Days || bullpen.home || '', // Compatibility with mock

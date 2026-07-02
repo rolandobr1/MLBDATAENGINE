@@ -120,3 +120,46 @@ export const getBullpenWorkload = (): Promise<any> => {
     });
   });
 };
+
+/**
+ * Obtiene el arsenal de pitcheos por pitcher desde Python (sin límite mínimo de apariciones).
+ * @param pitcherIds Array de IDs numéricos de pitcher (MLB player_id)
+ * @param year       Año de la temporada (ej. "2025")
+ * @returns Mapa { pitcherId: { fastballPct, sliderPct, curvePct, changeupPct, splitterPct } }
+ */
+export const getPitcherArsenals = (pitcherIds: string[], year: string): Promise<Record<string, {
+  fastballPct: number;
+  sliderPct: number;
+  curvePct: number;
+  changeupPct: number;
+  splitterPct: number;
+}>> => {
+  const idsKey = pitcherIds.sort().join('_');
+  return withCache('pitcher_arsenal', `${year}_${idsKey}`, () => {
+    return new Promise((resolve, reject) => {
+      const idsCsv = pitcherIds.join(',');
+      const command = `"${PYTHON_BIN}" "${PYTHON_SCRIPT}" --action pitcher_arsenal --year "${year}" --pitcher_ids "${idsCsv}"`;
+      exec(command, { maxBuffer: 1024 * 1024 * 10, timeout: 120000 }, (error, stdout, stderr) => {
+        if (error) {
+          console.error(`[PyBaseball Arsenal] exec error: ${error.message}`);
+          return resolve({});
+        }
+        try {
+          const jsonStart = stdout.indexOf('{');
+          const jsonStr = jsonStart >= 0 ? stdout.substring(jsonStart) : stdout;
+          const parsed = JSON.parse(jsonStr);
+          if (parsed.success && parsed.data) {
+            console.log(`[PyBaseball Arsenal] OK — ${Object.keys(parsed.data).length} pitcher(s) con datos de arsenal`);
+            resolve(parsed.data);
+          } else {
+            console.warn(`[PyBaseball Arsenal] Sin datos: ${parsed.error || 'desconocido'}`);
+            resolve({});
+          }
+        } catch (e) {
+          console.error('[PyBaseball Arsenal] Error parseando JSON:', stdout.slice(0, 200));
+          resolve({});
+        }
+      });
+    });
+  });
+};

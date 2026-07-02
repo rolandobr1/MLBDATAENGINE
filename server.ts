@@ -7,7 +7,7 @@
 // CRÍTICO: dotenv debe cargarse ANTES de importar firebase.ts y otros módulos
 // que leen process.env en su inicialización.
 import { format } from "date-fns";
-import { getRecentStatcast } from './src/etl/extractors/pybaseballApi';
+import { getRecentStatcast, getPitcherArsenals } from './src/etl/extractors/pybaseballApi';
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
@@ -53,6 +53,7 @@ import {
   BettingLines
 } from "./src/types";
 import { generateMLDatasetCSV, generateBattersCSV, generateSingleGameCSV, generateDailyPlayerResultsCSV, generateKPropsLinesCSV, generateBatterTotalBasesLinesCSV } from "./src/utils";
+import { enrichWithVortexMetrics } from "./src/etl/transformers/vortexMetrics";
 import { savantCache } from "./src/etl/extractors/savantScraper";
 
 const app = express();
@@ -4172,13 +4173,14 @@ app.post("/api/harvest", async (req, res) => {
         home: homeSplits,
         away: awaySplits
       };
-      // Inyectar métricas de Baseball Savant en estadísticas de pitchers
+      // Inyectar métricas de Baseball Savant (xERA, HardHit%, Barrel%) en estadísticas de pitchers
       const homePitcherSavant = savantCache.getPitcher(homePitcherId);
       const awayPitcherSavant = savantCache.getPitcher(awayPitcherId);
       if (homePitcherSavant) {
         homeAdvPitching.xEra = homePitcherSavant.xERA;
         homeAdvPitching.hardHitPct = homePitcherSavant.hardHitPct;
         homeAdvPitching.barrelPct = homePitcherSavant.barrelPct;
+        // Arsenal desde Savant (fallback — se sobreescribe abajo si Python tiene datos)
         homeAdvPitching.fastballPct = homePitcherSavant.fastballPct;
         homeAdvPitching.sliderPct = homePitcherSavant.sliderPct;
         homeAdvPitching.curvePct = homePitcherSavant.curvePct;
@@ -4192,6 +4194,7 @@ app.post("/api/harvest", async (req, res) => {
         awayAdvPitching.xEra = awayPitcherSavant.xERA;
         awayAdvPitching.hardHitPct = awayPitcherSavant.hardHitPct;
         awayAdvPitching.barrelPct = awayPitcherSavant.barrelPct;
+        // Arsenal desde Savant (fallback — se sobreescribe abajo si Python tiene datos)
         awayAdvPitching.fastballPct = awayPitcherSavant.fastballPct;
         awayAdvPitching.sliderPct = awayPitcherSavant.sliderPct;
         awayAdvPitching.curvePct = awayPitcherSavant.curvePct;
@@ -4202,7 +4205,36 @@ app.post("/api/harvest", async (req, res) => {
         }
       }
 
-      // Inyectar PyBaseball
+      // Inyectar Arsenal de pitcheos desde Python (fuente primaria — sin límite min=10)
+      // El caché es diario y compartido entre juegos, así que solo descarga 1 vez por día.
+      try {
+        const pitcherArsenalData = await getPitcherArsenals(
+          [String(homePitcherId), String(awayPitcherId)].filter(id => id !== '0'),
+          season
+        );
+        const homeArsenal = pitcherArsenalData[String(homePitcherId)];
+        const awayArsenal = pitcherArsenalData[String(awayPitcherId)];
+        if (homeArsenal) {
+          homeAdvPitching.fastballPct = homeArsenal.fastballPct;
+          homeAdvPitching.sliderPct   = homeArsenal.sliderPct;
+          homeAdvPitching.curvePct    = homeArsenal.curvePct;
+          homeAdvPitching.changeupPct = homeArsenal.changeupPct;
+          homeAdvPitching.splitterPct = homeArsenal.splitterPct;
+          console.log(`[Arsenal Python] HOME ${gameDataParsed.pitchers?.home?.name}: FB=${homeArsenal.fastballPct}% SL=${homeArsenal.sliderPct}% CU=${homeArsenal.curvePct}%`);
+        }
+        if (awayArsenal) {
+          awayAdvPitching.fastballPct = awayArsenal.fastballPct;
+          awayAdvPitching.sliderPct   = awayArsenal.sliderPct;
+          awayAdvPitching.curvePct    = awayArsenal.curvePct;
+          awayAdvPitching.changeupPct = awayArsenal.changeupPct;
+          awayAdvPitching.splitterPct = awayArsenal.splitterPct;
+          console.log(`[Arsenal Python] AWAY ${gameDataParsed.pitchers?.away?.name}: FB=${awayArsenal.fastballPct}% SL=${awayArsenal.sliderPct}% CU=${awayArsenal.curvePct}%`);
+        }
+      } catch (arsenalErr) {
+        console.warn(`[Arsenal Python] Error al obtener arsenal para juego ${gameId}:`, arsenalErr);
+      }
+
+      // Inyectar PyBaseball (CSW%, velocidad reciente)
       if (pybaseballStatcast?.data?.pitchers_recent) {
         const homePStats = pybaseballStatcast.data.pitchers_recent.find((p: any) => String(p.pitcher) === String(homePitcherId));
         if (homePStats && gameDataParsed.pitchers?.home) {
@@ -4582,13 +4614,14 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
   // Populate advanced fields
   gameDataParsed.weather = weather;
   gameDataParsed.offensive_splits = { home: homeSplits, away: awaySplits };
-  // Inyectar métricas de Baseball Savant
+  // Inyectar métricas de Baseball Savant (xERA, HardHit%, Barrel%)
   const homePitcherSavantU = savantCache.getPitcher(homePitcherId);
   const awayPitcherSavantU = savantCache.getPitcher(awayPitcherId);
   if (homePitcherSavantU) {
     homeAdvPitching.xEra = homePitcherSavantU.xERA;
     homeAdvPitching.hardHitPct = homePitcherSavantU.hardHitPct;
     homeAdvPitching.barrelPct = homePitcherSavantU.barrelPct;
+    // Arsenal desde Savant (fallback — se sobreescribe abajo si Python tiene datos)
     homeAdvPitching.fastballPct = homePitcherSavantU.fastballPct;
     homeAdvPitching.sliderPct = homePitcherSavantU.sliderPct;
     homeAdvPitching.curvePct = homePitcherSavantU.curvePct;
@@ -4602,6 +4635,7 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
     awayAdvPitching.xEra = awayPitcherSavantU.xERA;
     awayAdvPitching.hardHitPct = awayPitcherSavantU.hardHitPct;
     awayAdvPitching.barrelPct = awayPitcherSavantU.barrelPct;
+    // Arsenal desde Savant (fallback — se sobreescribe abajo si Python tiene datos)
     awayAdvPitching.fastballPct = awayPitcherSavantU.fastballPct;
     awayAdvPitching.sliderPct = awayPitcherSavantU.sliderPct;
     awayAdvPitching.curvePct = awayPitcherSavantU.curvePct;
@@ -4610,6 +4644,31 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
     if (awayPitcherSavantU.xwOBA !== null) {
       awayAdvOffense.xwOba = awayAdvOffense.xwOba ?? awayPitcherSavantU.xwOBA;
     }
+  }
+  // Inyectar Arsenal de pitcheos desde Python (fuente primaria — sin límite min=10)
+  try {
+    const pitcherArsenalDataU = await getPitcherArsenals(
+      [String(homePitcherId), String(awayPitcherId)].filter(id => id !== '0'),
+      season
+    );
+    const homeArsenalU = pitcherArsenalDataU[String(homePitcherId)];
+    const awayArsenalU = pitcherArsenalDataU[String(awayPitcherId)];
+    if (homeArsenalU) {
+      homeAdvPitching.fastballPct = homeArsenalU.fastballPct;
+      homeAdvPitching.sliderPct   = homeArsenalU.sliderPct;
+      homeAdvPitching.curvePct    = homeArsenalU.curvePct;
+      homeAdvPitching.changeupPct = homeArsenalU.changeupPct;
+      homeAdvPitching.splitterPct = homeArsenalU.splitterPct;
+    }
+    if (awayArsenalU) {
+      awayAdvPitching.fastballPct = awayArsenalU.fastballPct;
+      awayAdvPitching.sliderPct   = awayArsenalU.sliderPct;
+      awayAdvPitching.curvePct    = awayArsenalU.curvePct;
+      awayAdvPitching.changeupPct = awayArsenalU.changeupPct;
+      awayAdvPitching.splitterPct = awayArsenalU.splitterPct;
+    }
+  } catch (arsenalErrU) {
+    console.warn(`[Arsenal Python] Error en harvest-game:`, arsenalErrU);
   }
   // xwOBA desde lineup
   const homeLineupU: any[] = gameDataParsed.lineups?.home || [];
@@ -4798,6 +4857,8 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
 
   const errorsCollection = readErrorsDB();
   const validationResult = validateGamePayload(gameDataParsed, errorsCollection);
+
+  enrichWithVortexMetrics(gameDataParsed);
 
   gameDataParsed.validation = {
     isValid: validationResult.isValid,

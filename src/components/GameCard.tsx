@@ -19,8 +19,25 @@ import {
   Eye,
   EyeOff,
   Search,
-  X
+  X,
 } from "lucide-react";
+
+const getTrueKPercentage = (lineup: any[]) => {
+  if (!lineup || lineup.length === 0) return "0.0";
+  let totalPA = 0;
+  let totalSO = 0;
+  for (const p of lineup) {
+    const pa = p.pa || 0;
+    if (pa > 0) {
+      totalPA += pa;
+      totalSO += ((p.strikeout_pct ?? p.kPct ?? 0) / 100) * pa;
+    }
+  }
+  if (totalPA === 0) {
+    return (lineup.reduce((sum, p) => sum + (p.strikeout_pct ?? p.kPct ?? 0), 0) / lineup.length).toFixed(1);
+  }
+  return ((totalSO / totalPA) * 100).toFixed(1);
+};
 
 interface GameCardProps {
   game: MLBGame;
@@ -1195,7 +1212,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       <span className="w-10 text-blue-600">{(game.lineups.away.reduce((sum, p) => sum + (p.ops || 0), 0) / game.lineups.away.length).toFixed(3)}</span>
                       <span className="hidden md:inline-block w-9">-</span>
                       <span className="hidden md:inline-block w-9">{(game.lineups.away.reduce((sum, p) => sum + (p.woba || 0), 0) / game.lineups.away.length).toFixed(3).substring(1)}</span>
-                      <span className="w-9 text-red-700">{(game.lineups.away.reduce((sum, p) => sum + (p.strikeout_pct ?? p.kPct ?? 0), 0) / game.lineups.away.length).toFixed(1)}%</span>
+                      <span className="w-9 text-red-700">{getTrueKPercentage(game.lineups.away)}%</span>
                     </div>
                   </div>
                 </div>
@@ -1280,7 +1297,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                       <span className="w-10 text-red-600">{(game.lineups.home.reduce((sum, p) => sum + (p.ops || 0), 0) / game.lineups.home.length).toFixed(3)}</span>
                       <span className="hidden md:inline-block w-9">-</span>
                       <span className="hidden md:inline-block w-9">{(game.lineups.home.reduce((sum, p) => sum + (p.woba || 0), 0) / game.lineups.home.length).toFixed(3).substring(1)}</span>
-                      <span className="w-9 text-red-700">{(game.lineups.home.reduce((sum, p) => sum + (p.strikeout_pct ?? p.kPct ?? 0), 0) / game.lineups.home.length).toFixed(1)}%</span>
+                      <span className="w-9 text-red-700">{getTrueKPercentage(game.lineups.home)}%</span>
                     </div>
                   </div>
                 </div>

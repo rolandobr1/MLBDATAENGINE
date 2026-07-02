@@ -56,6 +56,36 @@ var getRecentStatcast = (startDate, endDate) => {
     });
   });
 };
+var getPitcherArsenals = (pitcherIds, year) => {
+  const idsKey = pitcherIds.sort().join("_");
+  return withCache("pitcher_arsenal", `${year}_${idsKey}`, () => {
+    return new Promise((resolve, reject) => {
+      const idsCsv = pitcherIds.join(",");
+      const command = `"${PYTHON_BIN}" "${PYTHON_SCRIPT}" --action pitcher_arsenal --year "${year}" --pitcher_ids "${idsCsv}"`;
+      exec(command, { maxBuffer: 1024 * 1024 * 10, timeout: 12e4 }, (error, stdout, stderr) => {
+        if (error) {
+          console.error(`[PyBaseball Arsenal] exec error: ${error.message}`);
+          return resolve({});
+        }
+        try {
+          const jsonStart = stdout.indexOf("{");
+          const jsonStr = jsonStart >= 0 ? stdout.substring(jsonStart) : stdout;
+          const parsed = JSON.parse(jsonStr);
+          if (parsed.success && parsed.data) {
+            console.log(`[PyBaseball Arsenal] OK \u2014 ${Object.keys(parsed.data).length} pitcher(s) con datos de arsenal`);
+            resolve(parsed.data);
+          } else {
+            console.warn(`[PyBaseball Arsenal] Sin datos: ${parsed.error || "desconocido"}`);
+            resolve({});
+          }
+        } catch (e) {
+          console.error("[PyBaseball Arsenal] Error parseando JSON:", stdout.slice(0, 200));
+          resolve({});
+        }
+      });
+    });
+  });
+};
 
 // server.ts
 import dotenv from "dotenv";
@@ -414,6 +444,85 @@ async function scrapeStrikeoutProps() {
   }
 }
 
+// src/etl/transformers/vortexMetrics.ts
+var enrichWithVortexMetrics = (game) => {
+  if (game.advanced_pitching && game.fatigue_metrics) {
+    if (game.advanced_pitching.home && game.fatigue_metrics.pitchers?.home) {
+      enrichPitcherMetrics(game.advanced_pitching.home, game.fatigue_metrics.pitchers.home);
+    }
+    if (game.advanced_pitching.away && game.fatigue_metrics.pitchers?.away) {
+      enrichPitcherMetrics(game.advanced_pitching.away, game.fatigue_metrics.pitchers.away);
+    }
+  }
+  if (game.lineups && game.advanced_offense) {
+    if (game.lineups.home && game.advanced_offense.home) {
+      enrichLineupMetrics(game.lineups.home, game.advanced_offense.home);
+    }
+    if (game.lineups.away && game.advanced_offense.away) {
+      enrichLineupMetrics(game.lineups.away, game.advanced_offense.away);
+    }
+  }
+  return game;
+};
+var enrichPitcherMetrics = (pitchingStats, fatigueStats) => {
+  if (pitchingStats.last5PitchCountAvg != null && pitchingStats.last5BfAvg != null && pitchingStats.last5BfAvg > 0) {
+    pitchingStats.pitcher_pitches_per_bf_last5 = pitchingStats.last5PitchCountAvg / pitchingStats.last5BfAvg;
+  }
+  if (pitchingStats.last5PitchCountAvg != null && pitchingStats.last5IpAvg != null && pitchingStats.last5IpAvg > 0) {
+    pitchingStats.pitcher_pitches_per_ip_last5 = pitchingStats.last5PitchCountAvg / pitchingStats.last5IpAvg;
+  }
+  if (fatigueStats.pitchesLast3Starts != null) {
+    pitchingStats.pitcher_avg_pitches_last3 = fatigueStats.pitchesLast3Starts / 3;
+  }
+  if (fatigueStats.daysSinceLastStart != null) {
+    const days = fatigueStats.daysSinceLastStart;
+    if (days <= 4) pitchingStats.pitcher_rest_status = "Short Rest";
+    else if (days === 5) pitchingStats.pitcher_rest_status = "Normal";
+    else pitchingStats.pitcher_rest_status = "Extra Rest";
+  }
+  const arsenal = [
+    { name: "fastball", pct: pitchingStats.fastballPct || 0 },
+    { name: "slider", pct: pitchingStats.sliderPct || 0 },
+    { name: "curve", pct: pitchingStats.curvePct || 0 },
+    { name: "changeup", pct: pitchingStats.changeupPct || 0 },
+    { name: "splitter", pct: pitchingStats.splitterPct || 0 }
+  ].sort((a, b) => b.pct - a.pct);
+  if (arsenal[0].pct > 0) {
+    pitchingStats.pitcher_primary_pitch = arsenal[0].name;
+    pitchingStats.pitcher_primary_pitch_usage_pct = arsenal[0].pct;
+  }
+  if (arsenal[1].pct > 0) {
+    pitchingStats.pitcher_secondary_pitch = arsenal[1].name;
+    pitchingStats.pitcher_secondary_pitch_usage_pct = arsenal[1].pct;
+  }
+};
+var enrichLineupMetrics = (batters, offenseStats) => {
+  let lineupContactStress = 0;
+  let lineupPitchRisk = 0;
+  let lowKCount = 0;
+  let highBabipCount = 0;
+  let highHardhitCount = 0;
+  for (const batter of batters) {
+    const contactFactor = batter.contact_pct_vs_rhp || 0.8;
+    const kFactor = batter.kPct || batter.strikeout_pct || 0.2;
+    const batterStress = contactFactor * 100 - kFactor * 100;
+    batter.batter_contact_stress_score = Math.max(0, batterStress);
+    lineupContactStress += batter.batter_contact_stress_score;
+    if (kFactor < 0.18) lowKCount++;
+    if ((batter.babip || 0) > 0.3) highBabipCount++;
+    if ((batter.hardHitPct || 0) > 0.4) highHardhitCount++;
+    const bbPct = batter.walk_pct || 0.08;
+    lineupPitchRisk += bbPct * 100;
+  }
+  if (batters.length > 0) {
+    offenseStats.lineup_contact_stress_score = lineupContactStress / batters.length;
+    offenseStats.lineup_pitch_count_risk_score = lineupPitchRisk / batters.length;
+  }
+  offenseStats.lineup_low_k_batters_count = lowKCount;
+  offenseStats.lineup_high_babip_batters_count = highBabipCount;
+  offenseStats.lineup_high_hardhit_batters_count = highHardhitCount;
+};
+
 // src/utils.ts
 function escapeCsvValue(val) {
   if (val === void 0 || val === null || val === "") return "";
@@ -425,6 +534,21 @@ function roundCsvNumber(val, decimals = 1) {
   if (!Number.isFinite(parsed)) return "";
   const factor = Math.pow(10, decimals);
   return Math.round(parsed * factor) / factor;
+}
+function parseNum(val) {
+  if (val === null || val === void 0 || val === "") return null;
+  const n = Number(val);
+  return isNaN(n) ? null : n;
+}
+function calcLast3Stats(v1, v2, v3) {
+  const nums = [parseNum(v1), parseNum(v2), parseNum(v3)].filter((n) => n !== null);
+  if (nums.length === 0) return { avg: "", min: "", under15: "", under18: "" };
+  const sum = nums.reduce((a, b) => a + b, 0);
+  const avg = (sum / nums.length).toFixed(1);
+  const min = Math.min(...nums).toString();
+  const under15 = nums.filter((v) => v < 15).length.toString();
+  const under18 = nums.filter((v) => v < 18).length.toString();
+  return { avg, min, under15, under18 };
 }
 var MLB_TEAM_ABBR = {
   "Arizona Diamondbacks": "ARI",
@@ -464,8 +588,21 @@ function getTeamAbbr(teamName) {
 }
 function getLineupAverageKPct(lineup) {
   if (!lineup || !Array.isArray(lineup) || lineup.length === 0) return "";
-  const sum = lineup.reduce((acc, p) => acc + (p.strikeout_pct ?? p.kPct ?? 0), 0);
-  return (sum / lineup.length).toFixed(2);
+  let totalPA = 0;
+  let totalSO = 0;
+  for (const p of lineup) {
+    const kPct = p.strikeout_pct ?? p.kPct ?? 0;
+    const pa = p.pa || 0;
+    if (pa > 0) {
+      totalPA += pa;
+      totalSO += kPct / 100 * pa;
+    }
+  }
+  if (totalPA === 0) {
+    const sum = lineup.reduce((acc, p) => acc + (p.strikeout_pct ?? p.kPct ?? 0), 0);
+    return (sum / lineup.length).toFixed(1);
+  }
+  return (totalSO / totalPA * 100).toFixed(1);
 }
 function isFinalGameStatus(status) {
   const normalized = String(status || "").toLowerCase();
@@ -526,6 +663,41 @@ function calculateIpPerStart(ipStr, starts) {
   const totalInnings = fullInnings + partialInnings;
   const avg = totalInnings / startsNum;
   return avg.toFixed(2);
+}
+function getPitcherDerivedMetrics(g, side) {
+  const p = g.pitchers?.[side + "_starter"] || g.pitchers?.[side] || {};
+  const ap = g.advanced_pitching?.[side] || {};
+  const pitches = [
+    { name: "Fastball", pct: parseFloat(ap.fastballPct || "0") },
+    { name: "Slider", pct: parseFloat(ap.sliderPct || "0") },
+    { name: "Curveball", pct: parseFloat(ap.curvePct || "0") },
+    { name: "Changeup", pct: parseFloat(ap.changeupPct || "0") },
+    { name: "Splitter", pct: parseFloat(ap.splitterPct || "0") }
+  ].sort((a, b) => b.pct - a.pct);
+  const primary_pitch = pitches[0]?.pct > 0 ? pitches[0].name : "";
+  const primary_usage = pitches[0]?.pct > 0 ? pitches[0].pct.toString() : "";
+  const secondary_pitch = pitches[1]?.pct > 0 ? pitches[1].name : "";
+  const secondary_usage = pitches[1]?.pct > 0 ? pitches[1].pct.toString() : "";
+  const pitchesLast5 = parseFloat(p.pitchesLast5 || ap.last5PitchCountAvg || "0");
+  const bfLast5 = parseFloat(p.bfLast5 || ap.last5BfAvg || "0");
+  const ipLast5 = parseFloat(p.ipLast5 || ap.last5IpAvg || "0");
+  const pitches_per_bf_last5 = pitchesLast5 > 0 && bfLast5 > 0 ? (pitchesLast5 / bfLast5).toFixed(2) : "";
+  const pitches_per_ip_last5 = pitchesLast5 > 0 && ipLast5 > 0 ? (pitchesLast5 / ipLast5).toFixed(2) : "";
+  const totalPitches = parseFloat(ap.projectedPitchCount || "0");
+  const totalBf = parseFloat(ap.battersFacedPerStart || "0");
+  const pitches_per_bf = totalPitches > 0 && totalBf > 0 ? (totalPitches / totalBf).toFixed(2) : "";
+  const restDays = parseFloat(p.restDays || "0");
+  const rest_status = restDays >= 5 ? "Fully Rested" : restDays === 4 ? "Normal Rest" : "Short Rest";
+  return {
+    primary_pitch: p.pitcher_primary_pitch || primary_pitch,
+    primary_usage: p.pitcher_primary_pitch_usage_pct || primary_usage,
+    secondary_pitch: p.pitcher_secondary_pitch || secondary_pitch,
+    secondary_usage: p.pitcher_secondary_pitch_usage_pct || secondary_usage,
+    pitches_per_bf_last5: p.pitcher_pitches_per_bf_last5 || pitches_per_bf_last5,
+    pitches_per_ip_last5: p.pitcher_pitches_per_ip_last5 || pitches_per_ip_last5,
+    pitches_per_bf,
+    rest_status: p.pitcher_rest_status || rest_status
+  };
 }
 function generateMLDatasetCSV(games) {
   const headers = [
@@ -671,6 +843,13 @@ function generateMLDatasetCSV(games) {
     "home_pitcher_splitter_pct",
     "home_catcher_name",
     "home_catcher_framing_runs",
+    "home_pitcher_last3_bf_avg",
+    "home_pitcher_last3_ip_avg",
+    "home_pitcher_last3_ks_avg",
+    "home_pitcher_last3_min_bf",
+    "home_pitcher_last3_min_ip",
+    "home_pitcher_last3_bf_under_15_count",
+    "home_pitcher_last3_bf_under_18_count",
     "away_pitcher_xera",
     "away_pitcher_fip",
     "away_pitcher_xfip",
@@ -712,6 +891,13 @@ function generateMLDatasetCSV(games) {
     "away_pitcher_splitter_pct",
     "away_catcher_name",
     "away_catcher_framing_runs",
+    "away_pitcher_last3_bf_avg",
+    "away_pitcher_last3_ip_avg",
+    "away_pitcher_last3_ks_avg",
+    "away_pitcher_last3_min_bf",
+    "away_pitcher_last3_min_ip",
+    "away_pitcher_last3_bf_under_15_count",
+    "away_pitcher_last3_bf_under_18_count",
     // Advanced Offense
     "home_offense_woba",
     "home_offense_xwoba",
@@ -721,7 +907,6 @@ function generateMLDatasetCSV(games) {
     "home_offense_barrel_pct",
     "home_offense_contact_pct",
     "home_offense_k_pct_vs_pitch_hand",
-    "home_offense_projected_lineup_k_pct",
     "home_projected_lineup_k_pct_vs_hand",
     "home_projected_lineup_contact_pct_vs_hand",
     "home_projected_lineup_whiff_pct_vs_hand",
@@ -738,7 +923,6 @@ function generateMLDatasetCSV(games) {
     "away_offense_barrel_pct",
     "away_offense_contact_pct",
     "away_offense_k_pct_vs_pitch_hand",
-    "away_offense_projected_lineup_k_pct",
     "away_projected_lineup_k_pct_vs_hand",
     "away_projected_lineup_contact_pct_vs_hand",
     "away_projected_lineup_whiff_pct_vs_hand",
@@ -768,16 +952,6 @@ function generateMLDatasetCSV(games) {
     "lineup_confirmed",
     "lineup_source",
     "lineup_updated_at",
-    "home_babip",
-    "home_hardHitPct",
-    "home_kPctVsPitchHand",
-    "home_projectedLineupContactPctVsHand",
-    "home_projectedLineupWhiffPctVsHand",
-    "away_babip",
-    "away_hardHitPct",
-    "away_kPctVsPitchHand",
-    "home_whiffPctVsFastball",
-    "away_whiffPctVsFastball",
     "home_pitcher_primary_pitch",
     "home_pitcher_primary_pitch_usage_pct",
     "home_pitcher_secondary_pitch",
@@ -809,16 +983,8 @@ function generateMLDatasetCSV(games) {
     "away_lineup_contact_stress_score",
     "away_lineup_pitch_count_risk_score",
     "away_lineup_high_hardhit_batters_count",
-    "home_projectedLineupKPct",
-    "away_projectedLineupKPct",
-    "home_wOba",
-    "away_wOba",
     "home_pitcher_recent_velocity",
-    "away_pitcher_recent_velocity",
-    "game_weather_temp",
-    "game_weather_windSpeed",
-    "game_weather_rainProbability",
-    "game_weather_skyStatus"
+    "away_pitcher_recent_velocity"
   ];
   const escapeStr = (val) => {
     if (val === void 0 || val === null || val === "") return "";
@@ -832,6 +998,42 @@ function generateMLDatasetCSV(games) {
     const fPitchers = g.fatigue_metrics?.pitchers;
     const fBullpen = g.fatigue_metrics?.bullpen;
     const canUseActualKs = isFinalGameStatus(g.game_result?.gameStatus);
+    const hL3Bf = calcLast3Stats(g.advanced_pitching?.home?.last3Bf1, g.advanced_pitching?.home?.last3Bf2, g.advanced_pitching?.home?.last3Bf3);
+    const hL3Ip = calcLast3Stats(g.advanced_pitching?.home?.last3Ip1, g.advanced_pitching?.home?.last3Ip2, g.advanced_pitching?.home?.last3Ip3);
+    const hL3K = calcLast3Stats(g.advanced_pitching?.home?.last3Ks1, g.advanced_pitching?.home?.last3Ks2, g.advanced_pitching?.home?.last3Ks3);
+    const aL3Bf = calcLast3Stats(g.advanced_pitching?.away?.last3Bf1, g.advanced_pitching?.away?.last3Bf2, g.advanced_pitching?.away?.last3Bf3);
+    const aL3Ip = calcLast3Stats(g.advanced_pitching?.away?.last3Ip1, g.advanced_pitching?.away?.last3Ip2, g.advanced_pitching?.away?.last3Ip3);
+    const aL3K = calcLast3Stats(g.advanced_pitching?.away?.last3Ks1, g.advanced_pitching?.away?.last3Ks2, g.advanced_pitching?.away?.last3Ks3);
+    const homePitcherMetrics = getPitcherDerivedMetrics(g, "home");
+    const awayPitcherMetrics = getPitcherDerivedMetrics(g, "away");
+    const getLineupMetrics = (side) => {
+      let contactScore = g.advanced_offense?.[side]?.lineup_contact_stress_score;
+      let pitchRisk = g.advanced_offense?.[side]?.lineup_pitch_count_risk_score;
+      let hardhit = g.advanced_offense?.[side]?.lineup_high_hardhit_batters_count;
+      if (contactScore === void 0 || contactScore === "") {
+        const batters = g.lineups?.[side];
+        if (batters && Array.isArray(batters) && batters.length > 0) {
+          let lineupContactStress = 0;
+          let lineupPitchRisk = 0;
+          let highHardhitCount = 0;
+          for (const batter of batters) {
+            const contactFactor = batter.contact_pct_vs_rhp || 0.8;
+            const kFactor = batter.kPct || batter.strikeout_pct || 0.2;
+            const batterStress = contactFactor * 100 - kFactor * 100;
+            lineupContactStress += Math.max(0, batterStress);
+            if ((batter.hardHitPct || 0) > 0.4) highHardhitCount++;
+            const bbPct = batter.walk_pct || 0.08;
+            lineupPitchRisk += bbPct * 100;
+          }
+          contactScore = lineupContactStress / batters.length;
+          pitchRisk = lineupPitchRisk / batters.length;
+          hardhit = highHardhitCount;
+        }
+      }
+      return { contactScore: contactScore ?? "", pitchRisk: pitchRisk ?? "", hardhit: hardhit ?? "" };
+    };
+    const homeLineupMetrics = getLineupMetrics("home");
+    const awayLineupMetrics = getLineupMetrics("away");
     return [
       // ... (Keep metadata and pitchers logic exactly same)
       escapeStr(g.id),
@@ -977,6 +1179,13 @@ function generateMLDatasetCSV(games) {
       g.advanced_pitching?.home?.splitterPct ?? "",
       escapeStr(g.advanced_pitching?.home?.catcherName),
       g.advanced_pitching?.home?.catcherFramingRuns ?? "",
+      hL3Bf.avg,
+      hL3Ip.avg,
+      hL3K.avg,
+      hL3Bf.min,
+      hL3Ip.min,
+      hL3Bf.under15,
+      hL3Bf.under18,
       g.advanced_pitching?.away?.xEra ?? "",
       g.advanced_pitching?.away?.fip ?? "",
       g.advanced_pitching?.away?.xFip ?? "",
@@ -1018,6 +1227,13 @@ function generateMLDatasetCSV(games) {
       g.advanced_pitching?.away?.splitterPct ?? "",
       escapeStr(g.advanced_pitching?.away?.catcherName),
       g.advanced_pitching?.away?.catcherFramingRuns ?? "",
+      aL3Bf.avg,
+      aL3Ip.avg,
+      aL3K.avg,
+      aL3Bf.min,
+      aL3Ip.min,
+      aL3Bf.under15,
+      aL3Bf.under18,
       // Advanced Offense
       g.advanced_offense?.home?.wOba ?? "",
       g.advanced_offense?.home?.xwOba ?? "",
@@ -1027,7 +1243,6 @@ function generateMLDatasetCSV(games) {
       g.advanced_offense?.home?.barrelPct ?? "",
       g.advanced_offense?.home?.contactPct ?? "",
       g.advanced_offense?.home?.kPctVsPitchHand ?? "",
-      g.advanced_offense?.home?.projectedLineupKPct ?? "",
       g.advanced_offense?.home?.projectedLineupKPct ?? "",
       g.advanced_offense?.home?.projectedLineupContactPctVsHand ?? "",
       g.advanced_offense?.home?.projectedLineupWhiffPctVsHand ?? "",
@@ -1044,7 +1259,6 @@ function generateMLDatasetCSV(games) {
       g.advanced_offense?.away?.barrelPct ?? "",
       g.advanced_offense?.away?.contactPct ?? "",
       g.advanced_offense?.away?.kPctVsPitchHand ?? "",
-      g.advanced_offense?.away?.projectedLineupKPct ?? "",
       g.advanced_offense?.away?.projectedLineupKPct ?? "",
       g.advanced_offense?.away?.projectedLineupContactPctVsHand ?? "",
       g.advanced_offense?.away?.projectedLineupWhiffPctVsHand ?? "",
@@ -1074,26 +1288,24 @@ function generateMLDatasetCSV(games) {
       g.lineups?.lineup_confirmed ? 1 : 0,
       escapeStr(g.lineups?.lineup_source),
       escapeStr(g.lineups?.lineup_updated_at),
-      g.advanced_offense?.home?.babip ?? "",
-      g.advanced_offense?.home?.hardHitPct ?? "",
-      g.advanced_offense?.home?.kPctVsPitchHand ?? "",
-      g.advanced_offense?.home?.projectedLineupContactPctVsHand ?? "",
-      g.advanced_offense?.home?.projectedLineupWhiffPctVsHand ?? "",
-      g.advanced_offense?.away?.babip ?? "",
-      g.advanced_offense?.away?.hardHitPct ?? "",
-      g.advanced_offense?.away?.kPctVsPitchHand ?? "",
-      g.advanced_offense?.home?.whiffPctVsFastball ?? "",
-      g.advanced_offense?.away?.whiffPctVsFastball ?? "",
-      escapeStr(g.pitchers?.home_starter?.pitcher_primary_pitch ?? g.pitchers?.home?.pitcher_primary_pitch),
-      g.pitchers?.home_starter?.pitcher_primary_pitch_usage_pct ?? g.pitchers?.home?.pitcher_primary_pitch_usage_pct ?? "",
-      escapeStr(g.pitchers?.home_starter?.pitcher_secondary_pitch ?? g.pitchers?.home?.pitcher_secondary_pitch),
-      g.pitchers?.home_starter?.pitcher_secondary_pitch_usage_pct ?? g.pitchers?.home?.pitcher_secondary_pitch_usage_pct ?? "",
-      g.pitchers?.home_starter?.pitcher_pitches_per_bf_last5 ?? g.pitchers?.home?.pitcher_pitches_per_bf_last5 ?? "",
-      g.pitchers?.home_starter?.pitcher_pitches_per_ip_last5 ?? g.pitchers?.home?.pitcher_pitches_per_ip_last5 ?? "",
+      homePitcherMetrics.primary_pitch,
+      homePitcherMetrics.primary_usage,
+      homePitcherMetrics.secondary_pitch,
+      homePitcherMetrics.secondary_usage,
+      homePitcherMetrics.pitches_per_bf,
+      homePitcherMetrics.pitches_per_bf_last5,
+      homePitcherMetrics.pitches_per_ip_last5,
+      awayPitcherMetrics.primary_pitch,
+      awayPitcherMetrics.primary_usage,
+      awayPitcherMetrics.secondary_pitch,
+      awayPitcherMetrics.secondary_usage,
+      awayPitcherMetrics.pitches_per_bf,
+      awayPitcherMetrics.pitches_per_bf_last5,
+      awayPitcherMetrics.pitches_per_ip_last5,
       g.pitchers?.home_starter?.pitcher_avg_pitches_last3 ?? g.pitchers?.home?.pitcher_avg_pitches_last3 ?? "",
-      escapeStr(g.pitchers?.home_starter?.pitcher_rest_status ?? g.pitchers?.home?.pitcher_rest_status),
+      escapeStr(homePitcherMetrics.rest_status),
       g.pitchers?.away_starter?.pitcher_avg_pitches_last3 ?? g.pitchers?.away?.pitcher_avg_pitches_last3 ?? "",
-      escapeStr(g.pitchers?.away_starter?.pitcher_rest_status ?? g.pitchers?.away?.pitcher_rest_status),
+      escapeStr(awayPitcherMetrics.rest_status),
       escapeStr(g.pitchers?.home_starter?.pitchHand ?? g.pitchers?.home?.pitchHand),
       escapeStr(g.pitchers?.away_starter?.pitchHand ?? g.pitchers?.away?.pitchHand),
       g.bullpen?.home?.ipLast3Days ?? fBullpen?.home?.ipLast3Days ?? "",
@@ -1101,22 +1313,14 @@ function generateMLDatasetCSV(games) {
       g.bullpen?.away?.ipLast3Days ?? fBullpen?.away?.ipLast3Days ?? "",
       g.bullpen?.away?.ipLast7Days ?? fBullpen?.away?.ipLast7Days ?? "",
       g.bullpen?.home?.relieversUsedYesterday ?? fBullpen?.home?.relieversUsedYesterday ?? "",
-      g.advanced_offense?.home?.lineup_contact_stress_score ?? "",
-      g.advanced_offense?.home?.lineup_pitch_count_risk_score ?? "",
-      g.advanced_offense?.home?.lineup_high_hardhit_batters_count ?? "",
-      g.advanced_offense?.away?.lineup_contact_stress_score ?? "",
-      g.advanced_offense?.away?.lineup_pitch_count_risk_score ?? "",
-      g.advanced_offense?.away?.lineup_high_hardhit_batters_count ?? "",
-      g.advanced_offense?.home?.projectedLineupKPct ?? "",
-      g.advanced_offense?.away?.projectedLineupKPct ?? "",
-      g.advanced_offense?.home?.wOba ?? "",
-      g.advanced_offense?.away?.wOba ?? "",
+      homeLineupMetrics.contactScore,
+      homeLineupMetrics.pitchRisk,
+      homeLineupMetrics.hardhit,
+      awayLineupMetrics.contactScore,
+      awayLineupMetrics.pitchRisk,
+      awayLineupMetrics.hardhit,
       g.pitchers?.home_starter?.pitcher_recent_velocity ?? g.pitchers?.home?.pitcher_recent_velocity ?? "",
-      g.pitchers?.away_starter?.pitcher_recent_velocity ?? g.pitchers?.away?.pitcher_recent_velocity ?? "",
-      g.weather?.temp ?? "",
-      g.weather?.windSpeed ?? "",
-      g.weather?.rainProbability ?? "",
-      escapeStr(g.weather?.skyStatus)
+      g.pitchers?.away_starter?.pitcher_recent_velocity ?? g.pitchers?.away?.pitcher_recent_velocity ?? ""
     ];
   });
   return [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
@@ -1217,6 +1421,8 @@ function generateDailyPlayerResultsCSV(games) {
   ].join("\n");
 }
 function generateBattersCSV(games) {
+  if (!games || games.length === 0) return "";
+  games.forEach((g) => enrichWithVortexMetrics(g));
   const headers = [
     // --- Batter Info & Stats (36 columns) ---
     "game_id",
@@ -1409,6 +1615,13 @@ function generateBattersCSV(games) {
     "home_pitcher_splitter_pct",
     "home_catcher_name",
     "home_catcher_framing_runs",
+    "home_pitcher_last3_bf_avg",
+    "home_pitcher_last3_ip_avg",
+    "home_pitcher_last3_ks_avg",
+    "home_pitcher_last3_min_bf",
+    "home_pitcher_last3_min_ip",
+    "home_pitcher_last3_bf_under_15_count",
+    "home_pitcher_last3_bf_under_18_count",
     "away_pitcher_xera",
     "away_pitcher_fip",
     "away_pitcher_xfip",
@@ -1450,6 +1663,13 @@ function generateBattersCSV(games) {
     "away_pitcher_splitter_pct",
     "away_catcher_name",
     "away_catcher_framing_runs",
+    "away_pitcher_last3_bf_avg",
+    "away_pitcher_last3_ip_avg",
+    "away_pitcher_last3_ks_avg",
+    "away_pitcher_last3_min_bf",
+    "away_pitcher_last3_min_ip",
+    "away_pitcher_last3_bf_under_15_count",
+    "away_pitcher_last3_bf_under_18_count",
     // Advanced Offense
     "home_offense_woba",
     "home_offense_xwoba",
@@ -1459,7 +1679,6 @@ function generateBattersCSV(games) {
     "home_offense_barrel_pct",
     "home_offense_contact_pct",
     "home_offense_k_pct_vs_pitch_hand",
-    "home_offense_projected_lineup_k_pct",
     "home_projected_lineup_k_pct_vs_hand",
     "home_projected_lineup_contact_pct_vs_hand",
     "home_projected_lineup_whiff_pct_vs_hand",
@@ -1476,7 +1695,6 @@ function generateBattersCSV(games) {
     "away_offense_barrel_pct",
     "away_offense_contact_pct",
     "away_offense_k_pct_vs_pitch_hand",
-    "away_offense_projected_lineup_k_pct",
     "away_projected_lineup_k_pct_vs_hand",
     "away_projected_lineup_contact_pct_vs_hand",
     "away_projected_lineup_whiff_pct_vs_hand",
@@ -1507,16 +1725,6 @@ function generateBattersCSV(games) {
     "lineup_confirmed",
     "lineup_source",
     "lineup_updated_at",
-    "home_babip",
-    "home_hardHitPct",
-    "home_kPctVsPitchHand",
-    "home_projectedLineupContactPctVsHand",
-    "home_projectedLineupWhiffPctVsHand",
-    "away_babip",
-    "away_hardHitPct",
-    "away_kPctVsPitchHand",
-    "home_whiffPctVsFastball",
-    "away_whiffPctVsFastball",
     "home_pitcher_primary_pitch",
     "home_pitcher_primary_pitch_usage_pct",
     "home_pitcher_secondary_pitch",
@@ -1548,16 +1756,8 @@ function generateBattersCSV(games) {
     "away_lineup_contact_stress_score",
     "away_lineup_pitch_count_risk_score",
     "away_lineup_high_hardhit_batters_count",
-    "home_projectedLineupKPct",
-    "away_projectedLineupKPct",
-    "home_wOba",
-    "away_wOba",
     "home_pitcher_recent_velocity",
-    "away_pitcher_recent_velocity",
-    "game_weather_temp",
-    "game_weather_windSpeed",
-    "game_weather_rainProbability",
-    "game_weather_skyStatus"
+    "away_pitcher_recent_velocity"
   ];
   const escapeStr = (val) => {
     if (val === void 0 || val === null || val === "") return "";
@@ -1573,6 +1773,12 @@ function generateBattersCSV(games) {
     const fBullpen = game.fatigue_metrics?.bullpen;
     const canUseActualKs = isFinalGameStatus(game.game_result?.gameStatus);
     const canUseBettingLines = hasRealBettingLines(game);
+    const hL3Bf = calcLast3Stats(game.advanced_pitching?.home?.last3Bf1, game.advanced_pitching?.home?.last3Bf2, game.advanced_pitching?.home?.last3Bf3);
+    const hL3Ip = calcLast3Stats(game.advanced_pitching?.home?.last3Ip1, game.advanced_pitching?.home?.last3Ip2, game.advanced_pitching?.home?.last3Ip3);
+    const hL3K = calcLast3Stats(game.advanced_pitching?.home?.last3Ks1, game.advanced_pitching?.home?.last3Ks2, game.advanced_pitching?.home?.last3Ks3);
+    const aL3Bf = calcLast3Stats(game.advanced_pitching?.away?.last3Bf1, game.advanced_pitching?.away?.last3Bf2, game.advanced_pitching?.away?.last3Bf3);
+    const aL3Ip = calcLast3Stats(game.advanced_pitching?.away?.last3Ip1, game.advanced_pitching?.away?.last3Ip2, game.advanced_pitching?.away?.last3Ip3);
+    const aL3K = calcLast3Stats(game.advanced_pitching?.away?.last3Ks1, game.advanced_pitching?.away?.last3Ks2, game.advanced_pitching?.away?.last3Ks3);
     const gameContextRow = [
       escapeStr(game.metadata.time),
       escapeStr(game.metadata.homeTeam),
@@ -1723,6 +1929,13 @@ function generateBattersCSV(games) {
       game.advanced_pitching?.home?.splitterPct ?? "",
       escapeStr(game.advanced_pitching?.home?.catcherName),
       game.advanced_pitching?.home?.catcherFramingRuns ?? "",
+      hL3Bf.avg,
+      hL3Ip.avg,
+      hL3K.avg,
+      hL3Bf.min,
+      hL3Ip.min,
+      hL3Bf.under15,
+      hL3Bf.under18,
       game.advanced_pitching?.away?.xEra ?? "",
       game.advanced_pitching?.away?.fip ?? "",
       game.advanced_pitching?.away?.xFip ?? "",
@@ -1764,6 +1977,13 @@ function generateBattersCSV(games) {
       game.advanced_pitching?.away?.splitterPct ?? "",
       escapeStr(game.advanced_pitching?.away?.catcherName),
       game.advanced_pitching?.away?.catcherFramingRuns ?? "",
+      aL3Bf.avg,
+      aL3Ip.avg,
+      aL3K.avg,
+      aL3Bf.min,
+      aL3Ip.min,
+      aL3Bf.under15,
+      aL3Bf.under18,
       // Advanced Offense
       game.advanced_offense?.home?.wOba ?? "",
       game.advanced_offense?.home?.xwOba ?? "",
@@ -1773,7 +1993,6 @@ function generateBattersCSV(games) {
       game.advanced_offense?.home?.barrelPct ?? "",
       game.advanced_offense?.home?.contactPct ?? "",
       game.advanced_offense?.home?.kPctVsPitchHand ?? "",
-      game.advanced_offense?.home?.projectedLineupKPct ?? "",
       game.advanced_offense?.home?.projectedLineupKPct ?? "",
       game.advanced_offense?.home?.projectedLineupContactPctVsHand ?? "",
       game.advanced_offense?.home?.projectedLineupWhiffPctVsHand ?? "",
@@ -1790,7 +2009,6 @@ function generateBattersCSV(games) {
       game.advanced_offense?.away?.barrelPct ?? "",
       game.advanced_offense?.away?.contactPct ?? "",
       game.advanced_offense?.away?.kPctVsPitchHand ?? "",
-      game.advanced_offense?.away?.projectedLineupKPct ?? "",
       game.advanced_offense?.away?.projectedLineupKPct ?? "",
       game.advanced_offense?.away?.projectedLineupContactPctVsHand ?? "",
       game.advanced_offense?.away?.projectedLineupWhiffPctVsHand ?? "",
@@ -1821,26 +2039,64 @@ function generateBattersCSV(games) {
       game.lineups?.lineup_confirmed ? 1 : 0,
       escapeStr(game.lineups?.lineup_source),
       escapeStr(game.lineups?.lineup_updated_at),
-      game.advanced_offense?.home?.babip ?? "",
-      game.advanced_offense?.home?.hardHitPct ?? "",
-      game.advanced_offense?.home?.kPctVsPitchHand ?? "",
-      game.advanced_offense?.home?.projectedLineupContactPctVsHand ?? "",
-      game.advanced_offense?.home?.projectedLineupWhiffPctVsHand ?? "",
-      game.advanced_offense?.away?.babip ?? "",
-      game.advanced_offense?.away?.hardHitPct ?? "",
-      game.advanced_offense?.away?.kPctVsPitchHand ?? "",
-      game.advanced_offense?.home?.whiffPctVsFastball ?? "",
-      game.advanced_offense?.away?.whiffPctVsFastball ?? "",
-      escapeStr(game.pitchers?.home_starter?.pitcher_primary_pitch ?? game.pitchers?.home?.pitcher_primary_pitch),
-      game.pitchers?.home_starter?.pitcher_primary_pitch_usage_pct ?? game.pitchers?.home?.pitcher_primary_pitch_usage_pct ?? "",
-      escapeStr(game.pitchers?.home_starter?.pitcher_secondary_pitch ?? game.pitchers?.home?.pitcher_secondary_pitch),
-      game.pitchers?.home_starter?.pitcher_secondary_pitch_usage_pct ?? game.pitchers?.home?.pitcher_secondary_pitch_usage_pct ?? "",
-      game.pitchers?.home_starter?.pitcher_pitches_per_bf_last5 ?? game.pitchers?.home?.pitcher_pitches_per_bf_last5 ?? "",
-      game.pitchers?.home_starter?.pitcher_pitches_per_ip_last5 ?? game.pitchers?.home?.pitcher_pitches_per_ip_last5 ?? "",
-      game.pitchers?.home_starter?.pitcher_avg_pitches_last3 ?? game.pitchers?.home?.pitcher_avg_pitches_last3 ?? "",
-      escapeStr(game.pitchers?.home_starter?.pitcher_rest_status ?? game.pitchers?.home?.pitcher_rest_status),
-      game.pitchers?.away_starter?.pitcher_avg_pitches_last3 ?? game.pitchers?.away?.pitcher_avg_pitches_last3 ?? "",
-      escapeStr(game.pitchers?.away_starter?.pitcher_rest_status ?? game.pitchers?.away?.pitcher_rest_status),
+      escapeStr(game.pitchers?.home_starter?.pitcher_primary_pitch ?? game.pitchers?.home?.pitcher_primary_pitch ?? (() => {
+        const ap = game.advanced_pitching?.home;
+        if (!ap) return null;
+        const arr = [{ n: "fastball", p: ap.fastballPct || 0 }, { n: "slider", p: ap.sliderPct || 0 }, { n: "curve", p: ap.curvePct || 0 }, { n: "changeup", p: ap.changeupPct || 0 }, { n: "splitter", p: ap.splitterPct || 0 }].sort((a, b) => b.p - a.p);
+        return arr[0].p > 0 ? arr[0].n : null;
+      })()),
+      game.pitchers?.home_starter?.pitcher_primary_pitch_usage_pct ?? game.pitchers?.home?.pitcher_primary_pitch_usage_pct ?? (() => {
+        const ap = game.advanced_pitching?.home;
+        if (!ap) return "";
+        const arr = [ap.fastballPct || 0, ap.sliderPct || 0, ap.curvePct || 0, ap.changeupPct || 0, ap.splitterPct || 0].sort((a, b) => b - a);
+        return arr[0] > 0 ? arr[0] : "";
+      })(),
+      escapeStr(game.pitchers?.home_starter?.pitcher_secondary_pitch ?? game.pitchers?.home?.pitcher_secondary_pitch ?? (() => {
+        const ap = game.advanced_pitching?.home;
+        if (!ap) return null;
+        const arr = [{ n: "fastball", p: ap.fastballPct || 0 }, { n: "slider", p: ap.sliderPct || 0 }, { n: "curve", p: ap.curvePct || 0 }, { n: "changeup", p: ap.changeupPct || 0 }, { n: "splitter", p: ap.splitterPct || 0 }].sort((a, b) => b.p - a.p);
+        return arr[1].p > 0 ? arr[1].n : null;
+      })()),
+      game.pitchers?.home_starter?.pitcher_secondary_pitch_usage_pct ?? game.pitchers?.home?.pitcher_secondary_pitch_usage_pct ?? (() => {
+        const ap = game.advanced_pitching?.home;
+        if (!ap) return "";
+        const arr = [ap.fastballPct || 0, ap.sliderPct || 0, ap.curvePct || 0, ap.changeupPct || 0, ap.splitterPct || 0].sort((a, b) => b - a);
+        return arr[1] > 0 ? arr[1] : "";
+      })(),
+      game.pitchers?.home_starter?.pitcher_pitches_per_bf ?? game.pitchers?.home?.pitcher_pitches_per_bf ?? game.advanced_pitching?.home?.pitcher_pitches_per_bf ?? "",
+      game.pitchers?.home_starter?.pitcher_pitches_per_bf_last5 ?? game.pitchers?.home?.pitcher_pitches_per_bf_last5 ?? game.advanced_pitching?.home?.pitcher_pitches_per_bf_last5 ?? "",
+      game.pitchers?.home_starter?.pitcher_pitches_per_ip_last5 ?? game.pitchers?.home?.pitcher_pitches_per_ip_last5 ?? game.advanced_pitching?.home?.pitcher_pitches_per_ip_last5 ?? "",
+      escapeStr(game.pitchers?.away_starter?.pitcher_primary_pitch ?? game.pitchers?.away?.pitcher_primary_pitch ?? (() => {
+        const ap = game.advanced_pitching?.away;
+        if (!ap) return null;
+        const arr = [{ n: "fastball", p: ap.fastballPct || 0 }, { n: "slider", p: ap.sliderPct || 0 }, { n: "curve", p: ap.curvePct || 0 }, { n: "changeup", p: ap.changeupPct || 0 }, { n: "splitter", p: ap.splitterPct || 0 }].sort((a, b) => b.p - a.p);
+        return arr[0].p > 0 ? arr[0].n : null;
+      })()),
+      game.pitchers?.away_starter?.pitcher_primary_pitch_usage_pct ?? game.pitchers?.away?.pitcher_primary_pitch_usage_pct ?? (() => {
+        const ap = game.advanced_pitching?.away;
+        if (!ap) return "";
+        const arr = [ap.fastballPct || 0, ap.sliderPct || 0, ap.curvePct || 0, ap.changeupPct || 0, ap.splitterPct || 0].sort((a, b) => b - a);
+        return arr[0] > 0 ? arr[0] : "";
+      })(),
+      escapeStr(game.pitchers?.away_starter?.pitcher_secondary_pitch ?? game.pitchers?.away?.pitcher_secondary_pitch ?? (() => {
+        const ap = game.advanced_pitching?.away;
+        if (!ap) return null;
+        const arr = [{ n: "fastball", p: ap.fastballPct || 0 }, { n: "slider", p: ap.sliderPct || 0 }, { n: "curve", p: ap.curvePct || 0 }, { n: "changeup", p: ap.changeupPct || 0 }, { n: "splitter", p: ap.splitterPct || 0 }].sort((a, b) => b.p - a.p);
+        return arr[1].p > 0 ? arr[1].n : null;
+      })()),
+      game.pitchers?.away_starter?.pitcher_secondary_pitch_usage_pct ?? game.pitchers?.away?.pitcher_secondary_pitch_usage_pct ?? (() => {
+        const ap = game.advanced_pitching?.away;
+        if (!ap) return "";
+        const arr = [ap.fastballPct || 0, ap.sliderPct || 0, ap.curvePct || 0, ap.changeupPct || 0, ap.splitterPct || 0].sort((a, b) => b - a);
+        return arr[1] > 0 ? arr[1] : "";
+      })(),
+      game.pitchers?.away_starter?.pitcher_pitches_per_bf ?? game.pitchers?.away?.pitcher_pitches_per_bf ?? game.advanced_pitching?.away?.pitcher_pitches_per_bf ?? "",
+      game.pitchers?.away_starter?.pitcher_pitches_per_bf_last5 ?? game.pitchers?.away?.pitcher_pitches_per_bf_last5 ?? game.advanced_pitching?.away?.pitcher_pitches_per_bf_last5 ?? "",
+      game.pitchers?.away_starter?.pitcher_pitches_per_ip_last5 ?? game.pitchers?.away?.pitcher_pitches_per_ip_last5 ?? game.advanced_pitching?.away?.pitcher_pitches_per_ip_last5 ?? "",
+      game.pitchers?.home_starter?.pitcher_avg_pitches_last3 ?? game.pitchers?.home?.pitcher_avg_pitches_last3 ?? game.advanced_pitching?.home?.pitcher_avg_pitches_last3 ?? "",
+      escapeStr(game.pitchers?.home_starter?.pitcher_rest_status ?? game.pitchers?.home?.pitcher_rest_status ?? game.advanced_pitching?.home?.pitcher_rest_status),
+      game.pitchers?.away_starter?.pitcher_avg_pitches_last3 ?? game.pitchers?.away?.pitcher_avg_pitches_last3 ?? game.advanced_pitching?.away?.pitcher_avg_pitches_last3 ?? "",
+      escapeStr(game.pitchers?.away_starter?.pitcher_rest_status ?? game.pitchers?.away?.pitcher_rest_status ?? game.advanced_pitching?.away?.pitcher_rest_status),
       escapeStr(game.pitchers?.home_starter?.pitchHand ?? game.pitchers?.home?.pitchHand),
       escapeStr(game.pitchers?.away_starter?.pitchHand ?? game.pitchers?.away?.pitchHand),
       game.bullpen?.home?.ipLast3Days ?? fBullpen?.home?.ipLast3Days ?? "",
@@ -1854,16 +2110,8 @@ function generateBattersCSV(games) {
       game.advanced_offense?.away?.lineup_contact_stress_score ?? "",
       game.advanced_offense?.away?.lineup_pitch_count_risk_score ?? "",
       game.advanced_offense?.away?.lineup_high_hardhit_batters_count ?? "",
-      game.advanced_offense?.home?.projectedLineupKPct ?? "",
-      game.advanced_offense?.away?.projectedLineupKPct ?? "",
-      game.advanced_offense?.home?.wOba ?? "",
-      game.advanced_offense?.away?.wOba ?? "",
       game.pitchers?.home_starter?.pitcher_recent_velocity ?? game.pitchers?.home?.pitcher_recent_velocity ?? "",
-      game.pitchers?.away_starter?.pitcher_recent_velocity ?? game.pitchers?.away?.pitcher_recent_velocity ?? "",
-      game.weather?.temp ?? "",
-      game.weather?.windSpeed ?? "",
-      game.weather?.rainProbability ?? "",
-      escapeStr(game.weather?.skyStatus)
+      game.pitchers?.away_starter?.pitcher_recent_velocity ?? game.pitchers?.away?.pitcher_recent_velocity ?? ""
     ];
     const processTeamLineup = (lineup, teamName, isHomeTeam) => {
       if (!lineup || !Array.isArray(lineup)) return;
@@ -5612,6 +5860,32 @@ app2.post("/api/harvest", async (req, res) => {
           awayAdvOffense.xwOba = awayAdvOffense.xwOba ?? awayPitcherSavant.xwOBA;
         }
       }
+      try {
+        const pitcherArsenalData = await getPitcherArsenals(
+          [String(homePitcherId), String(awayPitcherId)].filter((id) => id !== "0"),
+          season2
+        );
+        const homeArsenal = pitcherArsenalData[String(homePitcherId)];
+        const awayArsenal = pitcherArsenalData[String(awayPitcherId)];
+        if (homeArsenal) {
+          homeAdvPitching.fastballPct = homeArsenal.fastballPct;
+          homeAdvPitching.sliderPct = homeArsenal.sliderPct;
+          homeAdvPitching.curvePct = homeArsenal.curvePct;
+          homeAdvPitching.changeupPct = homeArsenal.changeupPct;
+          homeAdvPitching.splitterPct = homeArsenal.splitterPct;
+          console.log(`[Arsenal Python] HOME ${gameDataParsed.pitchers?.home?.name}: FB=${homeArsenal.fastballPct}% SL=${homeArsenal.sliderPct}% CU=${homeArsenal.curvePct}%`);
+        }
+        if (awayArsenal) {
+          awayAdvPitching.fastballPct = awayArsenal.fastballPct;
+          awayAdvPitching.sliderPct = awayArsenal.sliderPct;
+          awayAdvPitching.curvePct = awayArsenal.curvePct;
+          awayAdvPitching.changeupPct = awayArsenal.changeupPct;
+          awayAdvPitching.splitterPct = awayArsenal.splitterPct;
+          console.log(`[Arsenal Python] AWAY ${gameDataParsed.pitchers?.away?.name}: FB=${awayArsenal.fastballPct}% SL=${awayArsenal.sliderPct}% CU=${awayArsenal.curvePct}%`);
+        }
+      } catch (arsenalErr) {
+        console.warn(`[Arsenal Python] Error al obtener arsenal para juego ${gameId}:`, arsenalErr);
+      }
       if (pybaseballStatcast?.data?.pitchers_recent) {
         const homePStats = pybaseballStatcast.data.pitchers_recent.find((p) => String(p.pitcher) === String(homePitcherId));
         if (homePStats && gameDataParsed.pitchers?.home) {
@@ -5949,6 +6223,30 @@ async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
       awayAdvOffense.xwOba = awayAdvOffense.xwOba ?? awayPitcherSavantU.xwOBA;
     }
   }
+  try {
+    const pitcherArsenalDataU = await getPitcherArsenals(
+      [String(homePitcherId), String(awayPitcherId)].filter((id) => id !== "0"),
+      season
+    );
+    const homeArsenalU = pitcherArsenalDataU[String(homePitcherId)];
+    const awayArsenalU = pitcherArsenalDataU[String(awayPitcherId)];
+    if (homeArsenalU) {
+      homeAdvPitching.fastballPct = homeArsenalU.fastballPct;
+      homeAdvPitching.sliderPct = homeArsenalU.sliderPct;
+      homeAdvPitching.curvePct = homeArsenalU.curvePct;
+      homeAdvPitching.changeupPct = homeArsenalU.changeupPct;
+      homeAdvPitching.splitterPct = homeArsenalU.splitterPct;
+    }
+    if (awayArsenalU) {
+      awayAdvPitching.fastballPct = awayArsenalU.fastballPct;
+      awayAdvPitching.sliderPct = awayArsenalU.sliderPct;
+      awayAdvPitching.curvePct = awayArsenalU.curvePct;
+      awayAdvPitching.changeupPct = awayArsenalU.changeupPct;
+      awayAdvPitching.splitterPct = awayArsenalU.splitterPct;
+    }
+  } catch (arsenalErrU) {
+    console.warn(`[Arsenal Python] Error en harvest-game:`, arsenalErrU);
+  }
   const homeLineupU = gameDataParsed.lineups?.home || [];
   const awayLineupU = gameDataParsed.lineups?.away || [];
   const homeLineupSavantU = calculateLineupSavantAverages(homeLineupU);
@@ -6103,6 +6401,7 @@ async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
   gameDataParsed.advanced_pitching.away.actualStrikeouts = canUseActualKs ? realMLBData.currentPitching?.away?.actualStrikeouts ?? null : null;
   const errorsCollection = readErrorsDB();
   const validationResult = validateGamePayload(gameDataParsed, errorsCollection);
+  enrichWithVortexMetrics(gameDataParsed);
   gameDataParsed.validation = {
     isValid: validationResult.isValid,
     errors: validationResult.errors,
