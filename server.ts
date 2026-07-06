@@ -1389,8 +1389,8 @@ function calculateVortexProjectedKs(
   // 1. Calculate Pitches_per_BF and BF_from_Projected_Pitches
   let pitchesPerBf = 3.95;
   const bbPct = pitching.walkRate ?? 8.5; // typical avg
-  if (bbPct < 6.0) pitchesPerBf = 3.75;
-  else if (bbPct > 10.0) pitchesPerBf = 4.15;
+  if (bbPct <= 6.0) pitchesPerBf = 3.75;
+  else if (bbPct >= 9.0) pitchesPerBf = 4.15;
 
   let bfFromProjected = projectedPitches ? projectedPitches / pitchesPerBf : null;
 
@@ -1423,32 +1423,57 @@ function calculateVortexProjectedKs(
      capMin = 20; capMax = 27; 
   }
   expectedBf = clampNumber(expectedBfRaw, capMin, capMax);
+  expectedBf = Math.round(expectedBf * 100) / 100;
 
   // 4. Calculate Expected_K_pct
   const pitcherKSkill = pitching.strikeoutRate ?? (pitching.last5KsAvg && last5BfAvg > 0 ? (pitching.last5KsAvg / last5BfAvg) * 100 : 20.0);
   
   const recentKPct = (pitching.last5KsAvg != null && last5BfAvg > 0) ? (pitching.last5KsAvg / last5BfAvg) * 100 : pitcherKSkill;
   
-  const rawMatchup = opposingOffense?.projectedLineupKPct;
+  const rawMatchup = opposingOffense?.projectedLineupKPct ?? opposingOffense?.kPctVsPitchHand;
   const matchupKPct = rawMatchup != null ? (rawMatchup < 1 ? rawMatchup * 100 : rawMatchup) : 22.0;
 
   // Stuff K Score 
   let stuffKScore = pitcherKSkill;
-  if (pitching.swingingStrikePct != null || pitching.cswPct != null) {
-     const swStr = pitching.swingingStrikePct ?? (pitching.cswPct ? pitching.cswPct - 17 : 11);
-     const csw = pitching.cswPct ?? (swStr + 17);
+  let hasStuff = false;
+  if (pitching.swingingStrikePct != null && pitching.cswPct != null) {
+     const swStr = pitching.swingingStrikePct;
+     const csw = pitching.cswPct;
      stuffKScore = (swStr * 1.5) + (csw * 0.35);
+     hasStuff = true;
+  } else if (pitching.swingingStrikePct != null) {
+     const swStr = pitching.swingingStrikePct;
+     const csw = swStr + 17;
+     stuffKScore = (swStr * 1.5) + (csw * 0.35);
+     hasStuff = true;
+  } else if (pitching.cswPct != null) {
+     const csw = pitching.cswPct;
+     const swStr = csw - 17;
+     stuffKScore = (swStr * 1.5) + (csw * 0.35);
+     hasStuff = true;
   }
 
   // Context Adjustment 
   const rawContact = opposingOffense?.projectedLineupContactPctVsHand;
   const contactPct = rawContact != null ? (rawContact <= 1 ? rawContact * 100 : rawContact) : null;
   const contextAdjustment = contactPct != null ? (100 - contactPct) : pitcherKSkill;
+  const hasContext = contactPct != null;
 
-  let expectedKPct = 0.45 * pitcherKSkill + 0.20 * recentKPct + 0.20 * matchupKPct + 0.10 * stuffKScore + 0.05 * contextAdjustment;
+  let expectedKPct = 0;
+  if (hasStuff && hasContext) {
+      expectedKPct = 0.45 * pitcherKSkill + 0.20 * recentKPct + 0.20 * matchupKPct + 0.10 * stuffKScore + 0.05 * contextAdjustment;
+  } else if (hasStuff && !hasContext) {
+      expectedKPct = 0.50 * pitcherKSkill + 0.20 * recentKPct + 0.20 * matchupKPct + 0.10 * stuffKScore;
+  } else if (!hasStuff && hasContext) {
+      expectedKPct = 0.55 * pitcherKSkill + 0.20 * recentKPct + 0.20 * matchupKPct + 0.05 * contextAdjustment;
+  } else {
+      expectedKPct = 0.60 * pitcherKSkill + 0.20 * recentKPct + 0.20 * matchupKPct;
+  }
+  expectedKPct = Math.round(expectedKPct * 100) / 100;
 
   // 7. Raw_Ks_Projection
-  const rawKs = expectedBf * (expectedKPct / 100);
+  let rawKs = expectedBf * (expectedKPct / 100);
+  rawKs = Math.round(rawKs * 100) / 100;
 
   // 8. Adjustments
   let fatigueMultiplier = 1.0;
@@ -1459,8 +1484,11 @@ function calculateVortexProjectedKs(
     }
     if (fatigue.pitchesLastStart != null && fatigue.pitchesLastStart > 105) fatigueMultiplier -= 0.03;
     if (fatigue.pitchesLast3Starts != null && fatigue.pitchesLast3Starts > 300) fatigueMultiplier -= 0.03;
+    if (fatigue.isInjuryReturn) fatigueMultiplier -= 0.05;
   }
+  if (role.roleFlag.includes("OPENER") || role.roleFlag.includes("SHORT")) fatigueMultiplier -= 0.05;
   fatigueMultiplier = clampNumber(fatigueMultiplier, 0.90, 1.05);
+  fatigueMultiplier = Math.round(fatigueMultiplier * 1000) / 1000;
 
   let varianceMultiplier = 0.98; 
   if (pitching.last5KsStd != null) {
@@ -1469,20 +1497,22 @@ function calculateVortexProjectedKs(
      else if (pitching.last5KsStd <= 1.5) varianceMultiplier = 1.02;
      else varianceMultiplier = 1.00;
   }
+  varianceMultiplier = Math.round(varianceMultiplier * 1000) / 1000;
 
   let efficiencyMultiplier = 1.00;
   if (bbPct >= 10.5) efficiencyMultiplier -= 0.02;
   else if (bbPct <= 5.5) efficiencyMultiplier += 0.01;
   efficiencyMultiplier = clampNumber(efficiencyMultiplier, 0.97, 1.02);
+  efficiencyMultiplier = Math.round(efficiencyMultiplier * 1000) / 1000;
 
   const biasCorrection = 0.00;
 
   const totalMultiplier = fatigueMultiplier * varianceMultiplier * efficiencyMultiplier;
-  const clampedMultiplier = clampNumber(totalMultiplier, 0.85, 1.12);
+  const adjustedKsBase = rawKs * totalMultiplier + biasCorrection;
 
-  const projectedKsBase = rawKs * clampedMultiplier + biasCorrection;
+  const projectedKsBase = Math.round(adjustedKsBase * 100) / 100;
 
-  return Number(projectedKsBase.toFixed(2));
+  return projectedKsBase;
 }
 
 function isFinalGameStatus(status: any): boolean {
@@ -1911,7 +1941,11 @@ async function fetchRealBettingLines(date: string, forceRefreshOdds: boolean = f
 
   if (!activeKey || !data) {
     console.error("[Odds API] Todas las keys de The Odds API agotaron su cuota o fallaron.");
-    // Crear un archivo de caché vacío para evitar el bucle infinito de reintentos
+    if (fs.existsSync(cacheFile) && fs.statSync(cacheFile).size > 10) {
+      console.log(`Recuperando cuotas del caché existente debido a falla de la API.`);
+      return JSON.parse(fs.readFileSync(cacheFile, 'utf-8'));
+    }
+    // Crear un archivo de caché vacío para evitar el bucle infinito de reintentos si no hay datos previos
     fs.writeFileSync(cacheFile, JSON.stringify([]));
     return null;
   }
@@ -1963,8 +1997,13 @@ async function fetchRealBettingLines(date: string, forceRefreshOdds: boolean = f
 
     // Save to Cache
     try {
-      fs.writeFileSync(cacheFile, JSON.stringify(eventsWithDataStreakProps, null, 2));
-      console.log(`Cuotas guardadas en cache: odds_cache_${date}.json`);
+      if (eventsWithDataStreakProps.length > 0 || !fs.existsSync(cacheFile) || fs.statSync(cacheFile).size < 10) {
+        fs.writeFileSync(cacheFile, JSON.stringify(eventsWithDataStreakProps, null, 2));
+        console.log(`Cuotas guardadas en cache: odds_cache_${date}.json`);
+      } else {
+        console.log(`No se recibieron cuotas nuevas (posible fecha pasada). Conservando el caché original: odds_cache_${date}.json`);
+        return JSON.parse(fs.readFileSync(cacheFile, 'utf-8'));
+      }
     } catch (e) {
       console.warn("No se pudo guardar el cache de cuotas.", e);
     }
@@ -3285,7 +3324,8 @@ async function fetchStarterFatigue(pitcherId: number, date: string, season: stri
     return {
       daysSinceLastStart: daysSinceLastStart > 30 ? 5 : daysSinceLastStart,
       pitchesLastStart,
-      pitchesLast3Starts
+      pitchesLast3Starts,
+      isInjuryReturn: daysSinceLastStart > 30
     };
   } catch (err) {
     console.error(`Error fetching starter fatigue for pitcher ${pitcherId}:`, err);
@@ -4418,6 +4458,25 @@ app.post("/api/harvest", async (req, res) => {
 
       // Handle Line Movements timeline (usamos el snapshot pre-leído antes del loop)
       const existingGame = existingGamesForDate.find((g: any) => String(g.id) === String(gameId));
+      
+      if (existingGame) {
+        if (!hasRealBettingLines(gameDataParsed) && hasRealBettingLines(existingGame)) {
+          console.log(`[Persistencia] Preservando odds (betting_lines) del juego ${gameId} desde la base de datos local (Modo Batch).`);
+          gameDataParsed.betting_lines = existingGame.betting_lines;
+          
+          if (existingGame.pitchers?.home?.strikeoutProp && !gameDataParsed.pitchers?.home?.strikeoutProp) {
+            gameDataParsed.pitchers.home.strikeoutProp = existingGame.pitchers.home.strikeoutProp;
+            gameDataParsed.pitchers.home.strikeoutPropOverOdds = existingGame.pitchers.home.strikeoutPropOverOdds;
+            gameDataParsed.pitchers.home.strikeoutPropUnderOdds = existingGame.pitchers.home.strikeoutPropUnderOdds;
+          }
+          if (existingGame.pitchers?.away?.strikeoutProp && !gameDataParsed.pitchers?.away?.strikeoutProp) {
+            gameDataParsed.pitchers.away.strikeoutProp = existingGame.pitchers.away.strikeoutProp;
+            gameDataParsed.pitchers.away.strikeoutPropOverOdds = existingGame.pitchers.away.strikeoutPropOverOdds;
+            gameDataParsed.pitchers.away.strikeoutPropUnderOdds = existingGame.pitchers.away.strikeoutPropUnderOdds;
+          }
+        }
+      }
+
       const lineMovements: LineMovement[] = existingGame?.line_movements || [];
 
       const currentOdds = gameDataParsed.betting_lines;
@@ -4820,6 +4879,25 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
   const currentDB = readGamesDB();
   const existingGamesForDate = currentDB[actualDate] || [];
   const existingGame = existingGamesForDate.find((g: any) => String(g.id) === String(gameId));
+  
+  if (existingGame) {
+    if (!hasRealBettingLines(gameDataParsed) && hasRealBettingLines(existingGame)) {
+      console.log(`[Persistencia] Preservando odds (betting_lines) del juego ${gameId} desde la base de datos local (Modo Single).`);
+      gameDataParsed.betting_lines = existingGame.betting_lines;
+      
+      if (existingGame.pitchers?.home?.strikeoutProp && !gameDataParsed.pitchers?.home?.strikeoutProp) {
+        gameDataParsed.pitchers.home.strikeoutProp = existingGame.pitchers.home.strikeoutProp;
+        gameDataParsed.pitchers.home.strikeoutPropOverOdds = existingGame.pitchers.home.strikeoutPropOverOdds;
+        gameDataParsed.pitchers.home.strikeoutPropUnderOdds = existingGame.pitchers.home.strikeoutPropUnderOdds;
+      }
+      if (existingGame.pitchers?.away?.strikeoutProp && !gameDataParsed.pitchers?.away?.strikeoutProp) {
+        gameDataParsed.pitchers.away.strikeoutProp = existingGame.pitchers.away.strikeoutProp;
+        gameDataParsed.pitchers.away.strikeoutPropOverOdds = existingGame.pitchers.away.strikeoutPropOverOdds;
+        gameDataParsed.pitchers.away.strikeoutPropUnderOdds = existingGame.pitchers.away.strikeoutPropUnderOdds;
+      }
+    }
+  }
+
   const lineMovements: LineMovement[] = existingGame?.line_movements || [];
 
   const currentOdds = gameDataParsed.betting_lines;

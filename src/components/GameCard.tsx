@@ -49,7 +49,7 @@ interface GameCardProps {
 }
 
 
-const LiveFieldUI: React.FC<{ linescore: any, liveBoxscore: any, gameStatus?: string }> = ({ linescore, liveBoxscore, gameStatus = '' }) => {
+const LiveFieldUI: React.FC<{ linescore: any, liveBoxscore: any, gameStatus?: string, homeTeam: any, awayTeam: any }> = ({ linescore, liveBoxscore, gameStatus = '', homeTeam, awayTeam }) => {
   if (!linescore) return null;
 
   const b = linescore.balls || 0;
@@ -76,6 +76,10 @@ const LiveFieldUI: React.FC<{ linescore: any, liveBoxscore: any, gameStatus?: st
 
   const pitcherName = currentPitcher?.name || linescore.defense?.pitcher?.fullName;
   const batterName = currentBatter?.name || linescore.offense?.batter?.fullName;
+
+  const isTopInning = linescore.isTopInning;
+  const batterTeam = isTopInning ? awayTeam : homeTeam;
+  const pitcherTeam = isTopInning ? homeTeam : awayTeam;
 
 
   const formatName = (fullName: string) => {
@@ -143,8 +147,13 @@ const LiveFieldUI: React.FC<{ linescore: any, liveBoxscore: any, gameStatus?: st
               <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse shrink-0" />
               <span className="text-blue-300/60 text-[8px] uppercase tracking-[0.18em] font-extrabold">Lanzador</span>
             </div>
-            <div className="text-white font-bold text-sm leading-snug">
-              {pitcherName ? formatName(pitcherName) : <span className="text-white/25 italic text-xs">Sin datos</span>}
+            <div className="text-white font-bold text-sm leading-snug flex items-center gap-1.5">
+              {pitcherName ? (
+                <>
+                  {pitcherTeam && <img src={getTeamLogo(pitcherTeam) || ''} className="w-4 h-4 opacity-90" alt={getTeamAbbr(pitcherTeam) || ''} title={pitcherTeam} />}
+                  {formatName(pitcherName)}
+                </>
+              ) : <span className="text-white/25 italic text-xs">Sin datos</span>}
             </div>
             <div className="text-white/35 text-[9px] font-mono mt-0.5 h-[13px]">
               {currentPitcher ? `#${currentPitcher.pitches || 0} pitcheos` : ''}
@@ -250,8 +259,13 @@ const LiveFieldUI: React.FC<{ linescore: any, liveBoxscore: any, gameStatus?: st
               <span className="text-amber-300/60 text-[8px] uppercase tracking-[0.18em] font-extrabold">Bateador</span>
               <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
             </div>
-            <div className="text-white font-bold text-sm leading-snug">
-              {batterName ? formatName(batterName) : <span className="text-white/25 italic text-xs">Sin datos</span>}
+            <div className="text-white font-bold text-sm leading-snug flex items-center gap-1.5">
+              {batterName ? (
+                <>
+                  {batterTeam && <img src={getTeamLogo(batterTeam) || ''} className="w-4 h-4 opacity-90" alt={getTeamAbbr(batterTeam) || ''} title={batterTeam} />}
+                  {formatName(batterName)}
+                </>
+              ) : <span className="text-white/25 italic text-xs">Sin datos</span>}
             </div>
             <div className="text-white/35 text-[9px] font-mono mt-0.5 h-[13px]">
               {currentBatter ? (currentBatter.position || 'DH') : ''}
@@ -822,6 +836,8 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                   linescore={game.linescore}
                   liveBoxscore={game.liveBoxscore}
                   gameStatus={status}
+                  homeTeam={game.teams.home}
+                  awayTeam={game.teams.away}
                 />
               </div>
             ) : null;
