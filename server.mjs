@@ -3920,6 +3920,10 @@ async function fetchRealBettingLines(date, forceRefreshOdds = false, gamesList =
   }
   if (!activeKey || !data) {
     console.error("[Odds API] Todas las keys de The Odds API agotaron su cuota o fallaron.");
+    if (fs2.existsSync(cacheFile) && fs2.statSync(cacheFile).size > 10) {
+      console.log(`Recuperando cuotas del cach\xE9 existente debido a falla de la API.`);
+      return JSON.parse(fs2.readFileSync(cacheFile, "utf-8"));
+    }
     fs2.writeFileSync(cacheFile, JSON.stringify([]));
     return null;
   }
@@ -3960,8 +3964,13 @@ async function fetchRealBettingLines(date, forceRefreshOdds = false, gamesList =
     const dataStreakPitcherKs = await fetchDataStreakPitcherStrikeoutProps(date, forceRefreshOdds);
     const eventsWithDataStreakProps = mergeDataStreakPitcherStrikeouts(eventsWithProps, dataStreakPitcherKs);
     try {
-      fs2.writeFileSync(cacheFile, JSON.stringify(eventsWithDataStreakProps, null, 2));
-      console.log(`Cuotas guardadas en cache: odds_cache_${date}.json`);
+      if (eventsWithDataStreakProps.length > 0 || !fs2.existsSync(cacheFile) || fs2.statSync(cacheFile).size < 10) {
+        fs2.writeFileSync(cacheFile, JSON.stringify(eventsWithDataStreakProps, null, 2));
+        console.log(`Cuotas guardadas en cache: odds_cache_${date}.json`);
+      } else {
+        console.log(`No se recibieron cuotas nuevas (posible fecha pasada). Conservando el cach\xE9 original: odds_cache_${date}.json`);
+        return JSON.parse(fs2.readFileSync(cacheFile, "utf-8"));
+      }
     } catch (e) {
       console.warn("No se pudo guardar el cache de cuotas.", e);
     }
@@ -6081,6 +6090,22 @@ app2.post("/api/harvest", async (req, res) => {
         gameDataParsed.bullpen.away.usageLast3Days = getUsage(fatigue.bullpen.away.ipLast3Days);
       }
       const existingGame = existingGamesForDate.find((g) => String(g.id) === String(gameId));
+      if (existingGame) {
+        if (!hasRealBettingLines2(gameDataParsed) && hasRealBettingLines2(existingGame)) {
+          console.log(`[Persistencia] Preservando odds (betting_lines) del juego ${gameId} desde la base de datos local (Modo Batch).`);
+          gameDataParsed.betting_lines = existingGame.betting_lines;
+          if (existingGame.pitchers?.home?.strikeoutProp && !gameDataParsed.pitchers?.home?.strikeoutProp) {
+            gameDataParsed.pitchers.home.strikeoutProp = existingGame.pitchers.home.strikeoutProp;
+            gameDataParsed.pitchers.home.strikeoutPropOverOdds = existingGame.pitchers.home.strikeoutPropOverOdds;
+            gameDataParsed.pitchers.home.strikeoutPropUnderOdds = existingGame.pitchers.home.strikeoutPropUnderOdds;
+          }
+          if (existingGame.pitchers?.away?.strikeoutProp && !gameDataParsed.pitchers?.away?.strikeoutProp) {
+            gameDataParsed.pitchers.away.strikeoutProp = existingGame.pitchers.away.strikeoutProp;
+            gameDataParsed.pitchers.away.strikeoutPropOverOdds = existingGame.pitchers.away.strikeoutPropOverOdds;
+            gameDataParsed.pitchers.away.strikeoutPropUnderOdds = existingGame.pitchers.away.strikeoutPropUnderOdds;
+          }
+        }
+      }
       const lineMovements = existingGame?.line_movements || [];
       const currentOdds = gameDataParsed.betting_lines;
       const newMovement = {
@@ -6412,6 +6437,22 @@ async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
   const currentDB = readGamesDB();
   const existingGamesForDate = currentDB[actualDate] || [];
   const existingGame = existingGamesForDate.find((g) => String(g.id) === String(gameId));
+  if (existingGame) {
+    if (!hasRealBettingLines2(gameDataParsed) && hasRealBettingLines2(existingGame)) {
+      console.log(`[Persistencia] Preservando odds (betting_lines) del juego ${gameId} desde la base de datos local (Modo Single).`);
+      gameDataParsed.betting_lines = existingGame.betting_lines;
+      if (existingGame.pitchers?.home?.strikeoutProp && !gameDataParsed.pitchers?.home?.strikeoutProp) {
+        gameDataParsed.pitchers.home.strikeoutProp = existingGame.pitchers.home.strikeoutProp;
+        gameDataParsed.pitchers.home.strikeoutPropOverOdds = existingGame.pitchers.home.strikeoutPropOverOdds;
+        gameDataParsed.pitchers.home.strikeoutPropUnderOdds = existingGame.pitchers.home.strikeoutPropUnderOdds;
+      }
+      if (existingGame.pitchers?.away?.strikeoutProp && !gameDataParsed.pitchers?.away?.strikeoutProp) {
+        gameDataParsed.pitchers.away.strikeoutProp = existingGame.pitchers.away.strikeoutProp;
+        gameDataParsed.pitchers.away.strikeoutPropOverOdds = existingGame.pitchers.away.strikeoutPropOverOdds;
+        gameDataParsed.pitchers.away.strikeoutPropUnderOdds = existingGame.pitchers.away.strikeoutPropUnderOdds;
+      }
+    }
+  }
   const lineMovements = existingGame?.line_movements || [];
   const currentOdds = gameDataParsed.betting_lines;
   const newMovement = {

@@ -77,7 +77,7 @@ const LiveFieldUI: React.FC<{ linescore: any, liveBoxscore: any, gameStatus?: st
   const pitcherName = currentPitcher?.name || linescore.defense?.pitcher?.fullName;
   const batterName = currentBatter?.name || linescore.offense?.batter?.fullName;
 
-  const isTopInning = linescore.isTopInning;
+  const isTopInning = linescore.inningHalf === "Top" || linescore.isTopInning === true;
   const batterTeam = isTopInning ? awayTeam : homeTeam;
   const pitcherTeam = isTopInning ? homeTeam : awayTeam;
 
@@ -763,7 +763,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
             {game.game_result && !["Scheduled", "Pre-Game", "Warmup"].includes(game.game_result.gameStatus) ? (
               <>
                 <div className="font-display font-bold text-lg text-slate-800 leading-none">
-                  {game.game_result.awayScore} - {game.game_result.homeScore}
+                  {game.linescore?.awayTotals?.runs ?? game.game_result.awayScore} - {game.linescore?.homeTotals?.runs ?? game.game_result.homeScore}
                 </div>
                 <div className={`text-[9px] font-mono font-bold uppercase px-2 py-1 rounded shadow-sm ${game.game_result.gameStatus.includes("Final") || game.game_result.gameStatus === "Game Over"
                     ? "bg-slate-800 text-slate-100"
@@ -829,7 +829,8 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
               status.includes('In Progress') ||
               status.includes('Challenge') ||
               status.includes('Delayed') ||
-              status === 'Live';
+              status === 'Live' ||
+              (status.includes('Postponed') && !!game.linescore?.currentInning);
             return isActuallyLive && game.linescore ? (
               <div className="mb-4">
                 <LiveFieldUI
@@ -1723,7 +1724,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, o
                         !["Scheduled", "Pre-Game", "Warmup"].includes(game.game_result.gameStatus) && 
                         !game.game_result.gameStatus.includes("Final") && 
                         game.game_result.gameStatus !== "Game Over" && 
-                        game.game_result.gameStatus !== "Postponed";
+                        (game.game_result.gameStatus !== "Postponed" || !!game.linescore?.currentInning);
                       
                       const allPlays = isGameInProgress && game.playByPlay.allPlays ? [...game.playByPlay.allPlays].reverse() : game.playByPlay.allPlays;
 
