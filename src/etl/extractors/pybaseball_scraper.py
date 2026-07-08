@@ -118,6 +118,56 @@ def get_pitcher_arsenal(year, pitcher_ids_str):
     except Exception as e:
         return {"success": False, "error": str(e), "trace": traceback.format_exc()}
 
+def get_pitcher_advanced_metrics(start_date, end_date, pitcher_ids_str=None):
+    """Obtiene métricas avanzadas (Chase Rate, Spin Rate, CSW%) para lanzadores específicos."""
+    try:
+        data = statcast(start_dt=start_date, end_dt=end_date)
+        if data.empty:
+            return {"success": False, "error": "No data found for given dates."}
+        
+        target_ids = None
+        if pitcher_ids_str:
+            target_ids = set(float(pid.strip()) for pid in pitcher_ids_str.split(",") if pid.strip())
+            df = data[data['pitcher'].isin(target_ids)].copy()
+        else:
+            df = data.copy()
+
+        # O-Swing% (Chase Rate): Swings on pitches out of the zone
+        # zone: 1-9 is in the strike zone. 11-14 is out of the zone.
+        df['out_of_zone'] = df['zone'].isin([11, 12, 13, 14])
+        # definition of swing
+        swings = ['swinging_strike', 'swinging_strike_blocked', 'foul', 'hit_into_play', 'foul_tip', 'foul_bunt', 'missed_bunt']
+        df['is_swing'] = df['description'].isin(swings)
+        df['chase_opportunity'] = df['out_of_zone']
+        df['chase_swing'] = df['out_of_zone'] & df['is_swing']
+        
+        grouped = df.groupby('pitcher').agg(
+            avg_spin_rate=('release_spin_rate', 'mean'),
+            chase_swings=('chase_swing', 'sum'),
+            chase_opps=('chase_opportunity', 'sum')
+        ).reset_index()
+        
+        grouped['chase_pct'] = (grouped['chase_swings'] / grouped['chase_opps'].replace(0, 1)) * 100
+        grouped['avg_spin_rate'] = grouped['avg_spin_rate'].round(1)
+        grouped['chase_pct'] = grouped['chase_pct'].round(1)
+        
+        # We don't have Stuff+ natively in Statcast event data, so we omit it or return None.
+        
+        result = {}
+        for _, row in grouped.iterrows():
+            result[str(int(row['pitcher']))] = {
+                "spinRate": row['avg_spin_rate'] if pd.notnull(row['avg_spin_rate']) else None,
+                "chasePct": row['chase_pct'] if pd.notnull(row['chase_pct']) else None,
+                "stuffPlus": None
+            }
+
+        return {"success": True, "data": result}
+    except Exception as e:
+        return {"success": False, "error": str(e), "trace": traceback.format_exc()}
+
+    except Exception as e:
+        return {"success": False, "error": str(e), "trace": traceback.format_exc()}
+
 def get_batter_splits():
     # En producción esto usaría statcast() agrupado por batter y pitch_hand o fan_graphs()
     # Mocking data for architecture validation
@@ -152,7 +202,7 @@ def get_bvp(batter_id, pitcher_id):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--action", required=True, choices=["recent_statcast", "bvp", "batter_splits", "bullpen", "pitcher_arsenal"])
+    parser.add_argument("--action", required=True, choices=["recent_statcast", "bvp", "batter_splits", "bullpen", "pitcher_arsenal", "pitcher_advanced_metrics"])
     parser.add_argument("--start", help="Start date YYYY-MM-DD")
     parser.add_argument("--end", help="End date YYYY-MM-DD")
     parser.add_argument("--year", help="Year for stats")
@@ -187,5 +237,11 @@ if __name__ == "__main__":
             result = {"success": False, "error": "Missing --year or --pitcher_ids"}
         else:
             result = get_pitcher_arsenal(args.year, args.pitcher_ids)
+            
+    elif args.action == "pitcher_advanced_metrics":
+        if not args.start or not args.end:
+            result = {"success": False, "error": "Missing --start or --end"}
+        else:
+            result = get_pitcher_advanced_metrics(args.start, args.end, args.pitcher_ids)
             
     print(json.dumps(result))

@@ -20,6 +20,11 @@ export const generateMLBCsvString = (games: MLBGame[]): string => {
     "home_pitcher_csw_pct", "away_pitcher_csw_pct",
     "home_pitcher_projected_pitches", "away_pitcher_projected_pitches",
     "home_pitcher_bf_per_start", "away_pitcher_bf_per_start",
+    "home_pitcher_spin_rate", "away_pitcher_spin_rate",
+    "home_pitcher_stuff_plus", "away_pitcher_stuff_plus",
+    "home_pitcher_o_swing_pct", "away_pitcher_o_swing_pct",
+    "home_pitcher_k_pct_vs_lhb", "away_pitcher_k_pct_vs_lhb",
+    "home_pitcher_k_pct_vs_rhb", "away_pitcher_k_pct_vs_rhb",
     // Starter Pitchers Last 7
     "home_pitcher_last7_era", "away_pitcher_last7_era",
     "home_pitcher_last7_ip", "away_pitcher_last7_ip",
@@ -50,7 +55,9 @@ export const generateMLBCsvString = (games: MLBGame[]): string => {
     // Betting
     "moneyline_home_open", "moneyline_away_open",
     "moneyline_home_current", "moneyline_away_current",
-    "total_runs_line"
+    "total_runs_line",
+    // Park Factors
+    "park_factor_k", "park_factor_runs", "park_factor_hr"
   ];
 
   // Fixing a typo in the header array specifically
@@ -106,6 +113,11 @@ export const generateMLBCsvString = (games: MLBGame[]): string => {
       safeVal(advHome?.cswPct), safeVal(advAway?.cswPct),
       safeVal(advHome?.projectedPitchCount), safeVal(advAway?.projectedPitchCount),
       safeVal(advHome?.battersFacedPerStart), safeVal(advAway?.battersFacedPerStart),
+      safeVal(advHome?.pitcher_spin_rate), safeVal(advAway?.pitcher_spin_rate),
+      safeVal(advHome?.pitcher_stuff_plus), safeVal(advAway?.pitcher_stuff_plus),
+      safeVal(advHome?.pitcher_o_swing_pct), safeVal(advAway?.pitcher_o_swing_pct),
+      safeVal(advHome?.pitcher_k_pct_vs_lhb), safeVal(advAway?.pitcher_k_pct_vs_lhb),
+      safeVal(advHome?.pitcher_k_pct_vs_rhb), safeVal(advAway?.pitcher_k_pct_vs_rhb),
 
       // Starter Pitchers Last 7
       safeVal(last7Home?.era), safeVal(last7Away?.era),
@@ -145,7 +157,10 @@ export const generateMLBCsvString = (games: MLBGame[]): string => {
       // Betting
       safeVal(game.betting_lines?.openingMoneylineHome), safeVal(game.betting_lines?.openingMoneylineAway),
       safeVal(game.betting_lines?.currentMoneylineHome), safeVal(game.betting_lines?.currentMoneylineAway),
-      safeVal(game.betting_lines?.totalRuns)
+      safeVal(game.betting_lines?.totalRuns),
+
+      // Park Factors
+      safeVal(game.park_factors?.index_so), safeVal(game.park_factors?.index_runs), safeVal(game.park_factors?.index_hr)
     ];
 
     return row.map(v => typeof v === 'string' && v.includes(',') ? `"${v}"` : v).join(",");

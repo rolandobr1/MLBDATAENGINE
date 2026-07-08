@@ -393,6 +393,85 @@ export default function App() {
     }
   };
 
+  const handleBatchHarvest = async (startDate: string, endDate: string, refreshOdds: boolean = true) => {
+    userHasSelectedDate.current = true;
+    setIsLoading(true);
+    abortControllerRef.current = new AbortController();
+
+    try {
+      // 1. Calculate dates
+      const datesToProcess: string[] = [];
+      const start = new Date(startDate + "T12:00:00Z");
+      const end = new Date(endDate + "T12:00:00Z");
+      
+      // Ensure start is before or equal to end
+      const actualStart = start <= end ? start : end;
+      const actualEnd = start <= end ? end : start;
+
+      let current = new Date(actualStart);
+      while (current <= actualEnd) {
+        datesToProcess.push(current.toISOString().split("T")[0]);
+        current.setUTCDate(current.getUTCDate() + 1);
+      }
+
+      // 2. Identify missing dates
+      const currentExtracted = await fetchExtractedDates(false);
+      const missingDates = datesToProcess.filter(d => !currentExtracted.includes(d));
+
+      // 3. Extract missing dates sequentially
+      for (let i = 0; i < missingDates.length; i++) {
+        const date = missingDates[i];
+        
+        if (abortControllerRef.current.signal.aborted) {
+          throw new DOMException('Aborted', 'AbortError');
+        }
+
+        setHarvestProgress({ 
+          pct: Math.round((i / missingDates.length) * 100), 
+          step: `Extrayendo ${date} (${i + 1}/${missingDates.length})...` 
+        });
+
+        const res = await fetch("/api/harvest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ date, refreshOdds }),
+          signal: abortControllerRef.current.signal,
+        });
+
+        if (!res.ok || !res.body) {
+          throw new Error(`Error en fecha ${date}: ` + await res.text());
+        }
+
+        const reader = res.body.getReader();
+        while (true) {
+          const { done } = await reader.read();
+          if (done) break;
+        }
+      }
+
+      setHarvestProgress({ pct: 100, step: "Generando CSV unificado...", phase: "done" });
+      
+      // 4. Download unified CSV
+      const datesQuery = datesToProcess.join(",");
+      window.location.href = `/api/batters-dataset/csv?dates=${datesQuery}`;
+      
+      // Update local state
+      await fetchLocalDB(startDate);
+      await fetchErrorsDB();
+      await fetchExtractedDates();
+
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log('Batch Harvest abortado por el usuario.');
+      } else {
+        alert("Error en la recolección por lote: " + (err.message || String(err)));
+      }
+    } finally {
+      setIsLoading(false);
+      setHarvestProgress({ pct: 0, step: "" });
+    }
+  };
+
   const handleClearErrors = async () => {
     try {
       const res = await fetch("/api/errors/clear", { method: "POST" });
@@ -511,6 +590,7 @@ export default function App() {
               <div className="p-6">
                 <HarvesterPanel
                   onHarvest={handleHarvest}
+                  onBatchHarvest={handleBatchHarvest}
                   isLoading={isLoading}
                   selectedDate={selectedDate}
                   setSelectedDate={handleSetSelectedDate}

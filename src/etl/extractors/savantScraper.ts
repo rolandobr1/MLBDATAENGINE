@@ -11,6 +11,8 @@ export interface PitcherSavantData {
   curvePct: number;
   changeupPct: number;
   splitterPct: number;
+  chasePct: number | null;
+  spinRate: number | null;
 }
 
 export interface BatterSavantData {
@@ -122,6 +124,8 @@ export class SavantCache {
         curvePct: 0,
         changeupPct: 0,
         splitterPct: 0,
+        chasePct: null,
+        spinRate: null,
       });
     }
 
@@ -139,10 +143,13 @@ export class SavantCache {
         curvePct: 0,
         changeupPct: 0,
         splitterPct: 0,
+        chasePct: null,
+        spinRate: null,
       };
 
       existing.hardHitPct = this.parseNumber(row.ev95percent);
       existing.barrelPct = this.parseNumber(row.brl_percent);
+      existing.chasePct = this.parseNumber(row.oz_swing_percent);
       
       this.pitcherStats.set(playerId, existing);
     }

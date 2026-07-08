@@ -41,6 +41,51 @@ async function withCache(action: string, extraKey: string, fn: () => Promise<any
   return result;
 }
 
+function getPerPitcherCacheFilename(action: string, dateStr: string, pitcherId: string) {
+  return path.join(CACHE_DIR, `pybaseball_${action}_${dateStr}_${pitcherId}.json`);
+}
+
+async function withPerPitcherCache<T>(
+  action: string,
+  dateStr: string,
+  pitcherIds: string[],
+  fetchMissing: (missingIds: string[]) => Promise<Record<string, T>>
+): Promise<Record<string, T>> {
+  const result: Record<string, T> = {};
+  const missingIds: string[] = [];
+
+  for (const id of pitcherIds) {
+    const cacheFile = getPerPitcherCacheFilename(action, dateStr, id);
+    if (fs.existsSync(cacheFile)) {
+      try {
+        result[id] = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      } catch (e) {
+        missingIds.push(id);
+      }
+    } else {
+      missingIds.push(id);
+    }
+  }
+
+  if (missingIds.length > 0) {
+    console.log(`[PyBaseball Cache] Fetching fresh data for ${action} - missing ${missingIds.length} pitchers`);
+    const fetchedData = await fetchMissing(missingIds);
+    for (const id of missingIds) {
+      if (fetchedData[id] !== undefined) {
+        result[id] = fetchedData[id];
+        const cacheFile = getPerPitcherCacheFilename(action, dateStr, id);
+        try {
+          fs.writeFileSync(cacheFile, JSON.stringify(fetchedData[id]));
+        } catch (e) {
+          console.error(`[PyBaseball Cache] Failed to write per-pitcher cache for ${action} ID: ${id}`);
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
 export const getRecentStatcast = (startDate: string, endDate: string): Promise<any> => {
   return withCache('recent_statcast', `${startDate}_${endDate}`, () => {
     return new Promise((resolve, reject) => {
@@ -134,12 +179,11 @@ export const getPitcherArsenals = (pitcherIds: string[], year: string): Promise<
   changeupPct: number;
   splitterPct: number;
 }>> => {
-  const idsKey = pitcherIds.sort().join('_');
-  return withCache('pitcher_arsenal', `${year}_${idsKey}`, () => {
-    return new Promise((resolve, reject) => {
-      const idsCsv = pitcherIds.join(',');
+  return withPerPitcherCache('pitcher_arsenal', year, pitcherIds, (missingIds) => {
+    return new Promise((resolve) => {
+      const idsCsv = missingIds.join(',');
       const command = `"${PYTHON_BIN}" "${PYTHON_SCRIPT}" --action pitcher_arsenal --year "${year}" --pitcher_ids "${idsCsv}"`;
-      exec(command, { maxBuffer: 1024 * 1024 * 10, timeout: 120000 }, (error, stdout, stderr) => {
+      exec(command, { maxBuffer: 1024 * 1024 * 10, timeout: 120000 }, (error, stdout) => {
         if (error) {
           console.error(`[PyBaseball Arsenal] exec error: ${error.message}`);
           return resolve({});
@@ -157,6 +201,43 @@ export const getPitcherArsenals = (pitcherIds: string[], year: string): Promise<
           }
         } catch (e) {
           console.error('[PyBaseball Arsenal] Error parseando JSON:', stdout.slice(0, 200));
+          resolve({});
+        }
+      });
+    });
+  });
+};
+
+/**
+ * Obtiene métricas avanzadas por pitcher desde Python (Chase Rate, Spin Rate).
+ */
+export const getPitcherAdvancedMetrics = (pitcherIds: string[], startDate: string, endDate: string): Promise<Record<string, {
+  spinRate: number | null;
+  chasePct: number | null;
+  stuffPlus: number | null;
+}>> => {
+  return withPerPitcherCache('pitcher_advanced_metrics', `${startDate}_${endDate}`, pitcherIds, (missingIds) => {
+    return new Promise((resolve) => {
+      const idsCsv = missingIds.join(',');
+      const command = `"${PYTHON_BIN}" "${PYTHON_SCRIPT}" --action pitcher_advanced_metrics --start "${startDate}" --end "${endDate}" --pitcher_ids "${idsCsv}"`;
+      exec(command, { maxBuffer: 1024 * 1024 * 10, timeout: 120000 }, (error, stdout) => {
+        if (error) {
+          console.error(`[PyBaseball Advanced] exec error: ${error.message}`);
+          return resolve({});
+        }
+        try {
+          const jsonStart = stdout.indexOf('{');
+          const jsonStr = jsonStart >= 0 ? stdout.substring(jsonStart) : stdout;
+          const parsed = JSON.parse(jsonStr);
+          if (parsed.success && parsed.data) {
+            console.log(`[PyBaseball Advanced] OK — ${Object.keys(parsed.data).length} pitcher(s) con métricas avanzadas`);
+            resolve(parsed.data);
+          } else {
+            console.warn(`[PyBaseball Advanced] Sin datos: ${parsed.error || 'desconocido'}`);
+            resolve({});
+          }
+        } catch (e) {
+          console.error('[PyBaseball Advanced] Error parseando JSON:', stdout.slice(0, 200));
           resolve({});
         }
       });

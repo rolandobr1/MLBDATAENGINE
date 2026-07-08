@@ -34,6 +34,41 @@ async function withCache(action, extraKey, fn) {
   }
   return result;
 }
+function getPerPitcherCacheFilename(action, dateStr, pitcherId) {
+  return path.join(CACHE_DIR, `pybaseball_${action}_${dateStr}_${pitcherId}.json`);
+}
+async function withPerPitcherCache(action, dateStr, pitcherIds, fetchMissing) {
+  const result = {};
+  const missingIds = [];
+  for (const id of pitcherIds) {
+    const cacheFile = getPerPitcherCacheFilename(action, dateStr, id);
+    if (fs.existsSync(cacheFile)) {
+      try {
+        result[id] = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+      } catch (e) {
+        missingIds.push(id);
+      }
+    } else {
+      missingIds.push(id);
+    }
+  }
+  if (missingIds.length > 0) {
+    console.log(`[PyBaseball Cache] Fetching fresh data for ${action} - missing ${missingIds.length} pitchers`);
+    const fetchedData = await fetchMissing(missingIds);
+    for (const id of missingIds) {
+      if (fetchedData[id] !== void 0) {
+        result[id] = fetchedData[id];
+        const cacheFile = getPerPitcherCacheFilename(action, dateStr, id);
+        try {
+          fs.writeFileSync(cacheFile, JSON.stringify(fetchedData[id]));
+        } catch (e) {
+          console.error(`[PyBaseball Cache] Failed to write per-pitcher cache for ${action} ID: ${id}`);
+        }
+      }
+    }
+  }
+  return result;
+}
 var getRecentStatcast = (startDate, endDate) => {
   return withCache("recent_statcast", `${startDate}_${endDate}`, () => {
     return new Promise((resolve, reject) => {
@@ -57,12 +92,11 @@ var getRecentStatcast = (startDate, endDate) => {
   });
 };
 var getPitcherArsenals = (pitcherIds, year) => {
-  const idsKey = pitcherIds.sort().join("_");
-  return withCache("pitcher_arsenal", `${year}_${idsKey}`, () => {
-    return new Promise((resolve, reject) => {
-      const idsCsv = pitcherIds.join(",");
+  return withPerPitcherCache("pitcher_arsenal", year, pitcherIds, (missingIds) => {
+    return new Promise((resolve) => {
+      const idsCsv = missingIds.join(",");
       const command = `"${PYTHON_BIN}" "${PYTHON_SCRIPT}" --action pitcher_arsenal --year "${year}" --pitcher_ids "${idsCsv}"`;
-      exec(command, { maxBuffer: 1024 * 1024 * 10, timeout: 12e4 }, (error, stdout, stderr) => {
+      exec(command, { maxBuffer: 1024 * 1024 * 10, timeout: 12e4 }, (error, stdout) => {
         if (error) {
           console.error(`[PyBaseball Arsenal] exec error: ${error.message}`);
           return resolve({});
@@ -86,11 +120,40 @@ var getPitcherArsenals = (pitcherIds, year) => {
     });
   });
 };
+var getPitcherAdvancedMetrics = (pitcherIds, startDate, endDate) => {
+  return withPerPitcherCache("pitcher_advanced_metrics", `${startDate}_${endDate}`, pitcherIds, (missingIds) => {
+    return new Promise((resolve) => {
+      const idsCsv = missingIds.join(",");
+      const command = `"${PYTHON_BIN}" "${PYTHON_SCRIPT}" --action pitcher_advanced_metrics --start "${startDate}" --end "${endDate}" --pitcher_ids "${idsCsv}"`;
+      exec(command, { maxBuffer: 1024 * 1024 * 10, timeout: 12e4 }, (error, stdout) => {
+        if (error) {
+          console.error(`[PyBaseball Advanced] exec error: ${error.message}`);
+          return resolve({});
+        }
+        try {
+          const jsonStart = stdout.indexOf("{");
+          const jsonStr = jsonStart >= 0 ? stdout.substring(jsonStart) : stdout;
+          const parsed = JSON.parse(jsonStr);
+          if (parsed.success && parsed.data) {
+            console.log(`[PyBaseball Advanced] OK \u2014 ${Object.keys(parsed.data).length} pitcher(s) con m\xE9tricas avanzadas`);
+            resolve(parsed.data);
+          } else {
+            console.warn(`[PyBaseball Advanced] Sin datos: ${parsed.error || "desconocido"}`);
+            resolve({});
+          }
+        } catch (e) {
+          console.error("[PyBaseball Advanced] Error parseando JSON:", stdout.slice(0, 200));
+          resolve({});
+        }
+      });
+    });
+  });
+};
 
 // server.ts
 import dotenv from "dotenv";
-import fs2 from "fs";
-import path2 from "path";
+import fs3 from "fs";
+import path3 from "path";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 
@@ -986,7 +1049,21 @@ function generateMLDatasetCSV(games) {
     "away_lineup_pitch_count_risk_score",
     "away_lineup_high_hardhit_batters_count",
     "home_pitcher_recent_velocity",
-    "away_pitcher_recent_velocity"
+    "away_pitcher_recent_velocity",
+    // New Advanced Metrics & Park Factors
+    "home_pitcher_spin_rate",
+    "away_pitcher_spin_rate",
+    "home_pitcher_stuff_plus",
+    "away_pitcher_stuff_plus",
+    "home_pitcher_o_swing_pct",
+    "away_pitcher_o_swing_pct",
+    "home_pitcher_k_pct_vs_lhb",
+    "away_pitcher_k_pct_vs_lhb",
+    "home_pitcher_k_pct_vs_rhb",
+    "away_pitcher_k_pct_vs_rhb",
+    "park_factor_k",
+    "park_factor_runs",
+    "park_factor_hr"
   ];
   const escapeStr = (val) => {
     if (val === void 0 || val === null || val === "") return "";
@@ -1324,7 +1401,21 @@ function generateMLDatasetCSV(games) {
       awayLineupMetrics.pitchRisk,
       awayLineupMetrics.hardhit,
       g.pitchers?.home_starter?.pitcher_recent_velocity ?? g.pitchers?.home?.pitcher_recent_velocity ?? "",
-      g.pitchers?.away_starter?.pitcher_recent_velocity ?? g.pitchers?.away?.pitcher_recent_velocity ?? ""
+      g.pitchers?.away_starter?.pitcher_recent_velocity ?? g.pitchers?.away?.pitcher_recent_velocity ?? "",
+      // New Advanced Metrics & Park Factors
+      g.advanced_pitching?.home?.pitcher_spin_rate ?? "",
+      g.advanced_pitching?.away?.pitcher_spin_rate ?? "",
+      g.advanced_pitching?.home?.pitcher_stuff_plus ?? "",
+      g.advanced_pitching?.away?.pitcher_stuff_plus ?? "",
+      g.advanced_pitching?.home?.pitcher_o_swing_pct ?? "",
+      g.advanced_pitching?.away?.pitcher_o_swing_pct ?? "",
+      g.advanced_pitching?.home?.pitcher_k_pct_vs_lhb ?? "",
+      g.advanced_pitching?.away?.pitcher_k_pct_vs_lhb ?? "",
+      g.advanced_pitching?.home?.pitcher_k_pct_vs_rhb ?? "",
+      g.advanced_pitching?.away?.pitcher_k_pct_vs_rhb ?? "",
+      g.park_factors?.index_so ?? 100,
+      g.park_factors?.index_runs ?? 100,
+      g.park_factors?.index_hr ?? 100
     ];
   });
   return [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
@@ -1763,7 +1854,21 @@ function generateBattersCSV(games) {
     "away_lineup_pitch_count_risk_score",
     "away_lineup_high_hardhit_batters_count",
     "home_pitcher_recent_velocity",
-    "away_pitcher_recent_velocity"
+    "away_pitcher_recent_velocity",
+    // New Advanced Metrics & Park Factors
+    "home_pitcher_spin_rate",
+    "away_pitcher_spin_rate",
+    "home_pitcher_stuff_plus",
+    "away_pitcher_stuff_plus",
+    "home_pitcher_o_swing_pct",
+    "away_pitcher_o_swing_pct",
+    "home_pitcher_k_pct_vs_lhb",
+    "away_pitcher_k_pct_vs_lhb",
+    "home_pitcher_k_pct_vs_rhb",
+    "away_pitcher_k_pct_vs_rhb",
+    "park_factor_k",
+    "park_factor_runs",
+    "park_factor_hr"
   ];
   const escapeStr = (val) => {
     if (val === void 0 || val === null || val === "") return "";
@@ -2119,7 +2224,21 @@ function generateBattersCSV(games) {
       game.advanced_offense?.away?.lineup_pitch_count_risk_score ?? "",
       game.advanced_offense?.away?.lineup_high_hardhit_batters_count ?? "",
       game.pitchers?.home_starter?.pitcher_recent_velocity ?? game.pitchers?.home?.pitcher_recent_velocity ?? "",
-      game.pitchers?.away_starter?.pitcher_recent_velocity ?? game.pitchers?.away?.pitcher_recent_velocity ?? ""
+      game.pitchers?.away_starter?.pitcher_recent_velocity ?? game.pitchers?.away?.pitcher_recent_velocity ?? "",
+      // New Advanced Metrics & Park Factors
+      game.advanced_pitching?.home?.pitcher_spin_rate ?? "",
+      game.advanced_pitching?.away?.pitcher_spin_rate ?? "",
+      game.advanced_pitching?.home?.pitcher_stuff_plus ?? "",
+      game.advanced_pitching?.away?.pitcher_stuff_plus ?? "",
+      game.advanced_pitching?.home?.pitcher_o_swing_pct ?? "",
+      game.advanced_pitching?.away?.pitcher_o_swing_pct ?? "",
+      game.advanced_pitching?.home?.pitcher_k_pct_vs_lhb ?? "",
+      game.advanced_pitching?.away?.pitcher_k_pct_vs_lhb ?? "",
+      game.advanced_pitching?.home?.pitcher_k_pct_vs_rhb ?? "",
+      game.advanced_pitching?.away?.pitcher_k_pct_vs_rhb ?? "",
+      game.park_factors?.index_so ?? 100,
+      game.park_factors?.index_runs ?? 100,
+      game.park_factors?.index_hr ?? 100
     ];
     const processTeamLineup = (lineup, teamName, isHomeTeam) => {
       if (!lineup || !Array.isArray(lineup)) return;
@@ -2382,7 +2501,9 @@ var SavantCache = class {
         sliderPct: 0,
         curvePct: 0,
         changeupPct: 0,
-        splitterPct: 0
+        splitterPct: 0,
+        chasePct: null,
+        spinRate: null
       });
     }
     for (const row of statcastData) {
@@ -2397,10 +2518,13 @@ var SavantCache = class {
         sliderPct: 0,
         curvePct: 0,
         changeupPct: 0,
-        splitterPct: 0
+        splitterPct: 0,
+        chasePct: null,
+        spinRate: null
       };
       existing.hardHitPct = this.parseNumber(row.ev95percent);
       existing.barrelPct = this.parseNumber(row.brl_percent);
+      existing.chasePct = this.parseNumber(row.oz_swing_percent);
       this.pitcherStats.set(playerId, existing);
     }
     for (const row of arsenalData) {
@@ -2510,15 +2634,98 @@ var SavantCache = class {
 };
 var savantCache = new SavantCache();
 
+// src/etl/extractors/parkFactorsScraper.ts
+import fs2 from "fs";
+import path2 from "path";
+var ParkFactorsScraper = class {
+  constructor() {
+    this.parkFactorsData = /* @__PURE__ */ new Map();
+    this.isLoaded = false;
+    this.cacheDir = path2.join(process.cwd(), "cache");
+    this.cacheFile = path2.join(this.cacheDir, "park_factors.json");
+    if (!fs2.existsSync(this.cacheDir)) {
+      fs2.mkdirSync(this.cacheDir, { recursive: true });
+    }
+  }
+  async load() {
+    if (this.isLoaded) return;
+    try {
+      if (fs2.existsSync(this.cacheFile)) {
+        const stats = fs2.statSync(this.cacheFile);
+        const daysOld = (Date.now() - stats.mtimeMs) / (1e3 * 60 * 60 * 24);
+        if (daysOld < 7) {
+          const rawData = fs2.readFileSync(this.cacheFile, "utf8");
+          const parsedData = JSON.parse(rawData);
+          this.populateMap(parsedData);
+          console.log(`[ParkFactors] Cargado desde cach\xE9 (${this.parkFactorsData.size} estadios).`);
+          this.isLoaded = true;
+          return;
+        }
+      }
+      console.log(`[ParkFactors] Descargando Park Factors actualizados desde Baseball Savant...`);
+      const res = await fetch(`https://baseballsavant.mlb.com/leaderboard/statcast-park-factors`);
+      if (!res.ok) {
+        throw new Error(`Error fetching park factors: ${res.statusText}`);
+      }
+      const text = await res.text();
+      const match = text.match(/var data = (\[.*?\]);/);
+      if (match) {
+        const data = JSON.parse(match[1]);
+        fs2.writeFileSync(this.cacheFile, JSON.stringify(data, null, 2));
+        this.populateMap(data);
+        this.isLoaded = true;
+        console.log(`[ParkFactors] Datos descargados y guardados en cach\xE9 (${this.parkFactorsData.size} estadios).`);
+      } else {
+        throw new Error("No se pudo encontrar el JSON en el HTML de Savant.");
+      }
+    } catch (error) {
+      console.error("[ParkFactors] Error cargando Park Factors:", error);
+      this.isLoaded = true;
+    }
+  }
+  populateMap(data) {
+    this.parkFactorsData.clear();
+    for (const item of data) {
+      if (item.key_bat_side === "All" && String(item.key_is_year_rolling) === "1") {
+        const venue = String(item.venue_name).toLowerCase().trim();
+        this.parkFactorsData.set(venue, {
+          venue_id: item.venue_id,
+          venue_name: item.venue_name,
+          index_runs: parseInt(item.index_runs, 10) || 100,
+          index_so: parseInt(item.index_so, 10) || 100,
+          index_hr: parseInt(item.index_hr, 10) || 100
+        });
+      }
+    }
+  }
+  getParkFactors(venueName) {
+    if (!venueName) return null;
+    let name = venueName.toLowerCase().trim();
+    if (name.includes("camden yards")) name = "oriole park at camden yards";
+    if (name.includes("loandepot")) name = "loandepot park";
+    if (name.includes("guaranteed rate")) name = "guaranteed rate field";
+    if (name.includes("american family")) name = "american family field";
+    const data = this.parkFactorsData.get(name);
+    if (data) return data;
+    for (const [key, val] of this.parkFactorsData.entries()) {
+      if (key.includes(name) || name.includes(key)) {
+        return val;
+      }
+    }
+    return null;
+  }
+};
+var parkFactorsScraper = new ParkFactorsScraper();
+
 // server.ts
 var envPaths = [
-  path2.join(process.cwd(), ".env.local"),
-  path2.join(process.cwd(), "env.local"),
-  path2.join("/etc", "secrets", ".env.local"),
-  path2.join("/etc", "secrets", "env.local")
+  path3.join(process.cwd(), ".env.local"),
+  path3.join(process.cwd(), "env.local"),
+  path3.join("/etc", "secrets", ".env.local"),
+  path3.join("/etc", "secrets", "env.local")
 ];
 for (const envPath of envPaths) {
-  if (fs2.existsSync(envPath)) {
+  if (fs3.existsSync(envPath)) {
     dotenv.config({ path: envPath });
     console.log(`[ENV] Cargado desde: ${envPath}`);
   }
@@ -2532,27 +2739,27 @@ for (const key in process.env) {
 var app2 = express();
 app2.use(express.json());
 app2.get("/favicon.ico", (req, res) => {
-  res.sendFile(path2.join(process.cwd(), "src", "favicon.svg"));
+  res.sendFile(path3.join(process.cwd(), "src", "favicon.svg"));
 });
 var PORT = Number(process.env.PORT || 3001);
-var DB_PATH = path2.join(process.cwd(), "mlb_database.json");
-var ERRORS_PATH = path2.join(process.cwd(), "mlb_errors.json");
+var DB_PATH = path3.join(process.cwd(), "mlb_database.json");
+var ERRORS_PATH = path3.join(process.cwd(), "mlb_errors.json");
 var gamesDbCache = null;
 var gamesDbCacheMtime = 0;
 var oddsApiBackfillsInFlight = /* @__PURE__ */ new Set();
-if (!fs2.existsSync(DB_PATH)) {
-  fs2.writeFileSync(DB_PATH, JSON.stringify({}, null, 2));
+if (!fs3.existsSync(DB_PATH)) {
+  fs3.writeFileSync(DB_PATH, JSON.stringify({}, null, 2));
 }
-if (!fs2.existsSync(ERRORS_PATH)) {
-  fs2.writeFileSync(ERRORS_PATH, JSON.stringify([], null, 2));
+if (!fs3.existsSync(ERRORS_PATH)) {
+  fs3.writeFileSync(ERRORS_PATH, JSON.stringify([], null, 2));
 }
 function readGamesDB() {
   try {
-    const stat = fs2.statSync(DB_PATH);
+    const stat = fs3.statSync(DB_PATH);
     if (gamesDbCache && stat.mtimeMs === gamesDbCacheMtime) {
       return gamesDbCache;
     }
-    const raw = fs2.readFileSync(DB_PATH, "utf-8");
+    const raw = fs3.readFileSync(DB_PATH, "utf-8");
     gamesDbCache = JSON.parse(raw);
     gamesDbCacheMtime = stat.mtimeMs;
     return gamesDbCache || {};
@@ -2563,8 +2770,8 @@ function readGamesDB() {
 }
 function writeGamesDB(data) {
   try {
-    fs2.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-    const stat = fs2.statSync(DB_PATH);
+    fs3.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+    const stat = fs3.statSync(DB_PATH);
     gamesDbCache = data;
     gamesDbCacheMtime = stat.mtimeMs;
   } catch (err) {
@@ -2617,8 +2824,8 @@ function maybeBackfillTheOddsApiForDate(date, dateGames) {
   if (!date || !Array.isArray(dateGames) || dateGames.length === 0) return;
   if (!process.env.ODDS_API_KEY) return;
   if (oddsApiBackfillsInFlight.has(date)) return;
-  const cacheFile = path2.join(process.cwd(), `odds_cache_${date}.json`);
-  const hasOddsCache = fs2.existsSync(cacheFile);
+  const cacheFile = path3.join(process.cwd(), `odds_cache_${date}.json`);
+  const hasOddsCache = fs3.existsSync(cacheFile);
   const apiPropsCount = getTheOddsApiPropsCountForGames(dateGames);
   if (hasOddsCache && apiPropsCount > 0) return;
   oddsApiBackfillsInFlight.add(date);
@@ -2680,7 +2887,7 @@ async function syncFirestoreToLocalDB(reason = "manual") {
 }
 function readErrorsDB() {
   try {
-    const raw = fs2.readFileSync(ERRORS_PATH, "utf-8");
+    const raw = fs3.readFileSync(ERRORS_PATH, "utf-8");
     return JSON.parse(raw);
   } catch (err) {
     console.error("Error reading errors database:", err);
@@ -2689,7 +2896,7 @@ function readErrorsDB() {
 }
 function writeErrorsDB(errors) {
   try {
-    fs2.writeFileSync(ERRORS_PATH, JSON.stringify(errors, null, 2));
+    fs3.writeFileSync(ERRORS_PATH, JSON.stringify(errors, null, 2));
   } catch (err) {
     console.error("Error writing errors database:", err);
   }
@@ -3181,9 +3388,17 @@ app2.get("/api/ml-dataset", (req, res) => {
 });
 app2.get("/api/ml-dataset/csv", (req, res) => {
   try {
+    const { dates } = req.query;
     const db2 = readGamesDB();
     const allGames = [];
+    let filterDates = [];
+    if (typeof dates === "string" && dates.trim() !== "") {
+      filterDates = dates.split(",").map((d) => d.trim());
+    }
     for (const date of Object.keys(db2)) {
+      if (filterDates.length > 0 && !filterDates.includes(date)) {
+        continue;
+      }
       const games = db2[date] || [];
       allGames.push(...games);
     }
@@ -3242,25 +3457,28 @@ app2.get("/api/batter-total-bases/csv", async (req, res) => {
 });
 app2.get("/api/batters-dataset/csv", async (req, res) => {
   try {
-    const { date } = req.query;
+    const { dates } = req.query;
     const db2 = readGamesDB();
     const allGames = [];
-    if (date && typeof date === "string") {
-      allGames.push(...db2[date] || []);
-    } else {
-      for (const dateKey of Object.keys(db2)) {
-        const games = db2[dateKey] || [];
-        allGames.push(...games);
+    let filterDates = [];
+    if (typeof dates === "string" && dates.trim() !== "") {
+      filterDates = dates.split(",").map((d) => d.trim());
+    }
+    for (const dateKey of Object.keys(db2)) {
+      if (filterDates.length > 0 && !filterDates.includes(dateKey)) {
+        continue;
       }
+      const games = db2[dateKey] || [];
+      allGames.push(...games);
     }
     const enrichedGames = await enrichGamesWithSavantBatterContact(await enrichGamesWithTotalBasesProps(allGames));
     const csvContent = generateBattersCSV(enrichedGames);
     res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", "attachment; filename=mlb_batters_dataset.csv");
+    res.setHeader("Content-Disposition", `attachment; filename=batters_dataset_${dates ? "batch" : "all"}.csv`);
     res.send(csvContent);
   } catch (err) {
     console.error("Error generating Batters CSV:", err);
-    res.status(500).send("Error al generar CSV");
+    res.status(500).send("Error al generar CSV de bateadores");
   }
 });
 app2.get("/api/game/:gameId/csv", async (req, res) => {
@@ -3700,10 +3918,10 @@ function fetchWithTimeout(url, ms = 8e3) {
   return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 async function fetchDataStreakSheetRows(date, statKey, cachePrefix, forceRefresh = false, excludeInjured = true) {
-  const cacheFile = path2.join(process.cwd(), `${cachePrefix}${excludeInjured ? "" : "_all"}_${date}.json`);
-  if (!forceRefresh && fs2.existsSync(cacheFile)) {
+  const cacheFile = path3.join(process.cwd(), `${cachePrefix}${excludeInjured ? "" : "_all"}_${date}.json`);
+  if (!forceRefresh && fs3.existsSync(cacheFile)) {
     try {
-      return JSON.parse(fs2.readFileSync(cacheFile, "utf-8"));
+      return JSON.parse(fs3.readFileSync(cacheFile, "utf-8"));
     } catch (e) {
       console.warn(`Error leyendo cache de DataStreak ${statKey}, se descargara nuevamente.`, e);
     }
@@ -3717,7 +3935,7 @@ async function fetchDataStreakSheetRows(date, statKey, cachePrefix, forceRefresh
     }
     const data = await res.json();
     const rows = Array.isArray(data?.rows) ? data.rows : [];
-    fs2.writeFileSync(cacheFile, JSON.stringify(rows, null, 2));
+    fs3.writeFileSync(cacheFile, JSON.stringify(rows, null, 2));
     return rows;
   } catch (err) {
     console.warn(`Error al obtener ${statKey} de DataStreak:`, err);
@@ -3878,11 +4096,11 @@ async function enrichGamesWithTotalBasesProps(games) {
   });
 }
 async function fetchRealBettingLines(date, forceRefreshOdds = false, gamesList = []) {
-  const cacheFile = path2.join(process.cwd(), `odds_cache_${date}.json`);
-  if (!forceRefreshOdds && fs2.existsSync(cacheFile)) {
+  const cacheFile = path3.join(process.cwd(), `odds_cache_${date}.json`);
+  if (!forceRefreshOdds && fs3.existsSync(cacheFile)) {
     try {
       console.log(`Leyendo cuotas desde el cach\xE9 local: odds_cache_${date}.json`);
-      const cached = fs2.readFileSync(cacheFile, "utf-8");
+      const cached = fs3.readFileSync(cacheFile, "utf-8");
       return JSON.parse(cached);
     } catch (e) {
       console.warn("Error leyendo el cach\xE9 de cuotas, se ignorar\xE1 y se descargar\xE1 nuevamente.", e);
@@ -3920,11 +4138,11 @@ async function fetchRealBettingLines(date, forceRefreshOdds = false, gamesList =
   }
   if (!activeKey || !data) {
     console.error("[Odds API] Todas las keys de The Odds API agotaron su cuota o fallaron.");
-    if (fs2.existsSync(cacheFile) && fs2.statSync(cacheFile).size > 10) {
+    if (fs3.existsSync(cacheFile) && fs3.statSync(cacheFile).size > 10) {
       console.log(`Recuperando cuotas del cach\xE9 existente debido a falla de la API.`);
-      return JSON.parse(fs2.readFileSync(cacheFile, "utf-8"));
+      return JSON.parse(fs3.readFileSync(cacheFile, "utf-8"));
     }
-    fs2.writeFileSync(cacheFile, JSON.stringify([]));
+    fs3.writeFileSync(cacheFile, JSON.stringify([]));
     return null;
   }
   try {
@@ -3964,12 +4182,12 @@ async function fetchRealBettingLines(date, forceRefreshOdds = false, gamesList =
     const dataStreakPitcherKs = await fetchDataStreakPitcherStrikeoutProps(date, forceRefreshOdds);
     const eventsWithDataStreakProps = mergeDataStreakPitcherStrikeouts(eventsWithProps, dataStreakPitcherKs);
     try {
-      if (eventsWithDataStreakProps.length > 0 || !fs2.existsSync(cacheFile) || fs2.statSync(cacheFile).size < 10) {
-        fs2.writeFileSync(cacheFile, JSON.stringify(eventsWithDataStreakProps, null, 2));
+      if (eventsWithDataStreakProps.length > 0 || !fs3.existsSync(cacheFile) || fs3.statSync(cacheFile).size < 10) {
+        fs3.writeFileSync(cacheFile, JSON.stringify(eventsWithDataStreakProps, null, 2));
         console.log(`Cuotas guardadas en cache: odds_cache_${date}.json`);
       } else {
         console.log(`No se recibieron cuotas nuevas (posible fecha pasada). Conservando el cach\xE9 original: odds_cache_${date}.json`);
-        return JSON.parse(fs2.readFileSync(cacheFile, "utf-8"));
+        return JSON.parse(fs3.readFileSync(cacheFile, "utf-8"));
       }
     } catch (e) {
       console.warn("No se pudo guardar el cache de cuotas.", e);
@@ -4593,20 +4811,41 @@ async function fetchAdvancedPitching(pitcherId, season) {
     strikeoutRate: null,
     walkRate: null,
     swingingStrikePct: null,
-    projectedInnings: null
+    projectedInnings: null,
+    pitcher_k_pct_vs_lhb: null,
+    pitcher_k_pct_vs_rhb: null
   };
   if (!pitcherId) return defaults;
   try {
     const stdUrl = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=season,seasonAdvanced&season=${season}&group=pitching`;
-    const stdRes = await fetchWithTimeout(stdUrl, 5e3);
+    const splitsUrl = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=statSplits&season=${season}&group=pitching&sitCodes=vl,vr`;
+    const [stdRes, splitsRes] = await Promise.all([
+      fetchWithTimeout(stdUrl, 5e3),
+      fetchWithTimeout(splitsUrl, 5e3)
+    ]);
     let stdStat = {};
     let advStat = {};
+    let pitcher_k_pct_vs_lhb = null;
+    let pitcher_k_pct_vs_rhb = null;
     if (stdRes.ok) {
       const stdData = await stdRes.json();
       const seasonStats = stdData.stats?.find((s) => s.type.displayName === "season");
       const advancedStats = stdData.stats?.find((s) => s.type.displayName === "seasonAdvanced");
       stdStat = seasonStats?.splits?.[0]?.stat || {};
       advStat = advancedStats?.splits?.[0]?.stat || {};
+    }
+    if (splitsRes.ok) {
+      const splitsData = await splitsRes.json();
+      const splits = splitsData.stats?.[0]?.splits || [];
+      for (const split of splits) {
+        const code = split.split?.code;
+        const stat = split.stat || {};
+        const bf2 = parseInt(stat.battersFaced) || 0;
+        const so2 = parseInt(stat.strikeOuts) || 0;
+        const kPct = bf2 > 0 ? Math.round(so2 / bf2 * 1e3) / 10 : null;
+        if (code === "vl") pitcher_k_pct_vs_lhb = kPct;
+        if (code === "vr") pitcher_k_pct_vs_rhb = kPct;
+      }
     }
     if (!stdStat.inningsPitched) {
       return defaults;
@@ -4672,7 +4911,9 @@ async function fetchAdvancedPitching(pitcherId, season) {
       swingingStrikePct,
       cswPct,
       projectedPitchCount,
-      battersFacedPerStart
+      battersFacedPerStart,
+      pitcher_k_pct_vs_lhb,
+      pitcher_k_pct_vs_rhb
     };
   } catch (err) {
     console.error(`Error fetching advanced pitching for ${pitcherId}:`, err);
@@ -5737,7 +5978,8 @@ app2.post("/api/harvest", async (req, res) => {
   const season = date.substring(0, 4);
   emit({ phase: "schedule", step: "Cargando datos sabermetricos...", pct: 4 });
   await Promise.all([
-    savantCache.load(parseInt(season))
+    savantCache.load(parseInt(season)),
+    parkFactorsScraper.load()
   ]);
   emit({ phase: "schedule", step: "Cargando m\xE9tricas PyBaseball...", pct: 5 });
   const endDatePy = new Date(date);
@@ -5750,6 +5992,24 @@ app2.post("/api/harvest", async (req, res) => {
     pybaseballStatcast = await getRecentStatcast(startStrPy, endStrPy);
   } catch (err) {
     console.error("Error cargando PyBaseball", err);
+  }
+  emit({ phase: "schedule", step: "Precargando arsenal y m\xE9tricas avanzadas...", pct: 6 });
+  try {
+    const allProbablePitchers = mlbMatches.flatMap((m) => [m.teams?.home?.probablePitcher?.id, m.teams?.away?.probablePitcher?.id]).map((id) => String(id)).filter((id) => id && id !== "undefined" && id !== "0");
+    const uniquePitchers = [...new Set(allProbablePitchers)];
+    if (uniquePitchers.length > 0) {
+      console.log(`[ETL] Precargando PyBaseball para ${uniquePitchers.length} pitchers en lote...`);
+      const d = new Date(date);
+      const startD = new Date(d.getTime() - 30 * 24 * 60 * 60 * 1e3);
+      const advStartStr = startD.toISOString().split("T")[0];
+      await Promise.all([
+        getPitcherArsenals(uniquePitchers, season),
+        getPitcherAdvancedMetrics(uniquePitchers, advStartStr, date)
+      ]);
+      console.log(`[ETL] Precarga de PyBaseball completada.`);
+    }
+  } catch (err) {
+    console.error("Error en precarga masiva de PyBaseball:", err);
   }
   const harvestedGames = [];
   const errorsCollection = readErrorsDB();
@@ -5876,6 +6136,11 @@ app2.post("/api/harvest", async (req, res) => {
         fetchFatigueMetrics(homePitcherId, awayPitcherId, homeTeamId, awayTeamId, date)
       ]);
       gameDataParsed.weather = weather;
+      gameDataParsed.park_factors = parkFactorsScraper.getParkFactors(venueName) || {
+        index_so: 100,
+        index_runs: 100,
+        index_hr: 100
+      };
       gameDataParsed.offensive_splits = {
         home: homeSplits,
         away: awaySplits
@@ -5909,12 +6174,18 @@ app2.post("/api/harvest", async (req, res) => {
         }
       }
       try {
-        const pitcherArsenalData = await getPitcherArsenals(
-          [String(homePitcherId), String(awayPitcherId)].filter((id) => id !== "0"),
-          season2
-        );
+        const d = new Date(date);
+        const startD = new Date(d.getTime() - 30 * 24 * 60 * 60 * 1e3);
+        const startDStr = startD.toISOString().split("T")[0];
+        const validPitchers = [String(homePitcherId), String(awayPitcherId)].filter((id) => id !== "0");
+        const [pitcherArsenalData, advancedMetricsData] = await Promise.all([
+          getPitcherArsenals(validPitchers, season2),
+          getPitcherAdvancedMetrics(validPitchers, startDStr, date)
+        ]);
         const homeArsenal = pitcherArsenalData[String(homePitcherId)];
         const awayArsenal = pitcherArsenalData[String(awayPitcherId)];
+        const homeAdvSavant = advancedMetricsData[String(homePitcherId)];
+        const awayAdvSavant = advancedMetricsData[String(awayPitcherId)];
         if (homeArsenal) {
           homeAdvPitching.fastballPct = homeArsenal.fastballPct;
           homeAdvPitching.sliderPct = homeArsenal.sliderPct;
@@ -5931,8 +6202,18 @@ app2.post("/api/harvest", async (req, res) => {
           awayAdvPitching.splitterPct = awayArsenal.splitterPct;
           console.log(`[Arsenal Python] AWAY ${gameDataParsed.pitchers?.away?.name}: FB=${awayArsenal.fastballPct}% SL=${awayArsenal.sliderPct}% CU=${awayArsenal.curvePct}%`);
         }
+        if (homeAdvSavant) {
+          homeAdvPitching.pitcher_spin_rate = homeAdvSavant.spinRate;
+          homeAdvPitching.pitcher_o_swing_pct = homeAdvSavant.chasePct;
+          homeAdvPitching.pitcher_stuff_plus = homeAdvSavant.stuffPlus;
+        }
+        if (awayAdvSavant) {
+          awayAdvPitching.pitcher_spin_rate = awayAdvSavant.spinRate;
+          awayAdvPitching.pitcher_o_swing_pct = awayAdvSavant.chasePct;
+          awayAdvPitching.pitcher_stuff_plus = awayAdvSavant.stuffPlus;
+        }
       } catch (arsenalErr) {
-        console.warn(`[Arsenal Python] Error al obtener arsenal para juego ${gameId}:`, arsenalErr);
+        console.warn(`[Python Scraper] Error al obtener arsenal/metricas para juego ${gameId}:`, arsenalErr);
       }
       if (pybaseballStatcast?.data?.pitchers_recent) {
         const homePStats = pybaseballStatcast.data.pitchers_recent.find((p) => String(p.pitcher) === String(homePitcherId));
@@ -6218,7 +6499,8 @@ async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
   const gameDataParsed = buildDirectGameData(gameId, homeName, awayName, venueName, actualDate, matchTime, realMLBData, realOddsData, pitcherStrikeoutRows, totalBasesRows);
   const season = actualDate.substring(0, 4);
   await Promise.all([
-    savantCache.load(parseInt(season))
+    savantCache.load(parseInt(season)),
+    parkFactorsScraper.load()
   ]);
   const homePitcherId = realMLBData.pitcherIds?.home || 0;
   const awayPitcherId = realMLBData.pitcherIds?.away || 0;
@@ -6258,6 +6540,11 @@ async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
     fetchFatigueMetrics(homePitcherId, awayPitcherId, homeTeamId, awayTeamId, actualDate)
   ]);
   gameDataParsed.weather = weather;
+  gameDataParsed.park_factors = parkFactorsScraper.getParkFactors(venueName) || {
+    index_so: 100,
+    index_runs: 100,
+    index_hr: 100
+  };
   gameDataParsed.offensive_splits = { home: homeSplits, away: awaySplits };
   const homePitcherSavantU = savantCache.getPitcher(homePitcherId);
   const awayPitcherSavantU = savantCache.getPitcher(awayPitcherId);
@@ -6288,12 +6575,18 @@ async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
     }
   }
   try {
-    const pitcherArsenalDataU = await getPitcherArsenals(
-      [String(homePitcherId), String(awayPitcherId)].filter((id) => id !== "0"),
-      season
-    );
+    const d = new Date(actualDate);
+    const startD = new Date(d.getTime() - 30 * 24 * 60 * 60 * 1e3);
+    const startDStr = startD.toISOString().split("T")[0];
+    const validPitchersU = [String(homePitcherId), String(awayPitcherId)].filter((id) => id !== "0");
+    const [pitcherArsenalDataU, advancedMetricsDataU] = await Promise.all([
+      getPitcherArsenals(validPitchersU, season),
+      getPitcherAdvancedMetrics(validPitchersU, startDStr, actualDate)
+    ]);
     const homeArsenalU = pitcherArsenalDataU[String(homePitcherId)];
     const awayArsenalU = pitcherArsenalDataU[String(awayPitcherId)];
+    const homeAdvSavantU = advancedMetricsDataU[String(homePitcherId)];
+    const awayAdvSavantU = advancedMetricsDataU[String(awayPitcherId)];
     if (homeArsenalU) {
       homeAdvPitching.fastballPct = homeArsenalU.fastballPct;
       homeAdvPitching.sliderPct = homeArsenalU.sliderPct;
@@ -6308,8 +6601,18 @@ async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
       awayAdvPitching.changeupPct = awayArsenalU.changeupPct;
       awayAdvPitching.splitterPct = awayArsenalU.splitterPct;
     }
-  } catch (arsenalErrU) {
-    console.warn(`[Arsenal Python] Error en harvest-game:`, arsenalErrU);
+    if (homeAdvSavantU) {
+      homeAdvPitching.pitcher_spin_rate = homeAdvSavantU.spinRate;
+      homeAdvPitching.pitcher_o_swing_pct = homeAdvSavantU.chasePct;
+      homeAdvPitching.pitcher_stuff_plus = homeAdvSavantU.stuffPlus;
+    }
+    if (awayAdvSavantU) {
+      awayAdvPitching.pitcher_spin_rate = awayAdvSavantU.spinRate;
+      awayAdvPitching.pitcher_o_swing_pct = awayAdvSavantU.chasePct;
+      awayAdvPitching.pitcher_stuff_plus = awayAdvSavantU.stuffPlus;
+    }
+  } catch (arsenalErr) {
+    console.warn(`[Python Scraper] Error al obtener arsenal/metricas para juego ${gameId}:`, arsenalErr);
   }
   const homeLineupU = gameDataParsed.lineups?.home || [];
   const awayLineupU = gameDataParsed.lineups?.away || [];
@@ -6601,10 +6904,10 @@ async function startServer() {
     });
     app2.use(vite.middlewares);
   } else {
-    const distPath = path2.join(process.cwd(), "dist");
+    const distPath = path3.join(process.cwd(), "dist");
     app2.use(express.static(distPath));
     app2.get("*", (req, res) => {
-      res.sendFile(path2.join(distPath, "index.html"));
+      res.sendFile(path3.join(distPath, "index.html"));
     });
   }
   app2.listen(PORT, "0.0.0.0", () => {

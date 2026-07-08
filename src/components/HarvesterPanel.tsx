@@ -4,10 +4,11 @@
  */
 
 import React from "react";
-import { Search, Calendar, Zap, Play, Loader2, Clock, CheckCircle, Database, Brain, HardDrive } from "lucide-react";
+import { Search, Calendar, Zap, Play, Loader2, Clock, CheckCircle, Database, Brain, HardDrive, Layers } from "lucide-react";
 
 interface HarvesterPanelProps {
   onHarvest: (date: string, refreshOdds: boolean) => void;
+  onBatchHarvest?: (startDate: string, endDate: string, refreshOdds: boolean) => void;
   isLoading: boolean;
   selectedDate: string;
   setSelectedDate: (date: string) => void;
@@ -35,6 +36,7 @@ const PHASE_STEPS = [
 
 export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
   onHarvest,
+  onBatchHarvest,
   isLoading,
   selectedDate,
   setSelectedDate,
@@ -44,9 +46,15 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
   syncRemoteDates,
 }) => {
   const [refreshOdds, setRefreshOdds] = React.useState(false);
+  const [isBatchMode, setIsBatchMode] = React.useState(false);
+  const [batchEndDate, setBatchEndDate] = React.useState(new Date().toISOString().split("T")[0]);
 
   const runHarvest = () => {
-    onHarvest(selectedDate, refreshOdds);
+    if (isBatchMode && onBatchHarvest) {
+      onBatchHarvest(selectedDate, batchEndDate, refreshOdds);
+    } else {
+      onHarvest(selectedDate, refreshOdds);
+    }
   };
 
   return (
@@ -55,19 +63,38 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
         
         {/* Date Selector & Engine Mode Column */}
         <div className="space-y-4">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 mb-2">
             <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-baseball-blue font-bold">
               1
             </div>
-            <h3 className="font-display font-semibold text-slate-800 text-sm uppercase tracking-wide">
+            <h3 className="font-display font-semibold text-slate-800 text-sm uppercase tracking-wide flex-1">
               Configurar Extracción
             </h3>
+            
+            <div className="flex bg-slate-200 p-1 rounded-lg">
+              <button
+                onClick={() => setIsBatchMode(false)}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition ${!isBatchMode ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                Simple
+              </button>
+              <button
+                onClick={() => setIsBatchMode(true)}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition flex items-center gap-1 ${isBatchMode ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                <Layers size={12} />
+                Lote
+              </button>
+            </div>
           </div>
 
           <div className="space-y-3">
-            {/* Input Date selector */}
+            {/* Input Date selector (Start Date) */}
             <div className="relative">
-              <Calendar className="absolute left-3 top-2.5 text-slate-400" size={16} />
+              <label className="text-xs text-slate-500 font-semibold mb-1 block">
+                {isBatchMode ? "Desde:" : "Fecha:"}
+              </label>
+              <Calendar className="absolute left-3 top-8 text-slate-400" size={16} />
               <input
                 type="date"
                 value={selectedDate}
@@ -76,7 +103,20 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
               />
             </div>
 
-            {extractedDates && extractedDates.length > 0 && (
+            {isBatchMode && (
+              <div className="relative">
+                <label className="text-xs text-slate-500 font-semibold mb-1 block">Hasta:</label>
+                <Calendar className="absolute left-3 top-8 text-slate-400" size={16} />
+                <input
+                  type="date"
+                  value={batchEndDate}
+                  onChange={e => setBatchEndDate(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            )}
+
+            {!isBatchMode && extractedDates && extractedDates.length > 0 && (
               <div className="flex gap-2">
                 <div className="relative flex-1">
                   <Database className="absolute left-3 top-2.5 text-emerald-500" size={14} />
@@ -138,7 +178,9 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
               className="w-full py-4 rounded-xl font-display font-semibold text-white transition flex items-center justify-center gap-3 shadow-md bg-baseball-red hover:bg-red-700 hover:shadow-lg hover:shadow-red-500/10 active:scale-98 cursor-pointer"
             >
               <Play size={18} fill="currentColor" />
-              <span className="text-sm">Ejecutar Extracción ETL</span>
+              <span className="text-sm">
+                {isBatchMode ? "Ejecutar Lote y Descargar CSV" : "Ejecutar Extracción ETL"}
+              </span>
             </button>
           )}
 

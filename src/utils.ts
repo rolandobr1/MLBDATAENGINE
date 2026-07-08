@@ -391,7 +391,14 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
     "home_pitcher_avg_pitches_last3", "home_pitcher_rest_status", "away_pitcher_avg_pitches_last3", "away_pitcher_rest_status", "home_pitcher_pitchHand", "away_pitcher_pitchHand",
     "bullpen_home_ipLast3Days", "bullpen_home_ipLast7Days", "bullpen_away_ipLast3Days", "bullpen_away_ipLast7Days", "bullpen_home_relieversUsedYesterday",
     "home_lineup_contact_stress_score", "home_lineup_pitch_count_risk_score", "home_lineup_high_hardhit_batters_count", "away_lineup_contact_stress_score", "away_lineup_pitch_count_risk_score", "away_lineup_high_hardhit_batters_count",
-    "home_pitcher_recent_velocity", "away_pitcher_recent_velocity"
+    "home_pitcher_recent_velocity", "away_pitcher_recent_velocity",
+    // New Advanced Metrics & Park Factors
+    "home_pitcher_spin_rate", "away_pitcher_spin_rate",
+    "home_pitcher_stuff_plus", "away_pitcher_stuff_plus",
+    "home_pitcher_o_swing_pct", "away_pitcher_o_swing_pct",
+    "home_pitcher_k_pct_vs_lhb", "away_pitcher_k_pct_vs_lhb",
+    "home_pitcher_k_pct_vs_rhb", "away_pitcher_k_pct_vs_rhb",
+    "park_factor_k", "park_factor_runs", "park_factor_hr"
   ];
 
   const escapeStr = (val: any) => {
@@ -729,7 +736,21 @@ export function generateMLDatasetCSV(games: MLBGame[]): string {
       awayLineupMetrics.pitchRisk,
       awayLineupMetrics.hardhit,
       (g as any).pitchers?.home_starter?.pitcher_recent_velocity ?? (g as any).pitchers?.home?.pitcher_recent_velocity ?? "",
-      (g as any).pitchers?.away_starter?.pitcher_recent_velocity ?? (g as any).pitchers?.away?.pitcher_recent_velocity ?? ""
+      (g as any).pitchers?.away_starter?.pitcher_recent_velocity ?? (g as any).pitchers?.away?.pitcher_recent_velocity ?? "",
+      // New Advanced Metrics & Park Factors
+      g.advanced_pitching?.home?.pitcher_spin_rate ?? "",
+      g.advanced_pitching?.away?.pitcher_spin_rate ?? "",
+      g.advanced_pitching?.home?.pitcher_stuff_plus ?? "",
+      g.advanced_pitching?.away?.pitcher_stuff_plus ?? "",
+      g.advanced_pitching?.home?.pitcher_o_swing_pct ?? "",
+      g.advanced_pitching?.away?.pitcher_o_swing_pct ?? "",
+      g.advanced_pitching?.home?.pitcher_k_pct_vs_lhb ?? "",
+      g.advanced_pitching?.away?.pitcher_k_pct_vs_lhb ?? "",
+      g.advanced_pitching?.home?.pitcher_k_pct_vs_rhb ?? "",
+      g.advanced_pitching?.away?.pitcher_k_pct_vs_rhb ?? "",
+      g.park_factors?.index_so ?? 100,
+      g.park_factors?.index_runs ?? 100,
+      g.park_factors?.index_hr ?? 100
     ];
   });
 
@@ -946,7 +967,14 @@ export function generateBattersCSV(games: any[]): string {
     "home_pitcher_avg_pitches_last3", "home_pitcher_rest_status", "away_pitcher_avg_pitches_last3", "away_pitcher_rest_status", "home_pitcher_pitchHand", "away_pitcher_pitchHand",
     "bullpen_home_ipLast3Days", "bullpen_home_ipLast7Days", "bullpen_away_ipLast3Days", "bullpen_away_ipLast7Days", "bullpen_home_relieversUsedYesterday",
     "home_lineup_contact_stress_score", "home_lineup_pitch_count_risk_score", "home_lineup_high_hardhit_batters_count", "away_lineup_contact_stress_score", "away_lineup_pitch_count_risk_score", "away_lineup_high_hardhit_batters_count",
-    "home_pitcher_recent_velocity", "away_pitcher_recent_velocity"
+    "home_pitcher_recent_velocity", "away_pitcher_recent_velocity",
+    // New Advanced Metrics & Park Factors
+    "home_pitcher_spin_rate", "away_pitcher_spin_rate",
+    "home_pitcher_stuff_plus", "away_pitcher_stuff_plus",
+    "home_pitcher_o_swing_pct", "away_pitcher_o_swing_pct",
+    "home_pitcher_k_pct_vs_lhb", "away_pitcher_k_pct_vs_lhb",
+    "home_pitcher_k_pct_vs_rhb", "away_pitcher_k_pct_vs_rhb",
+    "park_factor_k", "park_factor_runs", "park_factor_hr"
   ];
 
   const escapeStr = (val: any) => {
@@ -1257,7 +1285,21 @@ export function generateBattersCSV(games: any[]): string {
       (game as any).advanced_offense?.away?.lineup_pitch_count_risk_score ?? "",
       (game as any).advanced_offense?.away?.lineup_high_hardhit_batters_count ?? "",
       (game as any).pitchers?.home_starter?.pitcher_recent_velocity ?? (game as any).pitchers?.home?.pitcher_recent_velocity ?? "",
-      (game as any).pitchers?.away_starter?.pitcher_recent_velocity ?? (game as any).pitchers?.away?.pitcher_recent_velocity ?? ""
+      (game as any).pitchers?.away_starter?.pitcher_recent_velocity ?? (game as any).pitchers?.away?.pitcher_recent_velocity ?? "",
+      // New Advanced Metrics & Park Factors
+      game.advanced_pitching?.home?.pitcher_spin_rate ?? "",
+      game.advanced_pitching?.away?.pitcher_spin_rate ?? "",
+      game.advanced_pitching?.home?.pitcher_stuff_plus ?? "",
+      game.advanced_pitching?.away?.pitcher_stuff_plus ?? "",
+      game.advanced_pitching?.home?.pitcher_o_swing_pct ?? "",
+      game.advanced_pitching?.away?.pitcher_o_swing_pct ?? "",
+      game.advanced_pitching?.home?.pitcher_k_pct_vs_lhb ?? "",
+      game.advanced_pitching?.away?.pitcher_k_pct_vs_lhb ?? "",
+      game.advanced_pitching?.home?.pitcher_k_pct_vs_rhb ?? "",
+      game.advanced_pitching?.away?.pitcher_k_pct_vs_rhb ?? "",
+      game.park_factors?.index_so ?? 100,
+      game.park_factors?.index_runs ?? 100,
+      game.park_factors?.index_hr ?? 100
     ];
 
     const processTeamLineup = (lineup: any[], teamName: string, isHomeTeam: boolean) => {

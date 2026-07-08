@@ -7,7 +7,7 @@
 // CRÍTICO: dotenv debe cargarse ANTES de importar firebase.ts y otros módulos
 // que leen process.env en su inicialización.
 import { format } from "date-fns";
-import { getRecentStatcast, getPitcherArsenals } from './src/etl/extractors/pybaseballApi';
+import { getRecentStatcast, getPitcherArsenals, getPitcherAdvancedMetrics } from './src/etl/extractors/pybaseballApi';
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
@@ -55,6 +55,7 @@ import {
 import { generateMLDatasetCSV, generateBattersCSV, generateSingleGameCSV, generateDailyPlayerResultsCSV, generateKPropsLinesCSV, generateBatterTotalBasesLinesCSV } from "./src/utils";
 import { enrichWithVortexMetrics } from "./src/etl/transformers/vortexMetrics";
 import { savantCache } from "./src/etl/extractors/savantScraper";
+import { parkFactorsScraper } from "./src/etl/extractors/parkFactorsScraper";
 
 const app = express();
 app.use(express.json());
@@ -806,12 +807,25 @@ app.get("/api/ml-dataset", (req, res) => {
 // Download ML consolidation dataset as CSV
 app.get("/api/ml-dataset/csv", (req, res) => {
   try {
+    const { dates } = req.query;
     const db = readGamesDB();
     const allGames: MLBGame[] = [];
+    
+    // Parse dates if provided
+    let filterDates: string[] = [];
+    if (typeof dates === "string" && dates.trim() !== "") {
+      filterDates = dates.split(",").map(d => d.trim());
+    }
+
     for (const date of Object.keys(db)) {
+      // If dates filter is provided, skip dates not in the list
+      if (filterDates.length > 0 && !filterDates.includes(date)) {
+        continue;
+      }
       const games = db[date] || [];
       allGames.push(...games);
     }
+    
     const csvContent = generateMLDatasetCSV(allGames);
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=mlb_ml_dataset.csv");
@@ -873,25 +887,32 @@ app.get("/api/batter-total-bases/csv", async (req, res) => {
 // Download Batters dataset as CSV
 app.get("/api/batters-dataset/csv", async (req, res) => {
   try {
-    const { date } = req.query;
+    const { dates } = req.query;
     const db = readGamesDB();
     const allGames: MLBGame[] = [];
-    if (date && typeof date === "string") {
-      allGames.push(...(db[date] || []));
-    } else {
-      for (const dateKey of Object.keys(db)) {
-        const games = db[dateKey] || [];
-        allGames.push(...games);
-      }
+    
+    // Parse dates if provided
+    let filterDates: string[] = [];
+    if (typeof dates === "string" && dates.trim() !== "") {
+      filterDates = dates.split(",").map(d => d.trim());
     }
+
+    for (const dateKey of Object.keys(db)) {
+      if (filterDates.length > 0 && !filterDates.includes(dateKey)) {
+        continue;
+      }
+      const games = db[dateKey] || [];
+      allGames.push(...games);
+    }
+    
     const enrichedGames = await enrichGamesWithSavantBatterContact(await enrichGamesWithTotalBasesProps(allGames));
     const csvContent = generateBattersCSV(enrichedGames);
     res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", "attachment; filename=mlb_batters_dataset.csv");
+    res.setHeader("Content-Disposition", `attachment; filename=batters_dataset_${dates ? "batch" : "all"}.csv`);
     res.send(csvContent);
   } catch (err) {
     console.error("Error generating Batters CSV:", err);
-    res.status(500).send("Error al generar CSV");
+    res.status(500).send("Error al generar CSV de bateadores");
   }
 });
 
@@ -2710,20 +2731,44 @@ async function fetchAdvancedPitching(pitcherId: number, season: string): Promise
   const defaults: AdvancedPitchingStats = {
     xEra: null, fip: null, xFip: null, siera: null,
     hardHitPct: null, barrelPct: null, groundBallPct: null, flyBallPct: null,
-    strikeoutRate: null, walkRate: null, swingingStrikePct: null, projectedInnings: null
+    strikeoutRate: null, walkRate: null, swingingStrikePct: null, projectedInnings: null,
+    pitcher_k_pct_vs_lhb: null, pitcher_k_pct_vs_rhb: null
   };
   if (!pitcherId) return defaults;
   try {
     const stdUrl = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=season,seasonAdvanced&season=${season}&group=pitching`;
-    const stdRes = await fetchWithTimeout(stdUrl, 5000);
+    const splitsUrl = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=statSplits&season=${season}&group=pitching&sitCodes=vl,vr`;
+    
+    const [stdRes, splitsRes] = await Promise.all([
+      fetchWithTimeout(stdUrl, 5000),
+      fetchWithTimeout(splitsUrl, 5000)
+    ]);
+    
     let stdStat: any = {};
     let advStat: any = {};
+    let pitcher_k_pct_vs_lhb: number | null = null;
+    let pitcher_k_pct_vs_rhb: number | null = null;
+
     if (stdRes.ok) {
       const stdData = await stdRes.json();
       const seasonStats = stdData.stats?.find((s: any) => s.type.displayName === "season");
       const advancedStats = stdData.stats?.find((s: any) => s.type.displayName === "seasonAdvanced");
       stdStat = seasonStats?.splits?.[0]?.stat || {};
       advStat = advancedStats?.splits?.[0]?.stat || {};
+    }
+
+    if (splitsRes.ok) {
+      const splitsData = await splitsRes.json();
+      const splits = splitsData.stats?.[0]?.splits || [];
+      for (const split of splits) {
+        const code = split.split?.code;
+        const stat = split.stat || {};
+        const bf = parseInt(stat.battersFaced) || 0;
+        const so = parseInt(stat.strikeOuts) || 0;
+        const kPct = bf > 0 ? Math.round((so / bf) * 1000) / 10 : null;
+        if (code === "vl") pitcher_k_pct_vs_lhb = kPct;
+        if (code === "vr") pitcher_k_pct_vs_rhb = kPct;
+      }
     }
 
     if (!stdStat.inningsPitched) {
@@ -2815,7 +2860,9 @@ async function fetchAdvancedPitching(pitcherId: number, season: string): Promise
       swingingStrikePct,
       cswPct,
       projectedPitchCount,
-      battersFacedPerStart
+      battersFacedPerStart,
+      pitcher_k_pct_vs_lhb,
+      pitcher_k_pct_vs_rhb
     };
   } catch (err) {
     console.error(`Error fetching advanced pitching for ${pitcherId}:`, err);
@@ -4043,7 +4090,7 @@ app.post("/api/harvest", async (req, res) => {
   emit({ phase: "schedule", step: "Cargando datos sabermetricos...", pct: 4 });
   await Promise.all([
     savantCache.load(parseInt(season)),
-
+    parkFactorsScraper.load()
   ]);
 
   // Pre-cargar PyBaseball (velocidad, CSW%)
@@ -4058,6 +4105,32 @@ app.post("/api/harvest", async (req, res) => {
     pybaseballStatcast = await getRecentStatcast(startStrPy, endStrPy);
   } catch (err) {
     console.error("Error cargando PyBaseball", err);
+  }
+
+  // Pre-cargar Arsenal y Métricas Avanzadas de todos los pitchers probables del día en una sola pasada
+  emit({ phase: "schedule", step: "Precargando arsenal y métricas avanzadas...", pct: 6 });
+  try {
+    const allProbablePitchers = mlbMatches
+      .flatMap(m => [m.teams?.home?.probablePitcher?.id, m.teams?.away?.probablePitcher?.id])
+      .map(id => String(id))
+      .filter(id => id && id !== 'undefined' && id !== '0');
+    
+    const uniquePitchers = [...new Set(allProbablePitchers)];
+    
+    if (uniquePitchers.length > 0) {
+      console.log(`[ETL] Precargando PyBaseball para ${uniquePitchers.length} pitchers en lote...`);
+      const d = new Date(date);
+      const startD = new Date(d.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const advStartStr = startD.toISOString().split('T')[0];
+      
+      await Promise.all([
+        getPitcherArsenals(uniquePitchers, season),
+        getPitcherAdvancedMetrics(uniquePitchers, advStartStr, date)
+      ]);
+      console.log(`[ETL] Precarga de PyBaseball completada.`);
+    }
+  } catch (err) {
+    console.error("Error en precarga masiva de PyBaseball:", err);
   }
 
   const harvestedGames: any[] = [];
@@ -4209,6 +4282,9 @@ app.post("/api/harvest", async (req, res) => {
 
       // Populate gameDataParsed
       gameDataParsed.weather = weather;
+      gameDataParsed.park_factors = parkFactorsScraper.getParkFactors(venueName) || {
+        index_so: 100, index_runs: 100, index_hr: 100
+      };
       gameDataParsed.offensive_splits = {
         home: homeSplits,
         away: awaySplits
@@ -4248,12 +4324,22 @@ app.post("/api/harvest", async (req, res) => {
       // Inyectar Arsenal de pitcheos desde Python (fuente primaria — sin límite min=10)
       // El caché es diario y compartido entre juegos, así que solo descarga 1 vez por día.
       try {
-        const pitcherArsenalData = await getPitcherArsenals(
-          [String(homePitcherId), String(awayPitcherId)].filter(id => id !== '0'),
-          season
-        );
+        const d = new Date(date);
+        const startD = new Date(d.getTime() - 30 * 24 * 60 * 60 * 1000);
+        const startDStr = startD.toISOString().split('T')[0];
+        
+        const validPitchers = [String(homePitcherId), String(awayPitcherId)].filter(id => id !== '0');
+        
+        const [pitcherArsenalData, advancedMetricsData] = await Promise.all([
+          getPitcherArsenals(validPitchers, season),
+          getPitcherAdvancedMetrics(validPitchers, startDStr, date)
+        ]);
+
         const homeArsenal = pitcherArsenalData[String(homePitcherId)];
         const awayArsenal = pitcherArsenalData[String(awayPitcherId)];
+        const homeAdvSavant = advancedMetricsData[String(homePitcherId)];
+        const awayAdvSavant = advancedMetricsData[String(awayPitcherId)];
+
         if (homeArsenal) {
           homeAdvPitching.fastballPct = homeArsenal.fastballPct;
           homeAdvPitching.sliderPct   = homeArsenal.sliderPct;
@@ -4270,8 +4356,19 @@ app.post("/api/harvest", async (req, res) => {
           awayAdvPitching.splitterPct = awayArsenal.splitterPct;
           console.log(`[Arsenal Python] AWAY ${gameDataParsed.pitchers?.away?.name}: FB=${awayArsenal.fastballPct}% SL=${awayArsenal.sliderPct}% CU=${awayArsenal.curvePct}%`);
         }
+
+        if (homeAdvSavant) {
+          homeAdvPitching.pitcher_spin_rate = homeAdvSavant.spinRate;
+          homeAdvPitching.pitcher_o_swing_pct = homeAdvSavant.chasePct;
+          homeAdvPitching.pitcher_stuff_plus = homeAdvSavant.stuffPlus;
+        }
+        if (awayAdvSavant) {
+          awayAdvPitching.pitcher_spin_rate = awayAdvSavant.spinRate;
+          awayAdvPitching.pitcher_o_swing_pct = awayAdvSavant.chasePct;
+          awayAdvPitching.pitcher_stuff_plus = awayAdvSavant.stuffPlus;
+        }
       } catch (arsenalErr) {
-        console.warn(`[Arsenal Python] Error al obtener arsenal para juego ${gameId}:`, arsenalErr);
+        console.warn(`[Python Scraper] Error al obtener arsenal/metricas para juego ${gameId}:`, arsenalErr);
       }
 
       // Inyectar PyBaseball (CSW%, velocidad reciente)
@@ -4629,7 +4726,7 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
   const season = actualDate.substring(0, 4);
   await Promise.all([
     savantCache.load(parseInt(season)),
-
+    parkFactorsScraper.load()
   ]);
   const homePitcherId = realMLBData.pitcherIds?.home || 0;
   const awayPitcherId = realMLBData.pitcherIds?.away || 0;
@@ -4672,6 +4769,9 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
 
   // Populate advanced fields
   gameDataParsed.weather = weather;
+  gameDataParsed.park_factors = parkFactorsScraper.getParkFactors(venueName) || {
+    index_so: 100, index_runs: 100, index_hr: 100
+  };
   gameDataParsed.offensive_splits = { home: homeSplits, away: awaySplits };
   // Inyectar métricas de Baseball Savant (xERA, HardHit%, Barrel%)
   const homePitcherSavantU = savantCache.getPitcher(homePitcherId);
@@ -4706,12 +4806,21 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
   }
   // Inyectar Arsenal de pitcheos desde Python (fuente primaria — sin límite min=10)
   try {
-    const pitcherArsenalDataU = await getPitcherArsenals(
-      [String(homePitcherId), String(awayPitcherId)].filter(id => id !== '0'),
-      season
-    );
+    const d = new Date(actualDate);
+    const startD = new Date(d.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const startDStr = startD.toISOString().split('T')[0];
+    const validPitchersU = [String(homePitcherId), String(awayPitcherId)].filter(id => id !== '0');
+
+    const [pitcherArsenalDataU, advancedMetricsDataU] = await Promise.all([
+      getPitcherArsenals(validPitchersU, season),
+      getPitcherAdvancedMetrics(validPitchersU, startDStr, actualDate)
+    ]);
+
     const homeArsenalU = pitcherArsenalDataU[String(homePitcherId)];
     const awayArsenalU = pitcherArsenalDataU[String(awayPitcherId)];
+    const homeAdvSavantU = advancedMetricsDataU[String(homePitcherId)];
+    const awayAdvSavantU = advancedMetricsDataU[String(awayPitcherId)];
+
     if (homeArsenalU) {
       homeAdvPitching.fastballPct = homeArsenalU.fastballPct;
       homeAdvPitching.sliderPct   = homeArsenalU.sliderPct;
@@ -4726,8 +4835,19 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
       awayAdvPitching.changeupPct = awayArsenalU.changeupPct;
       awayAdvPitching.splitterPct = awayArsenalU.splitterPct;
     }
-  } catch (arsenalErrU) {
-    console.warn(`[Arsenal Python] Error en harvest-game:`, arsenalErrU);
+
+    if (homeAdvSavantU) {
+      homeAdvPitching.pitcher_spin_rate = homeAdvSavantU.spinRate;
+      homeAdvPitching.pitcher_o_swing_pct = homeAdvSavantU.chasePct;
+      homeAdvPitching.pitcher_stuff_plus = homeAdvSavantU.stuffPlus;
+    }
+    if (awayAdvSavantU) {
+      awayAdvPitching.pitcher_spin_rate = awayAdvSavantU.spinRate;
+      awayAdvPitching.pitcher_o_swing_pct = awayAdvSavantU.chasePct;
+      awayAdvPitching.pitcher_stuff_plus = awayAdvSavantU.stuffPlus;
+    }
+  } catch (arsenalErr) {
+    console.warn(`[Python Scraper] Error al obtener arsenal/metricas para juego ${gameId}:`, arsenalErr);
   }
   // xwOBA desde lineup
   const homeLineupU: any[] = gameDataParsed.lineups?.home || [];

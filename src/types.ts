@@ -162,6 +162,11 @@ export interface AdvancedPitchingStats {
   siera?: number | null;
   hardHitPct?: number | null;
   barrelPct?: number | null;
+  pitcher_k_pct_vs_lhb?: number | null;
+  pitcher_k_pct_vs_rhb?: number | null;
+  pitcher_o_swing_pct?: number | null;
+  pitcher_spin_rate?: number | null;
+  pitcher_stuff_plus?: number | null;
   groundBallPct: number | null;
   flyBallPct: number | null;
   strikeoutRate: number | null;
@@ -465,6 +470,11 @@ export interface MLBGame {
   linescore?: Linescore;
   liveBoxscore?: LiveBoxscore;
   playByPlay?: PlayByPlay;
+  park_factors?: {
+    index_so: number;
+    index_runs: number;
+    index_hr: number;
+  };
 }
 
 export interface LoggedError {
