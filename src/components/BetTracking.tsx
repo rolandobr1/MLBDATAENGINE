@@ -226,6 +226,7 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
   const status = game.game_result?.gameStatus ?? "";
   const isLive = LIVE_STATUSES.some(s => status.includes(s));
   const isFinal = FINAL_STATUSES.some(s => status.includes(s));
+  const isPostponed = ["Postponed", "Cancelled"].some(s => status.includes(s));
 
   // Si el partido no ha comenzado (no está en vivo ni finalizado), forzar estado de espera a 0%
   if (!isLive && !isFinal) {
@@ -260,12 +261,16 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
     const pct = bet.line > 0 ? Math.min(100, Math.round((current / bet.line) * 100)) : 0;
 
     let autoStatus: BetStatus | null = null;
-    if (isFinal || exceeded || isPulled) {
+    if (isPostponed) {
+      autoStatus = "void";
+    } else if (isFinal || exceeded || isPulled) {
       autoStatus = bet.isOver ? (exceeded ? "won" : "lost") : (current < bet.line ? "won" : "lost");
     }
 
     let hint = "";
-    if (exceeded) {
+    if (isPostponed) {
+      hint = "Juego Pospuesto/Cancelado";
+    } else if (exceeded) {
       hint = "¡Línea superada!";
     } else if (isFinal) {
       hint = `Final — ${current} K's`;
@@ -290,8 +295,9 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
     const exceeded = current >= bet.line;
     const pct = bet.line > 0 ? Math.min(100, Math.round((current / bet.line) * 100)) : 0;
     let autoStatus: BetStatus | null = null;
-    if (isFinal || exceeded) autoStatus = bet.isOver ? (exceeded ? "won" : "lost") : (current < bet.line ? "won" : "lost");
-    return { current, pct: autoStatus === "won" ? 100 : pct, display: `${current} / ${bet.line} bases`, hint: exceeded ? "¡Línea superada!" : isFinal ? `Final — ${current} bases` : `Necesita ${Math.ceil(bet.line - current)} más`, isLive, isFinal, autoStatus };
+    if (isPostponed) autoStatus = "void";
+    else if (isFinal || exceeded) autoStatus = bet.isOver ? (exceeded ? "won" : "lost") : (current < bet.line ? "won" : "lost");
+    return { current, pct: autoStatus === "won" ? 100 : pct, display: `${current} / ${bet.line} bases`, hint: isPostponed ? "Juego Pospuesto/Cancelado" : exceeded ? "¡Línea superada!" : isFinal ? `Final — ${current} bases` : `Necesita ${Math.ceil(bet.line - current)} más`, isLive, isFinal, autoStatus };
   }
 
   if (bet.betTypeKey === "team_ml") {
@@ -303,8 +309,9 @@ function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LiveProgress 
     const total = myScore + oppScore;
     let pct = total === 0 ? 0 : winning ? 70 : myScore === oppScore ? 50 : 30;
     let autoStatus: BetStatus | null = null;
-    if (isFinal) { autoStatus = winning ? "won" : "lost"; pct = autoStatus === "won" ? 100 : 0; }
-    return { current: myScore, pct, display: `${myScore} - ${oppScore}`, hint: isFinal ? (winning ? "¡Equipo ganó!" : "Equipo perdió") : (winning ? "Ganando" : "Perdiendo"), isLive, isFinal, autoStatus };
+    if (isPostponed) { autoStatus = "void"; pct = 100; }
+    else if (isFinal) { autoStatus = winning ? "won" : "lost"; pct = autoStatus === "won" ? 100 : 0; }
+    return { current: myScore, pct, display: `${myScore} - ${oppScore}`, hint: isPostponed ? "Juego Pospuesto/Cancelado" : isFinal ? (winning ? "¡Equipo ganó!" : "Equipo perdió") : (winning ? "Ganando" : "Perdiendo"), isLive, isFinal, autoStatus };
   }
 
   if (bet.betTypeKey === "team_f5") {
