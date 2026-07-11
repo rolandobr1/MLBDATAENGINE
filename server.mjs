@@ -600,11 +600,11 @@ function roundCsvNumber(val, decimals = 1) {
 }
 function parseNum(val) {
   if (val === null || val === void 0 || val === "") return null;
-  const n = Number(val);
-  return isNaN(n) ? null : n;
+  const n2 = Number(val);
+  return isNaN(n2) ? null : n2;
 }
 function calcLast3Stats(v1, v2, v3) {
-  const nums = [parseNum(v1), parseNum(v2), parseNum(v3)].filter((n) => n !== null);
+  const nums = [parseNum(v1), parseNum(v2), parseNum(v3)].filter((n2) => n2 !== null);
   if (nums.length === 0) return { avg: "", min: "", under15: "", under18: "" };
   const sum = nums.reduce((a, b) => a + b, 0);
   const avg = (sum / nums.length).toFixed(1);
@@ -762,15 +762,15 @@ function getPitcherDerivedMetrics(g, side) {
     rest_status: p.pitcher_rest_status || rest_status
   };
 }
-function generateMLDatasetCSV(games) {
+function generateMLDatasetCSV(games, pitLookups = {}) {
   const headers = [
     // Metadata
     "game_id",
-    "fecha",
-    "hora",
-    "equipo_home",
-    "equipo_visitante",
-    "estadio",
+    "date",
+    "time",
+    "home_team",
+    "away_team",
+    "venue",
     // Pitchers standard
     "home_pitcher",
     "home_pitcher_era",
@@ -795,22 +795,22 @@ function generateMLDatasetCSV(games) {
     "away_pitcher_gs",
     "away_pitcher_ip_avg_start",
     // Bullpen standard
-    "bullpen_era_home",
-    "bullpen_usage_home",
-    "bullpen_ip_7d_home",
-    "bullpen_era_away",
-    "bullpen_usage_away",
-    "bullpen_ip_7d_away",
+    "home_bullpen_era",
+    "home_bullpen_usage",
+    "home_bullpen_ip_7d",
+    "away_bullpen_era",
+    "away_bullpen_usage",
+    "away_bullpen_ip_7d",
     // Offense standard
-    "ofensa_run_g_home",
-    "ofensa_ops_home",
-    "ofensa_obp_home",
-    "ofensa_slg_home",
+    "home_offense_run_g",
+    "home_offense_ops",
+    "home_offense_obp",
+    "home_offense_slg",
     "home_offense_kPct",
-    "ofensa_run_g_away",
-    "ofensa_ops_away",
-    "ofensa_obp_away",
-    "ofensa_slg_away",
+    "away_offense_run_g",
+    "away_offense_ops",
+    "away_offense_obp",
+    "away_offense_slg",
     "away_offense_kPct",
     // Weather
     "weather_temp",
@@ -1009,10 +1009,10 @@ function generateMLDatasetCSV(games) {
     "diff_starter_rest",
     "diff_bullpen_fatigue",
     // Game Results / ML Target Labels
-    "resultado_carreras_home",
-    "resultado_carreras_visitante",
-    "resultado_ganador",
-    "resultado_estado",
+    "home_score",
+    "away_score",
+    "winner",
+    "game_status",
     // VORTEX V10.3 METRICS (47 Variables)
     "lineup_confirmed",
     "lineup_source",
@@ -1063,20 +1063,51 @@ function generateMLDatasetCSV(games) {
     "away_pitcher_k_pct_vs_rhb",
     "park_factor_k",
     "park_factor_runs",
-    "park_factor_hr"
+    "park_factor_hr",
+    // ── BOXSCORE: Real starter stats from finished games (point-in-time target labels) ──
+    "home_starter_game_ip",
+    "home_starter_game_bf",
+    "home_starter_game_hits",
+    "home_starter_game_er",
+    "home_starter_game_k",
+    "home_starter_game_bb",
+    "home_starter_game_pitches",
+    "home_starter_game_hr",
+    "home_starter_game_score",
+    "away_starter_game_ip",
+    "away_starter_game_bf",
+    "away_starter_game_hits",
+    "away_starter_game_er",
+    "away_starter_game_k",
+    "away_starter_game_bb",
+    "away_starter_game_pitches",
+    "away_starter_game_hr",
+    "away_starter_game_score"
   ];
   const escapeStr = (val) => {
     if (val === void 0 || val === null || val === "") return "";
     return `"${String(val).replace(/"/g, '""')}"`;
   };
   const rows = games.map((g) => {
+    const gameId = String(g.id);
+    const pitPIT = pitLookups.pitchers?.[gameId];
+    const offPIT = pitLookups.offense?.[gameId];
+    const bsPIT = pitLookups.boxscore?.[gameId];
+    const hPit = pitPIT?.home ?? null;
+    const aPit = pitPIT?.away ?? null;
+    const hOff2 = offPIT?.home ?? null;
+    const aOff2 = offPIT?.away ?? null;
+    const hBs = bsPIT?.home ?? g.boxscore_stats?.home ?? null;
+    const aBs = bsPIT?.away ?? g.boxscore_stats?.away ?? null;
+    const canUseActualKs = isFinalGameStatus(g.game_result?.gameStatus);
+    const hActualKs = hBs?.strikeOuts ?? (canUseActualKs ? g.advanced_pitching?.home?.actualStrikeouts ?? "" : "");
+    const aActualKs = aBs?.strikeOuts ?? (canUseActualKs ? g.advanced_pitching?.away?.actualStrikeouts ?? "" : "");
     const hSplitRhp = g.offensive_splits?.home?.vsRhp;
     const hSplitLhp = g.offensive_splits?.home?.vsLhp;
     const aSplitRhp = g.offensive_splits?.away?.vsRhp;
     const aSplitLhp = g.offensive_splits?.away?.vsLhp;
     const fPitchers = g.fatigue_metrics?.pitchers;
     const fBullpen = g.fatigue_metrics?.bullpen;
-    const canUseActualKs = isFinalGameStatus(g.game_result?.gameStatus);
     const hL3Bf = calcLast3Stats(g.advanced_pitching?.home?.last3Bf1, g.advanced_pitching?.home?.last3Bf2, g.advanced_pitching?.home?.last3Bf3);
     const hL3Ip = calcLast3Stats(g.advanced_pitching?.home?.last3Ip1, g.advanced_pitching?.home?.last3Ip2, g.advanced_pitching?.home?.last3Ip3);
     const hL3K = calcLast3Stats(g.advanced_pitching?.home?.last3Ks1, g.advanced_pitching?.home?.last3Ks2, g.advanced_pitching?.home?.last3Ks3);
@@ -1121,29 +1152,29 @@ function generateMLDatasetCSV(games) {
       escapeStr(g.metadata.homeTeam),
       escapeStr(g.metadata.awayTeam),
       escapeStr(g.metadata.venue),
-      // Pitchers standard
+      // Pitchers standard — PIT-corrected seasonal stats (fallback to document if no lookup)
       escapeStr(g.pitchers.home.name),
-      g.pitchers.home.era ?? "",
-      g.pitchers.home.whip ?? "",
-      g.pitchers.home.kPct ?? "",
-      g.pitchers.home.bbPct ?? "",
-      g.pitchers.home.wins ?? "",
-      g.pitchers.home.losses ?? "",
-      escapeStr(g.pitchers.home.ip),
-      g.pitchers.home.totalStrikeouts ?? "",
-      g.pitchers.home.starts ?? "",
-      calculateIpPerStart(g.pitchers.home.ip, g.pitchers.home.starts),
+      hPit?.era ?? g.pitchers.home.era ?? "",
+      hPit?.whip ?? g.pitchers.home.whip ?? "",
+      hPit?.kPct ?? g.pitchers.home.kPct ?? "",
+      hPit?.bbPct ?? g.pitchers.home.bbPct ?? "",
+      hPit?.wins ?? g.pitchers.home.wins ?? "",
+      hPit?.losses ?? g.pitchers.home.losses ?? "",
+      escapeStr(hPit?.ip ?? g.pitchers.home.ip),
+      hPit?.totalStrikeouts ?? g.pitchers.home.totalStrikeouts ?? "",
+      hPit?.gs ?? g.pitchers.home.starts ?? "",
+      hPit?.ipAvgPerStart ?? calculateIpPerStart(g.pitchers.home.ip, g.pitchers.home.starts),
       escapeStr(g.pitchers.away.name),
-      g.pitchers.away.era ?? "",
-      g.pitchers.away.whip ?? "",
-      g.pitchers.away.kPct ?? "",
-      g.pitchers.away.bbPct ?? "",
-      g.pitchers.away.wins ?? "",
-      g.pitchers.away.losses ?? "",
-      escapeStr(g.pitchers.away.ip),
-      g.pitchers.away.totalStrikeouts ?? "",
-      g.pitchers.away.starts ?? "",
-      calculateIpPerStart(g.pitchers.away.ip, g.pitchers.away.starts),
+      aPit?.era ?? g.pitchers.away.era ?? "",
+      aPit?.whip ?? g.pitchers.away.whip ?? "",
+      aPit?.kPct ?? g.pitchers.away.kPct ?? "",
+      aPit?.bbPct ?? g.pitchers.away.bbPct ?? "",
+      aPit?.wins ?? g.pitchers.away.wins ?? "",
+      aPit?.losses ?? g.pitchers.away.losses ?? "",
+      escapeStr(aPit?.ip ?? g.pitchers.away.ip),
+      aPit?.totalStrikeouts ?? g.pitchers.away.totalStrikeouts ?? "",
+      aPit?.gs ?? g.pitchers.away.starts ?? "",
+      aPit?.ipAvgPerStart ?? calculateIpPerStart(g.pitchers.away.ip, g.pitchers.away.starts),
       // Bullpen standard
       g.bullpen.home.era ?? "",
       escapeStr(g.bullpen.home.usageLast3Days),
@@ -1152,11 +1183,6 @@ function generateMLDatasetCSV(games) {
       escapeStr(g.bullpen.away.usageLast3Days),
       g.bullpen.away.ipLast7Days ?? fBullpen?.away?.ipLast7Days ?? "",
       // Offense standard
-      g.offense.home.runsPerGame ?? "",
-      g.offense.home.ops ?? "",
-      g.offense.home.obp ?? "",
-      g.offense.home.slg ?? "",
-      getLineupAverageKPct(g.lineups?.home),
       g.offense.away.runsPerGame ?? "",
       g.offense.away.ops ?? "",
       g.offense.away.obp ?? "",
@@ -1229,7 +1255,8 @@ function generateMLDatasetCSV(games) {
       g.advanced_pitching?.home?.walkRate ?? "",
       g.advanced_pitching?.home?.swingingStrikePct ?? "",
       g.advanced_pitching?.home?.cswPct ?? "",
-      canUseActualKs ? g.advanced_pitching?.home?.actualStrikeouts ?? "" : "",
+      hActualKs,
+      // home_pitcher_actual_ks — from boxscore (real K) or advanced_pitching fallback
       g.advanced_pitching?.home?.last5KsAvg ?? "",
       g.advanced_pitching?.home?.last5KsStd ?? "",
       g.advanced_pitching?.home?.last5IpAvg ?? "",
@@ -1278,7 +1305,8 @@ function generateMLDatasetCSV(games) {
       g.advanced_pitching?.away?.walkRate ?? "",
       g.advanced_pitching?.away?.swingingStrikePct ?? "",
       g.advanced_pitching?.away?.cswPct ?? "",
-      canUseActualKs ? g.advanced_pitching?.away?.actualStrikeouts ?? "" : "",
+      aActualKs,
+      // away_pitcher_actual_ks — from boxscore (real K) or advanced_pitching fallback
       g.advanced_pitching?.away?.last5KsAvg ?? "",
       g.advanced_pitching?.away?.last5KsStd ?? "",
       g.advanced_pitching?.away?.last5IpAvg ?? "",
@@ -1315,15 +1343,15 @@ function generateMLDatasetCSV(games) {
       aL3Ip.min,
       aL3Bf.under15,
       aL3Bf.under18,
-      // Advanced Offense
+      // Advanced Offense — PIT-corrected where available, fallback to document
       g.advanced_offense?.home?.wOba ?? "",
       g.advanced_offense?.home?.xwOba ?? "",
-      g.advanced_offense?.home?.iso ?? "",
+      hOff2?.iso ?? g.advanced_offense?.home?.iso ?? "",
       g.advanced_offense?.home?.babip ?? "",
       g.advanced_offense?.home?.hardHitPct ?? "",
       g.advanced_offense?.home?.barrelPct ?? "",
       g.advanced_offense?.home?.contactPct ?? "",
-      g.advanced_offense?.home?.kPctVsPitchHand ?? "",
+      hOff2?.kPct ?? g.advanced_offense?.home?.kPctVsPitchHand ?? "",
       g.advanced_offense?.home?.projectedLineupKPct ?? "",
       g.advanced_offense?.home?.projectedLineupContactPctVsHand ?? "",
       g.advanced_offense?.home?.projectedLineupWhiffPctVsHand ?? "",
@@ -1334,12 +1362,12 @@ function generateMLDatasetCSV(games) {
       g.advanced_offense?.home?.whiffPctVsSplitter ?? "",
       g.advanced_offense?.away?.wOba ?? "",
       g.advanced_offense?.away?.xwOba ?? "",
-      g.advanced_offense?.away?.iso ?? "",
+      aOff2?.iso ?? g.advanced_offense?.away?.iso ?? "",
       g.advanced_offense?.away?.babip ?? "",
       g.advanced_offense?.away?.hardHitPct ?? "",
       g.advanced_offense?.away?.barrelPct ?? "",
       g.advanced_offense?.away?.contactPct ?? "",
-      g.advanced_offense?.away?.kPctVsPitchHand ?? "",
+      aOff2?.kPct ?? g.advanced_offense?.away?.kPctVsPitchHand ?? "",
       g.advanced_offense?.away?.projectedLineupKPct ?? "",
       g.advanced_offense?.away?.projectedLineupContactPctVsHand ?? "",
       g.advanced_offense?.away?.projectedLineupWhiffPctVsHand ?? "",
@@ -1415,7 +1443,28 @@ function generateMLDatasetCSV(games) {
       g.advanced_pitching?.away?.pitcher_k_pct_vs_rhb ?? "",
       g.park_factors?.index_so ?? 100,
       g.park_factors?.index_runs ?? 100,
-      g.park_factors?.index_hr ?? 100
+      g.park_factors?.index_hr ?? 100,
+      // ── Boxscore: real starter game stats (null for non-final games) ──
+      hBs?.inningsPitched ?? "",
+      hBs?.battersFaced ?? "",
+      hBs?.hitsAllowed ?? "",
+      hBs?.earnedRuns ?? "",
+      hBs?.strikeOuts ?? "",
+      // home_starter_game_k (= home_pitcher_actual_ks source)
+      hBs?.baseOnBalls ?? "",
+      hBs?.numberOfPitches ?? "",
+      hBs?.homeRunsAllowed ?? "",
+      hBs?.gameScore ?? "",
+      aBs?.inningsPitched ?? "",
+      aBs?.battersFaced ?? "",
+      aBs?.hitsAllowed ?? "",
+      aBs?.earnedRuns ?? "",
+      aBs?.strikeOuts ?? "",
+      // away_starter_game_k (= away_pitcher_actual_ks source)
+      aBs?.baseOnBalls ?? "",
+      aBs?.numberOfPitches ?? "",
+      aBs?.homeRunsAllowed ?? "",
+      aBs?.gameScore ?? ""
     ];
   });
   return [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
@@ -1515,7 +1564,7 @@ function generateDailyPlayerResultsCSV(games) {
     ...rows.map((row) => row.map(escapeCsvValue).join(","))
   ].join("\n");
 }
-function generateBattersCSV(games) {
+function generateBattersCSV(games, pitLookups = { pitchers: {} }) {
   if (!games || games.length === 0) return "";
   games.forEach((g) => enrichWithVortexMetrics(g));
   const headers = [
@@ -1876,6 +1925,9 @@ function generateBattersCSV(games) {
   };
   const rows = [];
   for (const game of games) {
+    const gameId = String(game.id);
+    const hPit = pitLookups.pitchers?.[gameId]?.home;
+    const aPit = pitLookups.pitchers?.[gameId]?.away;
     const hSplitRhp = game.offensive_splits?.home?.vsRhp;
     const hSplitLhp = game.offensive_splits?.home?.vsLhp;
     const aSplitRhp = game.offensive_splits?.away?.vsRhp;
@@ -1897,31 +1949,31 @@ function generateBattersCSV(games) {
       escapeStr(game.metadata.venue),
       // Pitchers standard
       escapeStr(game.pitchers.home.name),
-      game.pitchers.home.era ?? "",
-      game.pitchers.home.whip ?? "",
-      game.pitchers.home.kPct ?? "",
-      game.pitchers.home.bbPct ?? "",
-      game.pitchers.home.wins ?? "",
-      game.pitchers.home.losses ?? "",
-      escapeStr(game.pitchers.home.ip),
-      game.pitchers.home.totalStrikeouts ?? "",
-      game.pitchers.home.starts ?? "",
-      calculateIpPerStart(game.pitchers.home.ip, game.pitchers.home.starts),
+      hPit?.era ?? game.pitchers.home.era ?? "",
+      hPit?.whip ?? game.pitchers.home.whip ?? "",
+      hPit?.kPct ?? game.pitchers.home.kPct ?? "",
+      hPit?.bbPct ?? game.pitchers.home.bbPct ?? "",
+      hPit?.wins ?? game.pitchers.home.wins ?? "",
+      hPit?.losses ?? game.pitchers.home.losses ?? "",
+      escapeStr(hPit?.ip ?? game.pitchers.home.ip),
+      hPit?.totalStrikeouts ?? game.pitchers.home.totalStrikeouts ?? "",
+      hPit?.gs ?? game.pitchers.home.starts ?? "",
+      hPit?.ipAvgPerStart ?? calculateIpPerStart(game.pitchers.home.ip, game.pitchers.home.starts),
       game.pitchers.home.strikeoutProp ?? "",
       game.pitchers.home.strikeoutPropOverOdds ?? "",
       game.pitchers.home.strikeoutPropUnderOdds ?? "",
       escapeStr(game.pitchers.home.strikeoutPropSource),
       escapeStr(game.pitchers.away.name),
-      game.pitchers.away.era ?? "",
-      game.pitchers.away.whip ?? "",
-      game.pitchers.away.kPct ?? "",
-      game.pitchers.away.bbPct ?? "",
-      game.pitchers.away.wins ?? "",
-      game.pitchers.away.losses ?? "",
-      escapeStr(game.pitchers.away.ip),
-      game.pitchers.away.totalStrikeouts ?? "",
-      game.pitchers.away.starts ?? "",
-      calculateIpPerStart(game.pitchers.away.ip, game.pitchers.away.starts),
+      aPit?.era ?? game.pitchers.away.era ?? "",
+      aPit?.whip ?? game.pitchers.away.whip ?? "",
+      aPit?.kPct ?? game.pitchers.away.kPct ?? "",
+      aPit?.bbPct ?? game.pitchers.away.bbPct ?? "",
+      aPit?.wins ?? game.pitchers.away.wins ?? "",
+      aPit?.losses ?? game.pitchers.away.losses ?? "",
+      escapeStr(aPit?.ip ?? game.pitchers.away.ip),
+      aPit?.totalStrikeouts ?? game.pitchers.away.totalStrikeouts ?? "",
+      aPit?.gs ?? game.pitchers.away.starts ?? "",
+      aPit?.ipAvgPerStart ?? calculateIpPerStart(game.pitchers.away.ip, game.pitchers.away.starts),
       game.pitchers.away.strikeoutProp ?? "",
       game.pitchers.away.strikeoutPropOverOdds ?? "",
       game.pitchers.away.strikeoutPropUnderOdds ?? "",
@@ -2307,7 +2359,7 @@ function formatCsvTimestamp(isoString, dateFallback) {
   try {
     const d = new Date(isoString);
     if (isNaN(d.getTime())) return dateFallback ? `${dateFallback} 12:00:00` : "";
-    const pad = (n) => String(n).padStart(2, "0");
+    const pad = (n2) => String(n2).padStart(2, "0");
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   } catch (e) {
     return dateFallback ? `${dateFallback} 12:00:00` : "";
@@ -2717,6 +2769,81 @@ var ParkFactorsScraper = class {
 };
 var parkFactorsScraper = new ParkFactorsScraper();
 
+// src/etl/extractors/mlbBoxscorePitcherExtractor.ts
+import axios from "axios";
+var MLB_API_BASE = "https://statsapi.mlb.com/api/v1";
+var boxscoreCache = /* @__PURE__ */ new Map();
+function n(val) {
+  if (val === null || val === void 0 || val === "") return null;
+  const parsed = parseInt(String(val), 10);
+  return isNaN(parsed) ? null : parsed;
+}
+function calcGameScore(ip, k, bb, hits, er, hr) {
+  if (!ip || k === null || bb === null || hits === null || er === null || hr === null) return null;
+  const parts = String(ip).split(".");
+  const outs = parseInt(parts[0], 10) * 3 + parseInt(parts[1] || "0", 10);
+  const score = 50 + 3 * outs + k - 2 * hits - 4 * er - 2 * bb - hr;
+  return Math.round(score);
+}
+function extractStarterStats(teamData, allPlayers) {
+  const pitcherIds = teamData?.pitchers ?? [];
+  if (!pitcherIds.length) return null;
+  const starterId = pitcherIds[0];
+  const playerKey = `ID${starterId}`;
+  const playerData = allPlayers?.[playerKey];
+  if (!playerData) return null;
+  const stats = playerData?.stats?.pitching ?? {};
+  const name = playerData?.person?.fullName ?? null;
+  const ip = stats.inningsPitched ?? null;
+  const bf = n(stats.battersFaced);
+  const hits = n(stats.hits);
+  const runs = n(stats.runs);
+  const er = n(stats.earnedRuns);
+  const k = n(stats.strikeOuts);
+  const bb = n(stats.baseOnBalls);
+  const pitches = n(stats.numberOfPitches);
+  const hr = n(stats.homeRuns);
+  return {
+    playerId: starterId,
+    name,
+    inningsPitched: ip,
+    battersFaced: bf,
+    hitsAllowed: hits,
+    runsAllowed: runs,
+    earnedRuns: er,
+    strikeOuts: k,
+    baseOnBalls: bb,
+    numberOfPitches: pitches,
+    homeRunsAllowed: hr,
+    gameScore: calcGameScore(ip, k, bb, hits, er, hr)
+  };
+}
+async function getStarterBoxscoreStats(gamePk) {
+  const key = String(gamePk);
+  if (boxscoreCache.has(key)) {
+    return boxscoreCache.get(key);
+  }
+  try {
+    const res = await axios.get(`${MLB_API_BASE}/game/${gamePk}/boxscore`, {
+      timeout: 1e4
+    });
+    const boxscore = res.data;
+    const homePlayers = boxscore?.teams?.home?.players ?? {};
+    const awayPlayers = boxscore?.teams?.away?.players ?? {};
+    const result = {
+      home: extractStarterStats(boxscore?.teams?.home, homePlayers),
+      away: extractStarterStats(boxscore?.teams?.away, awayPlayers)
+    };
+    boxscoreCache.set(key, result);
+    return result;
+  } catch (err) {
+    console.warn(`[Boxscore] Error fetching game ${gamePk}:`, err);
+    const empty = { home: null, away: null };
+    boxscoreCache.set(key, empty);
+    return empty;
+  }
+}
+
 // server.ts
 var envPaths = [
   path3.join(process.cwd(), ".env.local"),
@@ -2767,6 +2894,37 @@ function readGamesDB() {
     console.error("Error reading database:", err);
     return {};
   }
+}
+var pitLookupsCache = null;
+var pitLookupsCacheTime = 0;
+function readPitLookups() {
+  const now = Date.now();
+  if (pitLookupsCache && now - pitLookupsCacheTime < 6e4) {
+    return pitLookupsCache;
+  }
+  const result = {};
+  try {
+    const pPath = path3.join(process.cwd(), "pitcher_stats_pit.json");
+    if (fs3.existsSync(pPath)) {
+      const parsed = JSON.parse(fs3.readFileSync(pPath, "utf-8"));
+      result.pitchers = parsed.pitchers || parsed;
+    }
+    const oPath = path3.join(process.cwd(), "offense_stats_pit.json");
+    if (fs3.existsSync(oPath)) {
+      const parsed = JSON.parse(fs3.readFileSync(oPath, "utf-8"));
+      result.offense = parsed.offense || parsed;
+    }
+    const bPath = path3.join(process.cwd(), "boxscore_game_stats.json");
+    if (fs3.existsSync(bPath)) {
+      const parsed = JSON.parse(fs3.readFileSync(bPath, "utf-8"));
+      result.boxscore = parsed.boxscore || parsed;
+    }
+    pitLookupsCache = result;
+    pitLookupsCacheTime = now;
+  } catch (err) {
+    console.error("Error reading PIT lookups:", err);
+  }
+  return result;
 }
 function writeGamesDB(data) {
   try {
@@ -2973,6 +3131,51 @@ function validateGamePayload(game, errorsLog) {
     errors: gameErrors
   };
 }
+function injectPitStats(games) {
+  const pitLookups = readPitLookups();
+  if (!pitLookups || !pitLookups.pitchers) {
+    console.log("[injectPitStats] No pitLookups or pitchers found!");
+    return games;
+  }
+  const clonedGames = JSON.parse(JSON.stringify(games));
+  for (const g of clonedGames) {
+    const gameId = String(g.id);
+    const pit = pitLookups.pitchers[gameId];
+    if (gameId === "823864") {
+      console.log(`[injectPitStats] Game 823864: pit found? ${!!pit}`);
+      if (pit) console.log(`[injectPitStats] pit.home.totalStrikeouts: ${pit.home?.totalStrikeouts}`);
+    }
+    if (pit) {
+      if (pit.home && g.pitchers?.home) {
+        Object.assign(g.pitchers.home, {
+          era: pit.home.era ?? g.pitchers.home.era,
+          whip: pit.home.whip ?? g.pitchers.home.whip,
+          kPct: pit.home.kPct ?? g.pitchers.home.kPct,
+          bbPct: pit.home.bbPct ?? g.pitchers.home.bbPct,
+          wins: pit.home.wins ?? g.pitchers.home.wins,
+          losses: pit.home.losses ?? g.pitchers.home.losses,
+          ip: pit.home.ip ?? g.pitchers.home.ip,
+          totalStrikeouts: pit.home.totalStrikeouts ?? g.pitchers.home.totalStrikeouts,
+          starts: pit.home.gs ?? g.pitchers.home.starts
+        });
+      }
+      if (pit.away && g.pitchers?.away) {
+        Object.assign(g.pitchers.away, {
+          era: pit.away.era ?? g.pitchers.away.era,
+          whip: pit.away.whip ?? g.pitchers.away.whip,
+          kPct: pit.away.kPct ?? g.pitchers.away.kPct,
+          bbPct: pit.away.bbPct ?? g.pitchers.away.bbPct,
+          wins: pit.away.wins ?? g.pitchers.away.wins,
+          losses: pit.away.losses ?? g.pitchers.away.losses,
+          ip: pit.away.ip ?? g.pitchers.away.ip,
+          totalStrikeouts: pit.away.totalStrikeouts ?? g.pitchers.away.totalStrikeouts,
+          starts: pit.away.gs ?? g.pitchers.away.starts
+        });
+      }
+    }
+  }
+  return clonedGames;
+}
 app2.get("/api/games", async (req, res) => {
   const { date } = req.query;
   if (!date || typeof date !== "string") {
@@ -2983,7 +3186,7 @@ app2.get("/api/games", async (req, res) => {
   let dateGames = db2[date] || [];
   if (dateGames.length > 0) {
     maybeBackfillTheOddsApiForDate(date, dateGames);
-    res.json({ games: dateGames, totalGames: countLocalGames(db2) });
+    res.json({ games: injectPitStats(dateGames), totalGames: countLocalGames(db2) });
     return;
   }
   const firestoreGames = await loadGamesByDateFromFirestore(date);
@@ -2993,7 +3196,7 @@ app2.get("/api/games", async (req, res) => {
     dateGames = db2[date] || [];
   }
   maybeBackfillTheOddsApiForDate(date, dateGames);
-  res.json({ games: dateGames, totalGames: countLocalGames(db2) });
+  res.json({ games: injectPitStats(dateGames), totalGames: countLocalGames(db2) });
 });
 function flattenGameToJSON(g) {
   const hSplitRhp = g.offensive_splits?.home?.vsRhp;
@@ -3006,19 +3209,19 @@ function flattenGameToJSON(g) {
   const canUseBettingLines = hasRealBettingLines2(g);
   return {
     game_id: g.id,
-    fecha: g.metadata.date,
-    hora: g.metadata.time,
-    equipo_local: g.metadata.homeTeam,
-    equipo_visitante: g.metadata.awayTeam,
-    estadio: g.metadata.venue,
-    local_pitcher: g.pitchers.home.name,
-    local_pitcher_era: g.pitchers.home.era,
-    local_pitcher_whip: g.pitchers.home.whip,
-    local_pitcher_kPct: g.pitchers.home.kPct,
-    local_pitcher_bbPct: g.pitchers.home.bbPct,
-    local_pitcher_wins: g.pitchers.home.wins,
-    local_pitcher_losses: g.pitchers.home.losses,
-    local_pitcher_ip: g.pitchers.home.ip,
+    date: g.metadata.date,
+    time: g.metadata.time,
+    home_team: g.metadata.homeTeam,
+    away_team: g.metadata.awayTeam,
+    venue: g.metadata.venue,
+    home_pitcher: g.pitchers.home.name,
+    home_pitcher_era: g.pitchers.home.era,
+    home_pitcher_whip: g.pitchers.home.whip,
+    home_pitcher_kPct: g.pitchers.home.kPct,
+    home_pitcher_bbPct: g.pitchers.home.bbPct,
+    home_pitcher_wins: g.pitchers.home.wins,
+    home_pitcher_losses: g.pitchers.home.losses,
+    home_pitcher_ip: g.pitchers.home.ip,
     away_pitcher: g.pitchers.away.name,
     away_pitcher_era: g.pitchers.away.era,
     away_pitcher_whip: g.pitchers.away.whip,
@@ -3027,21 +3230,21 @@ function flattenGameToJSON(g) {
     away_pitcher_wins: g.pitchers.away.wins,
     away_pitcher_losses: g.pitchers.away.losses,
     away_pitcher_ip: g.pitchers.away.ip,
-    bullpen_era_local: g.bullpen.home.era,
-    bullpen_usage_local: g.bullpen.home.usageLast3Days,
-    bullpen_ip_7d_local: g.bullpen.home.ipLast7Days,
-    bullpen_era_away: g.bullpen.away.era,
-    bullpen_usage_away: g.bullpen.away.usageLast3Days,
-    bullpen_ip_7d_away: g.bullpen.away.ipLast7Days,
-    ofensa_run_g_local: g.offense.home.runsPerGame,
-    ofensa_ops_local: g.offense.home.ops,
-    ofensa_obp_local: g.offense.home.obp,
-    ofensa_slg_local: g.offense.home.slg,
+    home_bullpen_era: g.bullpen.home.era,
+    home_bullpen_usage: g.bullpen.home.usageLast3Days,
+    home_bullpen_ip_7d: g.bullpen.home.ipLast7Days,
+    away_bullpen_era: g.bullpen.away.era,
+    away_bullpen_usage: g.bullpen.away.usageLast3Days,
+    away_bullpen_ip_7d: g.bullpen.away.ipLast7Days,
+    home_offense_run_g: g.offense.home.runsPerGame,
+    home_offense_ops: g.offense.home.ops,
+    home_offense_obp: g.offense.home.obp,
+    home_offense_slg: g.offense.home.slg,
     home_offense_kPct: g.lineups?.home && g.lineups.home.length > 0 ? parseFloat((g.lineups.home.reduce((sum, p) => sum + (p.strikeout_pct ?? p.kPct ?? 0), 0) / g.lineups.home.length).toFixed(2)) : null,
-    ofensa_run_g_away: g.offense.away.runsPerGame,
-    ofensa_ops_away: g.offense.away.ops,
-    ofensa_obp_away: g.offense.away.obp,
-    ofensa_slg_away: g.offense.away.slg,
+    away_offense_run_g: g.offense.away.runsPerGame,
+    away_offense_ops: g.offense.away.ops,
+    away_offense_obp: g.offense.away.obp,
+    away_offense_slg: g.offense.away.slg,
     away_offense_kPct: g.lineups?.away && g.lineups.away.length > 0 ? parseFloat((g.lineups.away.reduce((sum, p) => sum + (p.strikeout_pct ?? p.kPct ?? 0), 0) / g.lineups.away.length).toFixed(2)) : null,
     weather_temp: g.weather?.temp ?? null,
     weather_humidity: g.weather?.humidity ?? null,
@@ -3308,12 +3511,12 @@ function flattenGameToJSON(g) {
     diff_starter_rest: g.model_features?.diffStarterRest ?? null,
     diff_bullpen_fatigue: g.model_features?.diffBullpenFatigue ?? null,
     line_source: getBettingLineSource2(g),
-    resultado_carreras_local: g.game_result?.homeScore ?? null,
-    resultado_carreras_visitante: g.game_result?.awayScore ?? null,
-    resultado_ganador: g.game_result?.winner ?? null,
-    resultado_runline_cubierto: g.game_result?.runLineCovered ?? null,
-    resultado_overunder: g.game_result?.overUnderResult ?? null,
-    resultado_estado: g.game_result?.gameStatus ?? "Scheduled"
+    home_score: g.game_result?.homeScore ?? null,
+    away_score: g.game_result?.awayScore ?? null,
+    winner: g.game_result?.winner ?? null,
+    runline_covered: g.game_result?.runLineCovered ?? null,
+    over_under_result: g.game_result?.overUnderResult ?? null,
+    game_status: g.game_result?.gameStatus ?? "Scheduled"
   };
 }
 app2.get("/api/extracted-dates", async (req, res) => {
@@ -3402,9 +3605,11 @@ app2.get("/api/ml-dataset/csv", (req, res) => {
       const games = db2[date] || [];
       allGames.push(...games);
     }
-    const csvContent = generateMLDatasetCSV(allGames);
+    const pitLookups = readPitLookups();
+    const csvContent = generateMLDatasetCSV(allGames, pitLookups);
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=mlb_ml_dataset.csv");
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.send(csvContent);
   } catch (err) {
     console.error("Error generating ML CSV:", err);
@@ -3457,12 +3662,13 @@ app2.get("/api/batter-total-bases/csv", async (req, res) => {
 });
 app2.get("/api/batters-dataset/csv", async (req, res) => {
   try {
-    const { dates } = req.query;
+    const { dates, date } = req.query;
     const db2 = readGamesDB();
     const allGames = [];
     let filterDates = [];
-    if (typeof dates === "string" && dates.trim() !== "") {
-      filterDates = dates.split(",").map((d) => d.trim());
+    const queryDates = dates || date;
+    if (typeof queryDates === "string" && queryDates.trim() !== "") {
+      filterDates = queryDates.split(",").map((d) => d.trim());
     }
     for (const dateKey of Object.keys(db2)) {
       if (filterDates.length > 0 && !filterDates.includes(dateKey)) {
@@ -3471,14 +3677,39 @@ app2.get("/api/batters-dataset/csv", async (req, res) => {
       const games = db2[dateKey] || [];
       allGames.push(...games);
     }
+    const pitLookups = readPitLookups();
     const enrichedGames = await enrichGamesWithSavantBatterContact(await enrichGamesWithTotalBasesProps(allGames));
-    const csvContent = generateBattersCSV(enrichedGames);
+    const csvContent = generateBattersCSV(enrichedGames, pitLookups);
     res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", `attachment; filename=batters_dataset_${dates ? "batch" : "all"}.csv`);
+    res.setHeader("Content-Disposition", `attachment; filename=batters_dataset_${queryDates ? "batch" : "all"}.csv`);
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.send(csvContent);
   } catch (err) {
     console.error("Error generating Batters CSV:", err);
     res.status(500).send("Error al generar CSV de bateadores");
+  }
+});
+app2.get("/api/game/:gameId", async (req, res) => {
+  try {
+    const { gameId } = req.params;
+    const db2 = readGamesDB();
+    let gameData = null;
+    for (const date in db2) {
+      const found = db2[date]?.find((g) => String(g.id) === gameId);
+      if (found) {
+        gameData = found;
+        break;
+      }
+    }
+    if (!gameData) {
+      res.status(404).json({ error: "Juego no encontrado" });
+      return;
+    }
+    const pitGames = injectPitStats([gameData]);
+    res.json(pitGames[0]);
+  } catch (err) {
+    console.error("Error fetching single game:", err);
+    res.status(500).send("Error fetching game");
   }
 });
 app2.get("/api/game/:gameId/csv", async (req, res) => {
@@ -3532,8 +3763,8 @@ app2.post("/api/errors/clear", (req, res) => {
   res.json({ status: "success", message: "Logs de errores vaciados." });
 });
 function safeFloat(val, fallback = null) {
-  const n = parseFloat(String(val));
-  return isNaN(n) ? fallback : n;
+  const n2 = parseFloat(String(val));
+  return isNaN(n2) ? fallback : n2;
 }
 var GAME_TIME_ZONE = "America/New_York";
 function formatGameTime(gameDateISO) {
@@ -4231,8 +4462,10 @@ async function fetchRealMLBGameData(gamePk, homeTeamId, awayTeamId, date) {
       if (!pitcher?.id) return null;
       try {
         const [statsRes, splitsRes, personRes] = await Promise.all([
-          fetchWithTimeout(`https://statsapi.mlb.com/api/v1/people/${pitcher.id}/stats?stats=season&season=${season}&group=pitching`),
-          fetchWithTimeout(`https://statsapi.mlb.com/api/v1/people/${pitcher.id}/stats?stats=statSplits&season=${season}&group=pitching&sitCodes=vl,vr`),
+          fetchWithTimeout(`https://statsapi.mlb.com/api/v1/people/${pitcher.id}/stats?stats=season&season=${season}&group=pitching&startDate=${season}-01-01&endDate=${date}`),
+          // FIX: point-in-time — stats as of game date
+          fetchWithTimeout(`https://statsapi.mlb.com/api/v1/people/${pitcher.id}/stats?stats=statSplits&season=${season}&group=pitching&sitCodes=vl,vr&startDate=${season}-01-01&endDate=${date}`),
+          // FIX: point-in-time
           fetchWithTimeout(`https://statsapi.mlb.com/api/v1/people/${pitcher.id}`)
         ]);
         const statsData = statsRes.ok ? await statsRes.json() : {};
@@ -6411,8 +6644,20 @@ app2.post("/api/harvest", async (req, res) => {
         gameDataParsed.game_result = gameResult;
       }
       const canUseActualKs = isFinalGameStatus2(gameDataParsed.game_result?.gameStatus);
-      gameDataParsed.advanced_pitching.home.actualStrikeouts = canUseActualKs ? realMLBData.currentPitching?.home?.actualStrikeouts ?? null : null;
-      gameDataParsed.advanced_pitching.away.actualStrikeouts = canUseActualKs ? realMLBData.currentPitching?.away?.actualStrikeouts ?? null : null;
+      if (canUseActualKs) {
+        try {
+          const bsStats = await getStarterBoxscoreStats(gameId);
+          gameDataParsed.boxscore_stats = bsStats;
+          gameDataParsed.advanced_pitching.home.actualStrikeouts = bsStats.home?.strikeOuts ?? null;
+          gameDataParsed.advanced_pitching.away.actualStrikeouts = bsStats.away?.strikeOuts ?? null;
+        } catch (err) {
+          console.warn(`Could not fetch boxscore for ${gameId}:`, err);
+        }
+      } else {
+        gameDataParsed.boxscore_stats = null;
+        gameDataParsed.advanced_pitching.home.actualStrikeouts = null;
+        gameDataParsed.advanced_pitching.away.actualStrikeouts = null;
+      }
       const validationResult = validateGamePayload(gameDataParsed, errorsCollection);
       gameDataParsed.validation = {
         isValid: validationResult.isValid,

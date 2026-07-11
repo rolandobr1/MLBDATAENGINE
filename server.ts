@@ -52,10 +52,11 @@ import {
   MLBGame,
   BettingLines
 } from "./src/types";
-import { generateMLDatasetCSV, generateBattersCSV, generateSingleGameCSV, generateDailyPlayerResultsCSV, generateKPropsLinesCSV, generateBatterTotalBasesLinesCSV } from "./src/utils";
+import { PITLookups, generateMLDatasetCSV, generateBattersCSV, generateSingleGameCSV, generateDailyPlayerResultsCSV, generateKPropsLinesCSV, generateBatterTotalBasesLinesCSV } from "./src/utils";
 import { enrichWithVortexMetrics } from "./src/etl/transformers/vortexMetrics";
 import { savantCache } from "./src/etl/extractors/savantScraper";
 import { parkFactorsScraper } from "./src/etl/extractors/parkFactorsScraper";
+import { getStarterBoxscoreStats } from "./src/etl/extractors/mlbBoxscorePitcherExtractor";
 
 const app = express();
 app.use(express.json());
@@ -96,6 +97,41 @@ function readGamesDB(): Record<string, any[]> {
     console.error("Error reading database:", err);
     return {};
   }
+}
+
+let pitLookupsCache: PITLookups | null = null;
+let pitLookupsCacheTime = 0;
+function readPitLookups(): PITLookups {
+  const now = Date.now();
+  if (pitLookupsCache && (now - pitLookupsCacheTime < 60000)) {
+    return pitLookupsCache;
+  }
+  const result: PITLookups = {};
+  try {
+    const pPath = path.join(process.cwd(), "pitcher_stats_pit.json");
+    if (fs.existsSync(pPath)) {
+      const parsed = JSON.parse(fs.readFileSync(pPath, "utf-8"));
+      result.pitchers = parsed.pitchers || parsed;
+    }
+    
+    const oPath = path.join(process.cwd(), "offense_stats_pit.json");
+    if (fs.existsSync(oPath)) {
+      const parsed = JSON.parse(fs.readFileSync(oPath, "utf-8"));
+      result.offense = parsed.offense || parsed;
+    }
+    
+    const bPath = path.join(process.cwd(), "boxscore_game_stats.json");
+    if (fs.existsSync(bPath)) {
+      const parsed = JSON.parse(fs.readFileSync(bPath, "utf-8"));
+      result.boxscore = parsed.boxscore || parsed;
+    }
+    
+    pitLookupsCache = result;
+    pitLookupsCacheTime = now;
+  } catch (err) {
+    console.error("Error reading PIT lookups:", err);
+  }
+  return result;
 }
 
 function writeGamesDB(data: Record<string, any[]>) {
@@ -183,6 +219,13 @@ function maybeBackfillTheOddsApiForDate(date: string, dateGames: any[]) {
   if (!date || !Array.isArray(dateGames) || dateGames.length === 0) return;
   if (!process.env.ODDS_API_KEY) return;
   if (oddsApiBackfillsInFlight.has(date)) return;
+
+  // Evitar backfill para fechas pasadas, ya que destruiría los props de Rotowire de ese día
+  const now = new Date();
+  const nyTimeStr = now.toLocaleString("en-US", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
+  const [month, day, year] = nyTimeStr.split("/");
+  const todayStr = `${year}-${month}-${day}`;
+  if (date < todayStr) return;
 
   const cacheFile = path.join(process.cwd(), `odds_cache_${date}.json`);
   const hasOddsCache = fs.existsSync(cacheFile);
@@ -363,6 +406,53 @@ function validateGamePayload(game: any, errorsLog: any[]): any {
 // API Routes
 // --------------------------------------------------------------------
 
+function injectPitStats(games: any[]): any[] {
+  const pitLookups = readPitLookups();
+  if (!pitLookups || !pitLookups.pitchers) {
+    console.log("[injectPitStats] No pitLookups or pitchers found!");
+    return games;
+  }
+  
+  const clonedGames = JSON.parse(JSON.stringify(games));
+  for (const g of clonedGames) {
+    const gameId = String(g.id);
+    const pit = pitLookups.pitchers[gameId];
+    if (gameId === "823864") {
+      console.log(`[injectPitStats] Game 823864: pit found? ${!!pit}`);
+      if (pit) console.log(`[injectPitStats] pit.home.totalStrikeouts: ${pit.home?.totalStrikeouts}`);
+    }
+    if (pit) {
+      if (pit.home && g.pitchers?.home) {
+        Object.assign(g.pitchers.home, {
+          era: pit.home.era ?? g.pitchers.home.era,
+          whip: pit.home.whip ?? g.pitchers.home.whip,
+          kPct: pit.home.kPct ?? g.pitchers.home.kPct,
+          bbPct: pit.home.bbPct ?? g.pitchers.home.bbPct,
+          wins: pit.home.wins ?? g.pitchers.home.wins,
+          losses: pit.home.losses ?? g.pitchers.home.losses,
+          ip: pit.home.ip ?? g.pitchers.home.ip,
+          totalStrikeouts: pit.home.totalStrikeouts ?? g.pitchers.home.totalStrikeouts,
+          starts: pit.home.gs ?? g.pitchers.home.starts
+        });
+      }
+      if (pit.away && g.pitchers?.away) {
+        Object.assign(g.pitchers.away, {
+          era: pit.away.era ?? g.pitchers.away.era,
+          whip: pit.away.whip ?? g.pitchers.away.whip,
+          kPct: pit.away.kPct ?? g.pitchers.away.kPct,
+          bbPct: pit.away.bbPct ?? g.pitchers.away.bbPct,
+          wins: pit.away.wins ?? g.pitchers.away.wins,
+          losses: pit.away.losses ?? g.pitchers.away.losses,
+          ip: pit.away.ip ?? g.pitchers.away.ip,
+          totalStrikeouts: pit.away.totalStrikeouts ?? g.pitchers.away.totalStrikeouts,
+          starts: pit.away.gs ?? g.pitchers.away.starts
+        });
+      }
+    }
+  }
+  return clonedGames;
+}
+
 // Get games schedule for a specific date
 app.get("/api/games", async (req, res) => {
   const { date } = req.query;
@@ -374,14 +464,12 @@ app.get("/api/games", async (req, res) => {
   let db = readGamesDB();
   let dateGames = db[date] || [];
 
-  // Si hay datos locales, respondemos INMEDIATAMENTE sin esperar a Firestore
   if (dateGames.length > 0) {
     maybeBackfillTheOddsApiForDate(date, dateGames);
-    res.json({ games: dateGames, totalGames: countLocalGames(db) });
+    res.json({ games: injectPitStats(dateGames), totalGames: countLocalGames(db) });
     return;
   }
 
-  // Solo si no hay datos locales, consultamos Firestore (bloqueante)
   const firestoreGames = await loadGamesByDateFromFirestore(date);
   if (firestoreGames.length > 0) {
     mergeGamesIntoLocalDB(firestoreGames);
@@ -389,7 +477,7 @@ app.get("/api/games", async (req, res) => {
     dateGames = db[date] || [];
   }
   maybeBackfillTheOddsApiForDate(date, dateGames);
-  res.json({ games: dateGames, totalGames: countLocalGames(db) });
+  res.json({ games: injectPitStats(dateGames), totalGames: countLocalGames(db) });
 });
 
 // Helper function to flatten games for ML JSON endpoint
@@ -405,19 +493,19 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
 
   return {
     game_id: g.id,
-    fecha: g.metadata.date,
-    hora: g.metadata.time,
-    equipo_local: g.metadata.homeTeam,
-    equipo_visitante: g.metadata.awayTeam,
-    estadio: g.metadata.venue,
-    local_pitcher: g.pitchers.home.name,
-    local_pitcher_era: g.pitchers.home.era,
-    local_pitcher_whip: g.pitchers.home.whip,
-    local_pitcher_kPct: g.pitchers.home.kPct,
-    local_pitcher_bbPct: g.pitchers.home.bbPct,
-    local_pitcher_wins: g.pitchers.home.wins,
-    local_pitcher_losses: g.pitchers.home.losses,
-    local_pitcher_ip: g.pitchers.home.ip,
+    date: g.metadata.date,
+    time: g.metadata.time,
+    home_team: g.metadata.homeTeam,
+    away_team: g.metadata.awayTeam,
+    venue: g.metadata.venue,
+    home_pitcher: g.pitchers.home.name,
+    home_pitcher_era: g.pitchers.home.era,
+    home_pitcher_whip: g.pitchers.home.whip,
+    home_pitcher_kPct: g.pitchers.home.kPct,
+    home_pitcher_bbPct: g.pitchers.home.bbPct,
+    home_pitcher_wins: g.pitchers.home.wins,
+    home_pitcher_losses: g.pitchers.home.losses,
+    home_pitcher_ip: g.pitchers.home.ip,
     away_pitcher: g.pitchers.away.name,
     away_pitcher_era: g.pitchers.away.era,
     away_pitcher_whip: g.pitchers.away.whip,
@@ -426,23 +514,23 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
     away_pitcher_wins: g.pitchers.away.wins,
     away_pitcher_losses: g.pitchers.away.losses,
     away_pitcher_ip: g.pitchers.away.ip,
-    bullpen_era_local: g.bullpen.home.era,
-    bullpen_usage_local: g.bullpen.home.usageLast3Days,
-    bullpen_ip_7d_local: g.bullpen.home.ipLast7Days,
-    bullpen_era_away: g.bullpen.away.era,
-    bullpen_usage_away: g.bullpen.away.usageLast3Days,
-    bullpen_ip_7d_away: g.bullpen.away.ipLast7Days,
-    ofensa_run_g_local: g.offense.home.runsPerGame,
-    ofensa_ops_local: g.offense.home.ops,
-    ofensa_obp_local: g.offense.home.obp,
-    ofensa_slg_local: g.offense.home.slg,
+    home_bullpen_era: g.bullpen.home.era,
+    home_bullpen_usage: g.bullpen.home.usageLast3Days,
+    home_bullpen_ip_7d: g.bullpen.home.ipLast7Days,
+    away_bullpen_era: g.bullpen.away.era,
+    away_bullpen_usage: g.bullpen.away.usageLast3Days,
+    away_bullpen_ip_7d: g.bullpen.away.ipLast7Days,
+    home_offense_run_g: g.offense.home.runsPerGame,
+    home_offense_ops: g.offense.home.ops,
+    home_offense_obp: g.offense.home.obp,
+    home_offense_slg: g.offense.home.slg,
     home_offense_kPct: g.lineups?.home && g.lineups.home.length > 0 
       ? parseFloat((g.lineups.home.reduce((sum, p) => sum + (p.strikeout_pct ?? p.kPct ?? 0), 0) / g.lineups.home.length).toFixed(2)) 
       : null,
-    ofensa_run_g_away: g.offense.away.runsPerGame,
-    ofensa_ops_away: g.offense.away.ops,
-    ofensa_obp_away: g.offense.away.obp,
-    ofensa_slg_away: g.offense.away.slg,
+    away_offense_run_g: g.offense.away.runsPerGame,
+    away_offense_ops: g.offense.away.ops,
+    away_offense_obp: g.offense.away.obp,
+    away_offense_slg: g.offense.away.slg,
     away_offense_kPct: g.lineups?.away && g.lineups.away.length > 0 
       ? parseFloat((g.lineups.away.reduce((sum, p) => sum + (p.strikeout_pct ?? p.kPct ?? 0), 0) / g.lineups.away.length).toFixed(2)) 
       : null,
@@ -711,12 +799,12 @@ function flattenGameToJSON(g: MLBGame): Record<string, any> {
     diff_starter_rest: g.model_features?.diffStarterRest ?? null,
     diff_bullpen_fatigue: g.model_features?.diffBullpenFatigue ?? null,
     line_source: getBettingLineSource(g),
-    resultado_carreras_local: g.game_result?.homeScore ?? null,
-    resultado_carreras_visitante: g.game_result?.awayScore ?? null,
-    resultado_ganador: g.game_result?.winner ?? null,
-    resultado_runline_cubierto: g.game_result?.runLineCovered ?? null,
-    resultado_overunder: g.game_result?.overUnderResult ?? null,
-    resultado_estado: g.game_result?.gameStatus ?? "Scheduled"
+    home_score: g.game_result?.homeScore ?? null,
+    away_score: g.game_result?.awayScore ?? null,
+    winner: g.game_result?.winner ?? null,
+    runline_covered: g.game_result?.runLineCovered ?? null,
+    over_under_result: g.game_result?.overUnderResult ?? null,
+    game_status: g.game_result?.gameStatus ?? "Scheduled"
   };
 }
 
@@ -826,9 +914,11 @@ app.get("/api/ml-dataset/csv", (req, res) => {
       allGames.push(...games);
     }
     
-    const csvContent = generateMLDatasetCSV(allGames);
+    const pitLookups = readPitLookups();
+    const csvContent = generateMLDatasetCSV(allGames, pitLookups);
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=mlb_ml_dataset.csv");
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.send(csvContent);
   } catch (err) {
     console.error("Error generating ML CSV:", err);
@@ -887,14 +977,15 @@ app.get("/api/batter-total-bases/csv", async (req, res) => {
 // Download Batters dataset as CSV
 app.get("/api/batters-dataset/csv", async (req, res) => {
   try {
-    const { dates } = req.query;
+    const { dates, date } = req.query;
     const db = readGamesDB();
     const allGames: MLBGame[] = [];
     
     // Parse dates if provided
     let filterDates: string[] = [];
-    if (typeof dates === "string" && dates.trim() !== "") {
-      filterDates = dates.split(",").map(d => d.trim());
+    const queryDates = dates || date;
+    if (typeof queryDates === "string" && queryDates.trim() !== "") {
+      filterDates = queryDates.split(",").map(d => d.trim());
     }
 
     for (const dateKey of Object.keys(db)) {
@@ -905,14 +996,43 @@ app.get("/api/batters-dataset/csv", async (req, res) => {
       allGames.push(...games);
     }
     
+    const pitLookups = readPitLookups();
     const enrichedGames = await enrichGamesWithSavantBatterContact(await enrichGamesWithTotalBasesProps(allGames));
-    const csvContent = generateBattersCSV(enrichedGames);
+    const csvContent = generateBattersCSV(enrichedGames, pitLookups);
     res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", `attachment; filename=batters_dataset_${dates ? "batch" : "all"}.csv`);
+    res.setHeader("Content-Disposition", `attachment; filename=batters_dataset_${queryDates ? "batch" : "all"}.csv`);
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.send(csvContent);
   } catch (err) {
     console.error("Error generating Batters CSV:", err);
     res.status(500).send("Error al generar CSV de bateadores");
+  }
+});
+
+// Download one game's enriched dataset as CSV
+app.get("/api/game/:gameId", async (req, res) => {
+  try {
+    const { gameId } = req.params;
+    const db = readGamesDB();
+    let gameData = null;
+    for (const date in db) {
+      const found = db[date]?.find((g: any) => String(g.id) === gameId);
+      if (found) {
+        gameData = found;
+        break;
+      }
+    }
+    if (!gameData) {
+      res.status(404).json({ error: "Juego no encontrado" });
+      return;
+    }
+    
+    // Inject PIT stats
+    const pitGames = injectPitStats([gameData]);
+    res.json(pitGames[0]);
+  } catch (err) {
+    console.error("Error fetching single game:", err);
+    res.status(500).send("Error fetching game");
   }
 });
 
@@ -1720,18 +1840,26 @@ async function fetchDataStreakPitcherStrikeoutProps(date: string, forceRefresh =
   const dataStreakKs = await fetchDataStreakSheetRows(date, "mlb_pitcher_ks", "datastreak_pitcher_ks", forceRefresh, false);
   
   let rotowireKs: any[] = [];
-  try {
-    const rwData = await scrapeStrikeoutProps();
-    rotowireKs = rwData.map(p => ({
-      player_name: p.playerName,
-      line: String(p.line),
-      odds: p.overOdds !== null ? String(p.overOdds) : null,
-      under_odds: p.underOdds !== null ? String(p.underOdds) : null,
-      vendor: p.sportsbook || "rotowire",
-      source: "rotowire"
-    }));
-  } catch(e) {
-    console.warn("No se pudo obtener Rotowire Ks:", e);
+  
+  const now = new Date();
+  const nyTimeStr = now.toLocaleString("en-US", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
+  const [month, day, year] = nyTimeStr.split("/");
+  const todayStr = `${year}-${month}-${day}`;
+  
+  if (date >= todayStr) {
+    try {
+      const rwData = await scrapeStrikeoutProps();
+      rotowireKs = rwData.map(p => ({
+        player_name: p.playerName,
+        line: String(p.line),
+        odds: p.overOdds !== null ? String(p.overOdds) : null,
+        under_odds: p.underOdds !== null ? String(p.underOdds) : null,
+        vendor: p.sportsbook || "rotowire",
+        source: "rotowire"
+      }));
+    } catch(e) {
+      console.warn("No se pudo obtener Rotowire Ks:", e);
+    }
   }
 
   return [...rotowireKs, ...dataStreakKs];
@@ -2073,8 +2201,8 @@ async function fetchRealMLBGameData(
       if (!pitcher?.id) return null;
       try {
         const [statsRes, splitsRes, personRes] = await Promise.all([
-          fetchWithTimeout(`https://statsapi.mlb.com/api/v1/people/${pitcher.id}/stats?stats=season&season=${season}&group=pitching`),
-          fetchWithTimeout(`https://statsapi.mlb.com/api/v1/people/${pitcher.id}/stats?stats=statSplits&season=${season}&group=pitching&sitCodes=vl,vr`),
+          fetchWithTimeout(`https://statsapi.mlb.com/api/v1/people/${pitcher.id}/stats?stats=season&season=${season}&group=pitching&startDate=${season}-01-01&endDate=${date}`), // FIX: point-in-time — stats as of game date
+          fetchWithTimeout(`https://statsapi.mlb.com/api/v1/people/${pitcher.id}/stats?stats=statSplits&season=${season}&group=pitching&sitCodes=vl,vr&startDate=${season}-01-01&endDate=${date}`), // FIX: point-in-time
           fetchWithTimeout(`https://statsapi.mlb.com/api/v1/people/${pitcher.id}`)
         ]);
 
@@ -4604,12 +4732,23 @@ app.post("/api/harvest", async (req, res) => {
       }
 
       const canUseActualKs = isFinalGameStatus(gameDataParsed.game_result?.gameStatus);
-      gameDataParsed.advanced_pitching.home.actualStrikeouts = canUseActualKs
-        ? (realMLBData.currentPitching?.home?.actualStrikeouts ?? null)
-        : null;
-      gameDataParsed.advanced_pitching.away.actualStrikeouts = canUseActualKs
-        ? (realMLBData.currentPitching?.away?.actualStrikeouts ?? null)
-        : null;
+      
+      // Fetch Boxscore for finished games
+      if (canUseActualKs) {
+        try {
+          const bsStats = await getStarterBoxscoreStats(gameId);
+          gameDataParsed.boxscore_stats = bsStats;
+          
+          gameDataParsed.advanced_pitching.home.actualStrikeouts = bsStats.home?.strikeOuts ?? null;
+          gameDataParsed.advanced_pitching.away.actualStrikeouts = bsStats.away?.strikeOuts ?? null;
+        } catch (err) {
+          console.warn(`Could not fetch boxscore for ${gameId}:`, err);
+        }
+      } else {
+        gameDataParsed.boxscore_stats = null;
+        gameDataParsed.advanced_pitching.home.actualStrikeouts = null;
+        gameDataParsed.advanced_pitching.away.actualStrikeouts = null;
+      }
 
       // Validation Layer
       const validationResult = validateGamePayload(gameDataParsed, errorsCollection);

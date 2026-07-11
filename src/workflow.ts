@@ -5,6 +5,7 @@ import { validateGameData } from './etl/transformers/gameValidator';
 import { flattenGameForML } from './etl/transformers/mlFormatter';
 import { saveGameData } from './services/firestoreService';
 import { enrichWithVortexMetrics } from './etl/transformers/vortexMetrics';
+import { getStarterBoxscoreStats } from './etl/extractors/mlbBoxscorePitcherExtractor';
 import { appendRowToMLSheet } from './services/googleSheetsService';
 
 export const runDailyPipeline = async (dateStr: string) => {
@@ -141,6 +142,24 @@ export const runDailyPipeline = async (dateStr: string) => {
 
       let validGame: any = validation.data;
       validGame = enrichWithVortexMetrics(validGame);
+      
+      const statusStr = String(validGame.game_result?.gameStatus || "").toLowerCase();
+      const isFinal = statusStr.includes("final") || statusStr === "game over" || statusStr === "completed early" || statusStr === "completed";
+      
+      if (isFinal) {
+        try {
+          const bsStats = await getStarterBoxscoreStats(gameId);
+          validGame.boxscore_stats = bsStats;
+          if (validGame.advanced_pitching?.home) {
+            validGame.advanced_pitching.home.actualStrikeouts = bsStats.home?.strikeOuts ?? null;
+          }
+          if (validGame.advanced_pitching?.away) {
+            validGame.advanced_pitching.away.actualStrikeouts = bsStats.away?.strikeOuts ?? null;
+          }
+        } catch (err) {
+          console.warn(`Could not fetch boxscore for ${gameId}:`, err);
+        }
+      }
 
       // 3. Load (Guardar en Firestore y Sheets)
       await saveGameData(gameId, validGame);
