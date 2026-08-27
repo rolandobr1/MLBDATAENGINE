@@ -11,3 +11,6 @@ mlb_errors.json
 pbp.json
 
 odds_cache*.json
+cache/
+**/__pycache__/
+*.pyc

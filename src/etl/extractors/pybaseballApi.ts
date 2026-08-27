@@ -9,6 +9,8 @@ const VENV_PYTHON = path.join(process.cwd(), 'venv', 'Scripts', 'python.exe');
 const PYTHON_BIN = fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python';
 
 const CACHE_DIR = path.join(process.cwd(), 'cache');
+const cacheRequestsInFlight = new Map<string, Promise<any>>();
+const NEGATIVE_CACHE_TTL_MS = 30 * 60 * 1000;
 if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
 }
@@ -31,14 +33,22 @@ async function withCache(action: string, extraKey: string, fn: () => Promise<any
     }
   }
 
-  const result = await fn();
-  try {
-    fs.writeFileSync(cacheFile, JSON.stringify(result));
-    console.log(`[PyBaseball Cache] Saved fresh data for ${action} ${extraKey}`);
-  } catch (e) {
-    console.error(`[PyBaseball Cache] Failed to write cache for ${action}`);
-  }
-  return result;
+  const requestKey = `${action}|${extraKey}`;
+  const existingRequest = cacheRequestsInFlight.get(requestKey);
+  if (existingRequest) return existingRequest;
+
+  const request = (async () => {
+    const result = await fn();
+    try {
+      fs.writeFileSync(cacheFile, JSON.stringify(result));
+      console.log(`[PyBaseball Cache] Saved fresh data for ${action} ${extraKey}`);
+    } catch (e) {
+      console.error(`[PyBaseball Cache] Failed to write cache for ${action}`);
+    }
+    return result;
+  })().finally(() => cacheRequestsInFlight.delete(requestKey));
+  cacheRequestsInFlight.set(requestKey, request);
+  return request;
 }
 
 function getPerPitcherCacheFilename(action: string, dateStr: string, pitcherId: string) {
@@ -58,7 +68,13 @@ async function withPerPitcherCache<T>(
     const cacheFile = getPerPitcherCacheFilename(action, dateStr, id);
     if (fs.existsSync(cacheFile)) {
       try {
-        result[id] = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+        const cachedValue = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+        if (cachedValue === null) {
+          const ageMs = Date.now() - fs.statSync(cacheFile).mtimeMs;
+          if (ageMs >= NEGATIVE_CACHE_TTL_MS) missingIds.push(id);
+        } else {
+          result[id] = cachedValue;
+        }
       } catch (e) {
         missingIds.push(id);
       }
@@ -79,6 +95,13 @@ async function withPerPitcherCache<T>(
         } catch (e) {
           console.error(`[PyBaseball Cache] Failed to write per-pitcher cache for ${action} ID: ${id}`);
         }
+      } else {
+        // Evita castigar al proveedor y bloquear cada juego cuando no hay datos.
+        try {
+          fs.writeFileSync(getPerPitcherCacheFilename(action, dateStr, id), 'null');
+        } catch (e) {
+          console.error(`[PyBaseball Cache] Failed to write negative cache for ${action} ID: ${id}`);
+        }
       }
     }
   }
@@ -87,14 +110,14 @@ async function withPerPitcherCache<T>(
 }
 
 export const getRecentStatcast = (startDate: string, endDate: string): Promise<any> => {
-  return withCache('recent_statcast', `${startDate}_${endDate}`, () => {
+  return withCache('recent_statcast_v2', `${startDate}_${endDate}`, () => {
     return new Promise((resolve, reject) => {
       const command = `"${PYTHON_BIN}" "${PYTHON_SCRIPT}" --action recent_statcast --start "${startDate}" --end "${endDate}"`;
       
-      exec(command, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+      exec(command, { maxBuffer: 1024 * 1024 * 10, timeout: 60000 }, (error, stdout, stderr) => {
         if (error) {
-          console.error(`exec error: ${error}`);
-          return reject(error);
+          console.error(`[PyBaseball Recent] ${error.message}`);
+          return resolve({ success: false, error: error.message, data: { pitchers_recent: [] } });
         }
         try {
           const jsonStart = stdout.indexOf('{');
@@ -103,7 +126,7 @@ export const getRecentStatcast = (startDate: string, endDate: string): Promise<a
           resolve(jsonResponse);
         } catch (parseError) {
           console.error('Failed to parse Python output:', stdout);
-          reject(parseError);
+          resolve({ success: false, error: String(parseError), data: { pitchers_recent: [] } });
         }
       });
     });

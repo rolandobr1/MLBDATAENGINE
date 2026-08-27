@@ -6,6 +6,8 @@ var PYTHON_SCRIPT = path.join(process.cwd(), "src", "etl", "extractors", "pybase
 var VENV_PYTHON = path.join(process.cwd(), "venv", "Scripts", "python.exe");
 var PYTHON_BIN = fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : "python";
 var CACHE_DIR = path.join(process.cwd(), "cache");
+var cacheRequestsInFlight = /* @__PURE__ */ new Map();
+var NEGATIVE_CACHE_TTL_MS = 30 * 60 * 1e3;
 if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
 }
@@ -25,17 +27,24 @@ async function withCache(action, extraKey, fn) {
       console.warn(`[PyBaseball Cache] Failed to read cache for ${action}, fetching fresh data...`);
     }
   }
-  const result = await fn();
-  try {
-    fs.writeFileSync(cacheFile, JSON.stringify(result));
-    console.log(`[PyBaseball Cache] Saved fresh data for ${action} ${extraKey}`);
-  } catch (e) {
-    console.error(`[PyBaseball Cache] Failed to write cache for ${action}`);
-  }
-  return result;
+  const requestKey = `${action}|${extraKey}`;
+  const existingRequest = cacheRequestsInFlight.get(requestKey);
+  if (existingRequest) return existingRequest;
+  const request = (async () => {
+    const result = await fn();
+    try {
+      fs.writeFileSync(cacheFile, JSON.stringify(result));
+      console.log(`[PyBaseball Cache] Saved fresh data for ${action} ${extraKey}`);
+    } catch (e) {
+      console.error(`[PyBaseball Cache] Failed to write cache for ${action}`);
+    }
+    return result;
+  })().finally(() => cacheRequestsInFlight.delete(requestKey));
+  cacheRequestsInFlight.set(requestKey, request);
+  return request;
 }
-function getPerPitcherCacheFilename(action, dateStr, pitcherId) {
-  return path.join(CACHE_DIR, `pybaseball_${action}_${dateStr}_${pitcherId}.json`);
+function getPerPitcherCacheFilename(action, dateStr, pitcherId2) {
+  return path.join(CACHE_DIR, `pybaseball_${action}_${dateStr}_${pitcherId2}.json`);
 }
 async function withPerPitcherCache(action, dateStr, pitcherIds, fetchMissing) {
   const result = {};
@@ -44,7 +53,13 @@ async function withPerPitcherCache(action, dateStr, pitcherIds, fetchMissing) {
     const cacheFile = getPerPitcherCacheFilename(action, dateStr, id);
     if (fs.existsSync(cacheFile)) {
       try {
-        result[id] = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+        const cachedValue = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+        if (cachedValue === null) {
+          const ageMs = Date.now() - fs.statSync(cacheFile).mtimeMs;
+          if (ageMs >= NEGATIVE_CACHE_TTL_MS) missingIds.push(id);
+        } else {
+          result[id] = cachedValue;
+        }
       } catch (e) {
         missingIds.push(id);
       }
@@ -64,19 +79,25 @@ async function withPerPitcherCache(action, dateStr, pitcherIds, fetchMissing) {
         } catch (e) {
           console.error(`[PyBaseball Cache] Failed to write per-pitcher cache for ${action} ID: ${id}`);
         }
+      } else {
+        try {
+          fs.writeFileSync(getPerPitcherCacheFilename(action, dateStr, id), "null");
+        } catch (e) {
+          console.error(`[PyBaseball Cache] Failed to write negative cache for ${action} ID: ${id}`);
+        }
       }
     }
   }
   return result;
 }
 var getRecentStatcast = (startDate, endDate) => {
-  return withCache("recent_statcast", `${startDate}_${endDate}`, () => {
+  return withCache("recent_statcast_v2", `${startDate}_${endDate}`, () => {
     return new Promise((resolve, reject) => {
       const command = `"${PYTHON_BIN}" "${PYTHON_SCRIPT}" --action recent_statcast --start "${startDate}" --end "${endDate}"`;
-      exec(command, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+      exec(command, { maxBuffer: 1024 * 1024 * 10, timeout: 6e4 }, (error, stdout, stderr) => {
         if (error) {
-          console.error(`exec error: ${error}`);
-          return reject(error);
+          console.error(`[PyBaseball Recent] ${error.message}`);
+          return resolve({ success: false, error: error.message, data: { pitchers_recent: [] } });
         }
         try {
           const jsonStart = stdout.indexOf("{");
@@ -85,7 +106,7 @@ var getRecentStatcast = (startDate, endDate) => {
           resolve(jsonResponse);
         } catch (parseError) {
           console.error("Failed to parse Python output:", stdout);
-          reject(parseError);
+          resolve({ success: false, error: String(parseError), data: { pitchers_recent: [] } });
         }
       });
     });
@@ -120,40 +141,11 @@ var getPitcherArsenals = (pitcherIds, year) => {
     });
   });
 };
-var getPitcherAdvancedMetrics = (pitcherIds, startDate, endDate) => {
-  return withPerPitcherCache("pitcher_advanced_metrics", `${startDate}_${endDate}`, pitcherIds, (missingIds) => {
-    return new Promise((resolve) => {
-      const idsCsv = missingIds.join(",");
-      const command = `"${PYTHON_BIN}" "${PYTHON_SCRIPT}" --action pitcher_advanced_metrics --start "${startDate}" --end "${endDate}" --pitcher_ids "${idsCsv}"`;
-      exec(command, { maxBuffer: 1024 * 1024 * 10, timeout: 12e4 }, (error, stdout) => {
-        if (error) {
-          console.error(`[PyBaseball Advanced] exec error: ${error.message}`);
-          return resolve({});
-        }
-        try {
-          const jsonStart = stdout.indexOf("{");
-          const jsonStr = jsonStart >= 0 ? stdout.substring(jsonStart) : stdout;
-          const parsed = JSON.parse(jsonStr);
-          if (parsed.success && parsed.data) {
-            console.log(`[PyBaseball Advanced] OK \u2014 ${Object.keys(parsed.data).length} pitcher(s) con m\xE9tricas avanzadas`);
-            resolve(parsed.data);
-          } else {
-            console.warn(`[PyBaseball Advanced] Sin datos: ${parsed.error || "desconocido"}`);
-            resolve({});
-          }
-        } catch (e) {
-          console.error("[PyBaseball Advanced] Error parseando JSON:", stdout.slice(0, 200));
-          resolve({});
-        }
-      });
-    });
-  });
-};
 
 // server.ts
 import dotenv from "dotenv";
-import fs3 from "fs";
-import path3 from "path";
+import fs4 from "fs";
+import path4 from "path";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 
@@ -214,23 +206,23 @@ async function ensureAnonymousAuth() {
     return false;
   }
 }
-async function withFirestoreReadTimeout(promise, fallback, label) {
+async function withFirestoreReadTimeout(promise, fallback, label, timeoutMs = FIRESTORE_READ_TIMEOUT_MS) {
   let timeout;
   try {
     return await Promise.race([
       promise,
       new Promise((resolve) => {
         timeout = setTimeout(() => {
-          console.warn(`[Firestore] Timeout leyendo ${label} despues de ${FIRESTORE_READ_TIMEOUT_MS}ms.`);
+          console.warn(`[Firestore] Timeout leyendo ${label} despues de ${timeoutMs}ms.`);
           resolve(fallback);
-        }, FIRESTORE_READ_TIMEOUT_MS);
+        }, timeoutMs);
       })
     ]);
   } finally {
     if (timeout) clearTimeout(timeout);
   }
 }
-var saveGameData = async (gameId, gameData) => {
+var saveGameData = async (gameId2, gameData) => {
   try {
     if (!db || !app) {
       console.warn("Firestore db is not initialized. Skipping Firestore save.");
@@ -254,7 +246,7 @@ var saveGameData = async (gameId, gameData) => {
     }
     const now = (/* @__PURE__ */ new Date()).toISOString();
     const dataWithTimestamp = { ...gameData, timestamp: now };
-    const gameRef = doc(collection(db, "games"), gameId);
+    const gameRef = doc(collection(db, "games"), gameId2);
     await setDoc(gameRef, dataWithTimestamp, { merge: true });
     if (gameData.weather) {
       const weatherRef = doc(collection(gameRef, "weather"), "current");
@@ -266,6 +258,14 @@ var saveGameData = async (gameId, gameData) => {
         const lineId = lastLine.timestamp ? String(lastLine.timestamp).replace(/[:.]/g, "-") : String(Date.now());
         const lineRef = doc(collection(gameRef, "line_movements"), lineId);
         await setDoc(lineRef, lastLine);
+      }
+    }
+    if (gameData.betting_history && gameData.betting_history.length > 0) {
+      const lastSnapshot = gameData.betting_history[gameData.betting_history.length - 1];
+      if (lastSnapshot?.timestamp) {
+        const snapshotId = String(lastSnapshot.timestamp).replace(/[:.]/g, "-");
+        const bettingRef = doc(collection(gameRef, "betting_history"), snapshotId);
+        await setDoc(bettingRef, lastSnapshot);
       }
     }
     if (gameData.offensive_splits) {
@@ -301,9 +301,9 @@ var saveGameData = async (gameId, gameData) => {
         dates: arrayUnion(date)
       }, { merge: true });
     }
-    console.log(`Successfully saved game ${gameId} and snapshot to Firestore.`);
+    console.log(`Successfully saved game ${gameId2} and snapshot to Firestore.`);
   } catch (error) {
-    console.error(`Error saving game ${gameId} to Firestore:`, error);
+    console.error(`Error saving game ${gameId2} to Firestore:`, error);
     throw error;
   }
 };
@@ -370,6 +370,25 @@ var loadGamesByDateFromFirestore = async (date) => {
   } catch (error) {
     console.error(`Error al cargar juegos de Firestore para ${date}:`, error);
     return [];
+  }
+};
+var loadGamesByDateRangeFromFirestore = async (startDate, endDate) => {
+  try {
+    if (!db) return [];
+    const isAuthed = await ensureAnonymousAuth();
+    if (!isAuthed) return [];
+    const gamesQuery = query(
+      collection(db, "games"),
+      where("metadata.date", ">=", startDate),
+      where("metadata.date", "<=", endDate),
+      orderBy("metadata.date", "asc")
+    );
+    const snapshot = await withFirestoreReadTimeout(getDocs(gamesQuery), null, `juegos entre ${startDate} y ${endDate}`, 2e4);
+    if (!snapshot) throw new Error("Firestore no respondi\xF3 dentro de 20 segundos");
+    return snapshot.docs.map((gameDocument) => gameDocument.data());
+  } catch (error) {
+    console.error(`[Firestore] Error leyendo rango ${startDate}..${endDate}:`, error);
+    throw error;
   }
 };
 var loadLatestGamesFromFirestore = async () => {
@@ -1089,10 +1108,10 @@ function generateMLDatasetCSV(games, pitLookups = {}) {
     return `"${String(val).replace(/"/g, '""')}"`;
   };
   const rows = games.map((g) => {
-    const gameId = String(g.id);
-    const pitPIT = pitLookups.pitchers?.[gameId];
-    const offPIT = pitLookups.offense?.[gameId];
-    const bsPIT = pitLookups.boxscore?.[gameId];
+    const gameId2 = String(g.id);
+    const pitPIT = pitLookups.pitchers?.[gameId2];
+    const offPIT = pitLookups.offense?.[gameId2];
+    const bsPIT = pitLookups.boxscore?.[gameId2];
     const hPit = pitPIT?.home ?? null;
     const aPit = pitPIT?.away ?? null;
     const hOff2 = offPIT?.home ?? null;
@@ -1925,9 +1944,9 @@ function generateBattersCSV(games, pitLookups = { pitchers: {} }) {
   };
   const rows = [];
   for (const game of games) {
-    const gameId = String(game.id);
-    const hPit = pitLookups.pitchers?.[gameId]?.home;
-    const aPit = pitLookups.pitchers?.[gameId]?.away;
+    const gameId2 = String(game.id);
+    const hPit = pitLookups.pitchers?.[gameId2]?.home;
+    const aPit = pitLookups.pitchers?.[gameId2]?.away;
     const hSplitRhp = game.offensive_splits?.home?.vsRhp;
     const hSplitLhp = game.offensive_splits?.home?.vsLhp;
     const aSplitRhp = game.offensive_splits?.away?.vsRhp;
@@ -2844,15 +2863,658 @@ async function getStarterBoxscoreStats(gamePk) {
   }
 }
 
+// src/datasets/pregameSnapshots.ts
+import fs3 from "fs";
+import path3 from "path";
+var SNAPSHOT_PATH = path3.join(process.cwd(), "mlb_pregame_snapshots.json");
+function readStore() {
+  try {
+    if (!fs3.existsSync(SNAPSHOT_PATH)) return { version: 1, games: {} };
+    const parsed = JSON.parse(fs3.readFileSync(SNAPSHOT_PATH, "utf-8"));
+    return { version: 1, games: parsed?.games || {} };
+  } catch (error) {
+    console.error("Error reading pregame snapshots:", error);
+    return { version: 1, games: {} };
+  }
+}
+function writeStore(store) {
+  fs3.writeFileSync(SNAPSHOT_PATH, JSON.stringify(store, null, 2));
+}
+function isFinalStatus(status) {
+  const normalized = String(status || "").toLowerCase();
+  return normalized.includes("final") || normalized === "game over" || normalized === "completed early" || normalized === "completed";
+}
+function createPregameGameCopy(game) {
+  const copy = JSON.parse(JSON.stringify(game));
+  delete copy.game_result;
+  delete copy.boxscore_stats;
+  delete copy.liveBoxscore;
+  delete copy.playByPlay;
+  for (const side of ["home", "away"]) {
+    if (copy.advanced_pitching?.[side]) {
+      delete copy.advanced_pitching[side].actualStrikeouts;
+    }
+  }
+  return copy;
+}
+function capturePregameSnapshot(game) {
+  const gameId2 = String(game?.id || game?.metadata?.id || "");
+  if (!gameId2 || isFinalStatus(game?.game_result?.gameStatus)) return;
+  const store = readStore();
+  if (store.games[gameId2]) return;
+  store.games[gameId2] = {
+    gameId: gameId2,
+    gameDate: game.metadata?.date || "",
+    capturedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    game: createPregameGameCopy(game)
+  };
+  writeStore(store);
+}
+function getPregameSnapshotsForGames(games) {
+  const snapshots = readStore().games;
+  const result = /* @__PURE__ */ new Map();
+  for (const game of games) {
+    const gameId2 = String(game?.id || game?.metadata?.id || "");
+    if (snapshots[gameId2]) result.set(gameId2, snapshots[gameId2]);
+  }
+  return result;
+}
+
+// src/datasets/derivedDatasets.ts
+var FINAL_STATUSES = ["final", "game over", "completed early", "completed"];
+function isFinal(game) {
+  const status = String(game?.game_result?.gameStatus || "").toLowerCase();
+  return FINAL_STATUSES.some((value) => status.includes(value));
+}
+function csvValue(value) {
+  if (value === null || value === void 0) return "";
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+function toCsv(headers, rows) {
+  return [headers.join(","), ...rows.map((row) => headers.map((header) => csvValue(row[header])).join(","))].join("\n");
+}
+function gameId(game) {
+  return String(game?.id || game?.metadata?.id || "");
+}
+function pitcherId(pitcher) {
+  const value = pitcher?.pitcherId ?? pitcher?.mlbId ?? pitcher?.id;
+  if (value === null || value === void 0 || value === "" || Number(value) <= 0) return null;
+  return String(value);
+}
+function validPitcher(pitcher) {
+  const name = String(pitcher?.name || "").trim().toLowerCase();
+  return Boolean(pitcherId(pitcher)) && name !== "" && name !== "tbd" && name !== "por definir";
+}
+function sideOpponent(side) {
+  return side === "home" ? "away" : "home";
+}
+function actualPitcherTarget(current, side) {
+  const box = current?.boxscore_stats?.[side];
+  const pitching = current?.advanced_pitching?.[side];
+  return {
+    actual_k: isFinal(current) ? box?.strikeOuts ?? pitching?.actualStrikeouts ?? null : null,
+    actual_ip: isFinal(current) ? box?.inningsPitched ?? null : null,
+    actual_bf: isFinal(current) ? box?.battersFaced ?? null : null,
+    actual_pitches: isFinal(current) ? box?.numberOfPitches ?? null : null,
+    actual_er: isFinal(current) ? box?.earnedRuns ?? null : null,
+    final_game_status: isFinal(current) ? current?.game_result?.gameStatus ?? null : null
+  };
+}
+function snapshotPairs(games) {
+  const snapshots = getPregameSnapshotsForGames(games);
+  return games.flatMap((current) => {
+    const snapshot = snapshots.get(gameId(current));
+    return snapshot ? [{ current, snapshot }] : [];
+  });
+}
+var PITCHER_HEADERS = [
+  "game_id",
+  "pitcher_id",
+  "side",
+  "snapshot_captured_at",
+  "game_date",
+  "scheduled_time",
+  "team",
+  "opponent",
+  "venue",
+  "pitcher_era",
+  "pitcher_whip",
+  "pitcher_k_pct",
+  "pitcher_bb_pct",
+  "pitcher_ip",
+  "pitcher_starts",
+  "pitcher_total_strikeouts",
+  "pitcher_pitch_hand",
+  "opponent_lineup_k_pct",
+  "opponent_lineup_contact_pct",
+  "opponent_offense_ops",
+  "opponent_offense_woba",
+  "opponent_offense_xwoba",
+  "pitcher_xera",
+  "pitcher_fip",
+  "pitcher_xfip",
+  "pitcher_siera",
+  "pitcher_so_rate",
+  "pitcher_bb_rate",
+  "pitcher_swstr_pct",
+  "pitcher_csw_pct",
+  "pitcher_last5_ks_avg",
+  "pitcher_last5_ip_avg",
+  "pitcher_last5_bf_avg",
+  "pitcher_last5_pitch_count_avg",
+  "projected_pitches",
+  "projected_innings",
+  "projected_strikeouts",
+  "days_since_last_start",
+  "pitches_last_start",
+  "pitches_last_3_starts",
+  "park_factor_k",
+  "weather_temp",
+  "weather_wind_speed",
+  "actual_k",
+  "actual_ip",
+  "actual_bf",
+  "actual_pitches",
+  "actual_er",
+  "final_game_status"
+];
+function buildPitcherGameRows(games) {
+  const keys = /* @__PURE__ */ new Set();
+  const rows = [];
+  for (const { current, snapshot } of snapshotPairs(games)) {
+    const pregame = snapshot.game;
+    for (const side of ["home", "away"]) {
+      const pitcher = pregame?.pitchers?.[side];
+      if (!validPitcher(pitcher)) continue;
+      const id = pitcherId(pitcher);
+      const key = `${gameId(current)}:${id}`;
+      if (keys.has(key)) continue;
+      keys.add(key);
+      const opponent = sideOpponent(side);
+      const adv = pregame?.advanced_pitching?.[side] || {};
+      const oppOffense = pregame?.advanced_offense?.[opponent] || {};
+      const fatigue = pregame?.fatigue_metrics?.pitchers?.[side] || {};
+      rows.push({
+        game_id: gameId(current),
+        pitcher_id: id,
+        side,
+        snapshot_captured_at: snapshot.capturedAt,
+        game_date: pregame.metadata?.date ?? null,
+        scheduled_time: pregame.metadata?.time ?? null,
+        team: pregame.metadata?.[side === "home" ? "homeTeam" : "awayTeam"] ?? null,
+        opponent: pregame.metadata?.[opponent === "home" ? "homeTeam" : "awayTeam"] ?? null,
+        venue: pregame.metadata?.venue ?? null,
+        pitcher_era: pitcher.era ?? null,
+        pitcher_whip: pitcher.whip ?? null,
+        pitcher_k_pct: pitcher.kPct ?? null,
+        pitcher_bb_pct: pitcher.bbPct ?? null,
+        pitcher_ip: pitcher.ip ?? null,
+        pitcher_starts: pitcher.starts ?? null,
+        pitcher_total_strikeouts: pitcher.totalStrikeouts ?? null,
+        pitcher_pitch_hand: pitcher.pitchHand ?? null,
+        opponent_lineup_k_pct: oppOffense.projectedLineupKPct ?? null,
+        opponent_lineup_contact_pct: oppOffense.projectedLineupContactPctVsHand ?? null,
+        opponent_offense_ops: pregame.offense?.[opponent]?.ops ?? null,
+        opponent_offense_woba: oppOffense.wOba ?? null,
+        opponent_offense_xwoba: oppOffense.xwOba ?? null,
+        pitcher_xera: adv.xEra ?? null,
+        pitcher_fip: adv.fip ?? null,
+        pitcher_xfip: adv.xFip ?? null,
+        pitcher_siera: adv.siera ?? null,
+        pitcher_so_rate: adv.strikeoutRate ?? null,
+        pitcher_bb_rate: adv.walkRate ?? null,
+        pitcher_swstr_pct: adv.swingingStrikePct ?? null,
+        pitcher_csw_pct: adv.cswPct ?? null,
+        pitcher_last5_ks_avg: adv.last5KsAvg ?? null,
+        pitcher_last5_ip_avg: adv.last5IpAvg ?? null,
+        pitcher_last5_bf_avg: adv.last5BfAvg ?? null,
+        pitcher_last5_pitch_count_avg: adv.last5PitchCountAvg ?? null,
+        projected_pitches: adv.projectedPitchCount ?? null,
+        projected_innings: adv.projectedInnings ?? null,
+        projected_strikeouts: adv.projectedStrikeoutsBase ?? null,
+        days_since_last_start: fatigue.daysSinceLastStart ?? null,
+        pitches_last_start: fatigue.pitchesLastStart ?? null,
+        pitches_last_3_starts: fatigue.pitchesLast3Starts ?? null,
+        park_factor_k: pregame.park_factors?.index_so ?? null,
+        weather_temp: pregame.weather?.temp ?? null,
+        weather_wind_speed: pregame.weather?.windSpeed ?? null,
+        ...actualPitcherTarget(current, side)
+      });
+    }
+  }
+  return rows;
+}
+var GAME_HEADERS = [
+  "game_id",
+  "snapshot_captured_at",
+  "game_date",
+  "scheduled_time",
+  "home_team",
+  "away_team",
+  "venue",
+  "park_factor_k",
+  "park_factor_runs",
+  "park_factor_hr",
+  "weather_temp",
+  "weather_humidity",
+  "weather_wind_speed",
+  "weather_rain_probability",
+  "home_moneyline",
+  "away_moneyline",
+  "total_runs",
+  "home_pitcher_id",
+  "away_pitcher_id",
+  "home_projected_lineup_k_pct",
+  "away_projected_lineup_k_pct",
+  "home_bullpen_ip_3d",
+  "away_bullpen_ip_3d",
+  "home_score",
+  "away_score",
+  "winner",
+  "final_game_status"
+];
+function buildGameRows(games) {
+  return snapshotPairs(games).map(({ current, snapshot }) => {
+    const game = snapshot.game;
+    return {
+      game_id: gameId(current),
+      snapshot_captured_at: snapshot.capturedAt,
+      game_date: game.metadata?.date ?? null,
+      scheduled_time: game.metadata?.time ?? null,
+      home_team: game.metadata?.homeTeam ?? null,
+      away_team: game.metadata?.awayTeam ?? null,
+      venue: game.metadata?.venue ?? null,
+      park_factor_k: game.park_factors?.index_so ?? null,
+      park_factor_runs: game.park_factors?.index_runs ?? null,
+      park_factor_hr: game.park_factors?.index_hr ?? null,
+      weather_temp: game.weather?.temp ?? null,
+      weather_humidity: game.weather?.humidity ?? null,
+      weather_wind_speed: game.weather?.windSpeed ?? null,
+      weather_rain_probability: game.weather?.rainProbability ?? null,
+      home_moneyline: game.betting_lines?.currentMoneylineHome ?? null,
+      away_moneyline: game.betting_lines?.currentMoneylineAway ?? null,
+      total_runs: game.betting_lines?.totalRuns ?? null,
+      home_pitcher_id: pitcherId(game.pitchers?.home),
+      away_pitcher_id: pitcherId(game.pitchers?.away),
+      home_projected_lineup_k_pct: game.advanced_offense?.home?.projectedLineupKPct ?? null,
+      away_projected_lineup_k_pct: game.advanced_offense?.away?.projectedLineupKPct ?? null,
+      home_bullpen_ip_3d: game.fatigue_metrics?.bullpen?.home?.ipLast3Days ?? null,
+      away_bullpen_ip_3d: game.fatigue_metrics?.bullpen?.away?.ipLast3Days ?? null,
+      home_score: isFinal(current) ? current.game_result?.homeScore ?? null : null,
+      away_score: isFinal(current) ? current.game_result?.awayScore ?? null : null,
+      winner: isFinal(current) ? current.game_result?.winner ?? null : null,
+      final_game_status: isFinal(current) ? current.game_result?.gameStatus ?? null : null
+    };
+  });
+}
+var BATTER_HEADERS = [
+  "game_id",
+  "batter_id",
+  "side",
+  "snapshot_captured_at",
+  "game_date",
+  "team",
+  "opponent",
+  "batting_order",
+  "position",
+  "bat_side",
+  "opposing_pitcher_id",
+  "avg",
+  "obp",
+  "slg",
+  "ops",
+  "woba",
+  "iso",
+  "pa",
+  "home_runs",
+  "strikeout_pct",
+  "walk_pct",
+  "last7_avg",
+  "last7_ops",
+  "last7_slg",
+  "last7_total_bases",
+  "ops_vs_rhp",
+  "ops_vs_lhp",
+  "k_pct_vs_rhp",
+  "k_pct_vs_lhp",
+  "contact_pct_vs_rhp",
+  "contact_pct_vs_lhp",
+  "actual_hits",
+  "actual_runs",
+  "actual_rbi",
+  "actual_strikeouts",
+  "actual_total_bases",
+  "final_game_status"
+];
+function liveBatterTarget(current, side, id) {
+  if (!isFinal(current)) return {};
+  const player = (current.liveBoxscore?.[side]?.batters || []).find((b) => String(b.id) === id);
+  return {
+    actual_hits: player?.h ?? null,
+    actual_runs: player?.r ?? null,
+    actual_rbi: player?.rbi ?? null,
+    actual_strikeouts: player?.k ?? null,
+    actual_total_bases: player?.total_bases ?? null
+  };
+}
+function buildBatterGameRows(games) {
+  const keys = /* @__PURE__ */ new Set();
+  const rows = [];
+  for (const { current, snapshot } of snapshotPairs(games)) {
+    const game = snapshot.game;
+    for (const side of ["home", "away"]) {
+      const opponent = sideOpponent(side);
+      const opponentPitcherId = pitcherId(game.pitchers?.[opponent]);
+      for (const batter of game.lineups?.[side] || []) {
+        const id = batter?.id ?? batter?.mlbId ?? batter?.batter_id;
+        if (!id || Number(id) <= 0) continue;
+        const key = `${gameId(current)}:${id}`;
+        if (keys.has(key)) continue;
+        keys.add(key);
+        rows.push({
+          game_id: gameId(current),
+          batter_id: String(id),
+          side,
+          snapshot_captured_at: snapshot.capturedAt,
+          game_date: game.metadata?.date ?? null,
+          team: game.metadata?.[side === "home" ? "homeTeam" : "awayTeam"] ?? null,
+          opponent: game.metadata?.[opponent === "home" ? "homeTeam" : "awayTeam"] ?? null,
+          batting_order: batter.batting_order ?? null,
+          position: batter.position ?? null,
+          bat_side: batter.bat_side ?? null,
+          opposing_pitcher_id: opponentPitcherId,
+          avg: batter.avg ?? null,
+          obp: batter.obp ?? null,
+          slg: batter.slg ?? null,
+          ops: batter.ops ?? null,
+          woba: batter.woba ?? null,
+          iso: batter.iso ?? null,
+          pa: batter.pa ?? null,
+          home_runs: batter.home_runs ?? batter.hr ?? null,
+          strikeout_pct: batter.strikeout_pct ?? batter.kPct ?? null,
+          walk_pct: batter.walk_pct ?? null,
+          last7_avg: batter.last7_avg ?? null,
+          last7_ops: batter.last7_ops ?? null,
+          last7_slg: batter.last7_slg ?? null,
+          last7_total_bases: batter.last7_total_bases ?? null,
+          ops_vs_rhp: batter.ops_vs_rhp ?? null,
+          ops_vs_lhp: batter.ops_vs_lhp ?? null,
+          k_pct_vs_rhp: batter.k_pct_vs_rhp ?? null,
+          k_pct_vs_lhp: batter.k_pct_vs_lhp ?? null,
+          contact_pct_vs_rhp: batter.contact_pct_vs_rhp ?? null,
+          contact_pct_vs_lhp: batter.contact_pct_vs_lhp ?? null,
+          ...liveBatterTarget(current, side, String(id)),
+          final_game_status: isFinal(current) ? current.game_result?.gameStatus ?? null : null
+        });
+      }
+    }
+  }
+  return rows;
+}
+var PROPS_HEADERS = ["game_id", "pitcher_id", "side", "game_date", "team", "prop_line", "over_odds", "under_odds", "sportsbook", "source", "timestamp"];
+function buildPitcherPropsRows(games) {
+  const keys = /* @__PURE__ */ new Set();
+  const rows = [];
+  for (const { current, snapshot } of snapshotPairs(games)) {
+    const game = snapshot.game;
+    for (const side of ["home", "away"]) {
+      const pitcher = game.pitchers?.[side];
+      if (!validPitcher(pitcher) || pitcher.strikeoutProp === null || pitcher.strikeoutProp === void 0) continue;
+      const id = pitcherId(pitcher);
+      const key = `${gameId(current)}:${id}`;
+      if (keys.has(key)) continue;
+      keys.add(key);
+      rows.push({
+        game_id: gameId(current),
+        pitcher_id: id,
+        side,
+        game_date: game.metadata?.date ?? null,
+        team: game.metadata?.[side === "home" ? "homeTeam" : "awayTeam"] ?? null,
+        prop_line: pitcher.strikeoutProp,
+        over_odds: pitcher.strikeoutPropOverOdds ?? null,
+        under_odds: pitcher.strikeoutPropUnderOdds ?? null,
+        sportsbook: pitcher.strikeoutPropBook ?? null,
+        source: pitcher.strikeoutPropSource ?? null,
+        timestamp: snapshot.capturedAt
+      });
+    }
+  }
+  return rows;
+}
+var generatePitcherGameDatasetCSV = (games) => toCsv(PITCHER_HEADERS, buildPitcherGameRows(games));
+var generateGameDatasetCSV = (games) => toCsv(GAME_HEADERS, buildGameRows(games));
+var generateBatterGameDatasetCSV = (games) => toCsv(BATTER_HEADERS, buildBatterGameRows(games));
+var generatePitcherPropsDatasetCSV = (games) => toCsv(PROPS_HEADERS, buildPitcherPropsRows(games));
+
+// src/utils/lineupMetrics.ts
+function finiteNumber(value) {
+  if (value === null || value === void 0 || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+function calculateOpponentLineupKPct(lineup, pitcherHand) {
+  if (!Array.isArray(lineup) || lineup.length === 0) return null;
+  const isLeftHanded = pitcherHand === "L";
+  let weightedTotal = 0;
+  let totalPlateAppearances = 0;
+  for (const batter of lineup) {
+    const splitKPct = finiteNumber(isLeftHanded ? batter?.k_pct_vs_lhp : batter?.k_pct_vs_rhp);
+    const strikeoutPct = finiteNumber(batter?.strikeout_pct);
+    const legacyKPct = finiteNumber(batter?.kPct);
+    const kPct = splitKPct ?? strikeoutPct ?? legacyKPct;
+    if (kPct === null || kPct <= 0) continue;
+    const rawPlateAppearances = finiteNumber(batter?.pa);
+    const plateAppearances = rawPlateAppearances !== null && rawPlateAppearances > 0 ? rawPlateAppearances : 50;
+    weightedTotal += kPct * plateAppearances;
+    totalPlateAppearances += plateAppearances;
+  }
+  return totalPlateAppearances > 0 ? weightedTotal / totalPlateAppearances : null;
+}
+
+// src/datasets/klabTrainingDataset.ts
+var KLAB_ADMIN_COLUMNS = [
+  "game_id",
+  "pitcher_id",
+  "pitcher_name",
+  "game_date",
+  "snapshot_captured_at",
+  "team",
+  "opponent",
+  "side"
+];
+var KLAB_FEATURE_COLUMNS = [
+  "pitcher_k_pct",
+  "pitcher_so_rate",
+  "pitcher_swstr_pct",
+  "pitcher_csw_pct",
+  "pitcher_bb_pct",
+  "pitcher_fip",
+  "pitcher_xfip",
+  "pitcher_siera",
+  "pitcher_xera",
+  "pitcher_last5_ks_avg",
+  "pitcher_last5_ip_avg",
+  "pitcher_last5_bf_avg",
+  "pitcher_last5_pitch_count_avg",
+  "projected_pitches",
+  "projected_innings",
+  "pitches_last_start",
+  "pitches_last_3_starts",
+  "days_since_last_start",
+  "opponent_lineup_k_pct",
+  "opponent_offense_ops",
+  "opponent_offense_woba",
+  "opponent_offense_xwoba",
+  "park_factor_k",
+  "weather_temp",
+  "weather_wind_speed"
+];
+var KLAB_BENCHMARK_COLUMNS = ["projected_strikeouts"];
+var KLAB_TARGET_COLUMNS = ["actual_k"];
+var KLAB_COLUMNS = [
+  ...KLAB_ADMIN_COLUMNS,
+  ...KLAB_FEATURE_COLUMNS,
+  ...KLAB_BENCHMARK_COLUMNS,
+  ...KLAB_TARGET_COLUMNS
+];
+var ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+var POSTGAME_COLUMNS = /* @__PURE__ */ new Set([
+  "actual_ip",
+  "actual_bf",
+  "actual_pitches",
+  "actual_er",
+  "home_score",
+  "away_score",
+  "winner",
+  "final_game_status",
+  "game_status",
+  "game_result"
+]);
+function validateKlabDateRange(startDate, endDate) {
+  if (typeof startDate !== "string" || !ISO_DATE.test(startDate) || (/* @__PURE__ */ new Date(`${startDate}T00:00:00Z`)).toISOString().slice(0, 10) !== startDate) {
+    throw new Error("start_date es obligatoria y debe usar el formato YYYY-MM-DD");
+  }
+  if (typeof endDate !== "string" || !ISO_DATE.test(endDate) || (/* @__PURE__ */ new Date(`${endDate}T00:00:00Z`)).toISOString().slice(0, 10) !== endDate) {
+    throw new Error("end_date es obligatoria y debe usar el formato YYYY-MM-DD");
+  }
+  if (startDate > endDate) throw new Error("start_date debe ser menor o igual que end_date");
+  return { startDate, endDate };
+}
+function csvValue2(value) {
+  if (value === null || value === void 0) return "";
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+function toCsv2(rows) {
+  return [
+    KLAB_COLUMNS.join(","),
+    ...rows.map((row) => KLAB_COLUMNS.map((column) => csvValue2(row[column])).join(","))
+  ].join("\n");
+}
+function finiteNumber2(value) {
+  if (value === null || value === void 0 || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+function anomalyFor(row, column, min, max) {
+  const value = finiteNumber2(row[column]);
+  if (value === null || value >= min && value <= max) return null;
+  return {
+    game_id: String(row.game_id),
+    pitcher_id: String(row.pitcher_id),
+    column,
+    value,
+    reason: `fuera del rango de revisi\xF3n ${min}..${max}`
+  };
+}
+function buildKlabTrainingDataset(allGames, rawStartDate, rawEndDate) {
+  const { startDate, endDate } = validateKlabDateRange(rawStartDate, rawEndDate);
+  const rangeGames = allGames.filter((game) => {
+    const date = game?.metadata?.date;
+    return typeof date === "string" && date >= startDate && date <= endDate;
+  });
+  const snapshots = getPregameSnapshotsForGames(rangeGames);
+  const pitcherNames = /* @__PURE__ */ new Map();
+  for (const game of rangeGames) {
+    const id = String(game?.id || game?.metadata?.id || "");
+    const pregame = snapshots.get(id)?.game;
+    for (const side of ["home", "away"]) {
+      const pitcher = pregame?.pitchers?.[side];
+      const pitcherId2 = pitcher?.pitcherId ?? pitcher?.mlbId ?? pitcher?.id;
+      if (pitcherId2 !== null && pitcherId2 !== void 0 && pitcher?.name) {
+        pitcherNames.set(`${id}:${String(pitcherId2)}`, String(pitcher.name));
+      }
+    }
+  }
+  const sourceRows = buildPitcherGameRows(rangeGames).map((row) => ({
+    ...row,
+    pitcher_name: pitcherNames.get(`${String(row.game_id)}:${String(row.pitcher_id)}`) ?? null
+  }));
+  const gamesWithoutPregameSnapshot = rangeGames.filter((game) => {
+    const id = String(game?.id || game?.metadata?.id || "");
+    return !snapshots.has(id);
+  }).length;
+  let discardedWithoutActualK = 0;
+  let discardedInvalidActualK = 0;
+  const eligibleRows = [];
+  for (const source of sourceRows) {
+    if (source.actual_k === null || source.actual_k === void 0 || source.actual_k === "") {
+      discardedWithoutActualK += 1;
+      continue;
+    }
+    const actualK = finiteNumber2(source.actual_k);
+    if (actualK === null || actualK < 0) {
+      discardedInvalidActualK += 1;
+      continue;
+    }
+    const row = {};
+    for (const column of KLAB_COLUMNS) row[column] = column === "actual_k" ? actualK : source[column] ?? null;
+    eligibleRows.push(row);
+  }
+  eligibleRows.sort(
+    (a, b) => String(a.game_date).localeCompare(String(b.game_date)) || String(a.snapshot_captured_at).localeCompare(String(b.snapshot_captured_at)) || String(a.game_id).localeCompare(String(b.game_id)) || String(a.pitcher_id).localeCompare(String(b.pitcher_id))
+  );
+  const seen = /* @__PURE__ */ new Set();
+  const duplicateKeys = [];
+  const rows = [];
+  for (const row of eligibleRows) {
+    const key = `${row.game_id}:${row.pitcher_id}`;
+    if (seen.has(key)) {
+      duplicateKeys.push(key);
+      continue;
+    }
+    seen.add(key);
+    rows.push(row);
+  }
+  const anomalies = rows.flatMap((row) => [
+    anomalyFor(row, "projected_pitches", 15, 130),
+    anomalyFor(row, "projected_innings", 0, 9),
+    anomalyFor(row, "pitcher_k_pct", 0, 60),
+    anomalyFor(row, "opponent_lineup_k_pct", 0, 60)
+  ].filter((value) => value !== null));
+  const outOfRangeRows = rows.filter((row) => String(row.game_date) < startDate || String(row.game_date) > endDate).length;
+  const leakageColumns = KLAB_FEATURE_COLUMNS.filter((column) => POSTGAME_COLUMNS.has(column));
+  const uniquePitchers = new Set(rows.map((row) => String(row.pitcher_id)));
+  const candidatePitchers = new Set(sourceRows.map((row) => String(row.pitcher_id)));
+  const uniqueGames = new Set(rangeGames.map((game) => String(game?.id || game?.metadata?.id || "")).filter(Boolean));
+  const outputFilename = `KLAB_PITCHER_TRAINING_DATASET_${startDate}_${endDate}.csv`;
+  return {
+    rows,
+    csv: toCsv2(rows),
+    report: {
+      startDate,
+      endDate,
+      outputFilename,
+      totalGames: uniqueGames.size,
+      totalPitchers: uniquePitchers.size,
+      candidatePitchers: candidatePitchers.size,
+      candidateRows: sourceRows.length,
+      finalRows: rows.length,
+      observationsWithActualK: rows.length,
+      discardedWithoutActualK,
+      discardedInvalidActualK,
+      duplicateKeys,
+      outOfRangeRows,
+      gamesWithoutPregameSnapshot,
+      rowsWithPregameSnapshot: sourceRows.length,
+      leakageColumns,
+      anomalies,
+      featureColumns: [...KLAB_FEATURE_COLUMNS, "side"],
+      administrativeColumns: [...KLAB_ADMIN_COLUMNS],
+      benchmarkColumns: [...KLAB_BENCHMARK_COLUMNS],
+      targetColumns: [...KLAB_TARGET_COLUMNS]
+    }
+  };
+}
+
 // server.ts
 var envPaths = [
-  path3.join(process.cwd(), ".env.local"),
-  path3.join(process.cwd(), "env.local"),
-  path3.join("/etc", "secrets", ".env.local"),
-  path3.join("/etc", "secrets", "env.local")
+  path4.join(process.cwd(), ".env.local"),
+  path4.join(process.cwd(), "env.local"),
+  path4.join("/etc", "secrets", ".env.local"),
+  path4.join("/etc", "secrets", "env.local")
 ];
 for (const envPath of envPaths) {
-  if (fs3.existsSync(envPath)) {
+  if (fs4.existsSync(envPath)) {
     dotenv.config({ path: envPath });
     console.log(`[ENV] Cargado desde: ${envPath}`);
   }
@@ -2866,27 +3528,29 @@ for (const key in process.env) {
 var app2 = express();
 app2.use(express.json());
 app2.get("/favicon.ico", (req, res) => {
-  res.sendFile(path3.join(process.cwd(), "src", "favicon.svg"));
+  res.sendFile(path4.join(process.cwd(), "src", "favicon.svg"));
 });
 var PORT = Number(process.env.PORT || 3001);
-var DB_PATH = path3.join(process.cwd(), "mlb_database.json");
-var ERRORS_PATH = path3.join(process.cwd(), "mlb_errors.json");
+var DB_PATH = path4.join(process.cwd(), "mlb_database.json");
+var ERRORS_PATH = path4.join(process.cwd(), "mlb_errors.json");
 var gamesDbCache = null;
 var gamesDbCacheMtime = 0;
 var oddsApiBackfillsInFlight = /* @__PURE__ */ new Set();
-if (!fs3.existsSync(DB_PATH)) {
-  fs3.writeFileSync(DB_PATH, JSON.stringify({}, null, 2));
+var harvestDatesInFlight = /* @__PURE__ */ new Set();
+var firestoreRangeSyncInFlight = false;
+if (!fs4.existsSync(DB_PATH)) {
+  fs4.writeFileSync(DB_PATH, JSON.stringify({}, null, 2));
 }
-if (!fs3.existsSync(ERRORS_PATH)) {
-  fs3.writeFileSync(ERRORS_PATH, JSON.stringify([], null, 2));
+if (!fs4.existsSync(ERRORS_PATH)) {
+  fs4.writeFileSync(ERRORS_PATH, JSON.stringify([], null, 2));
 }
 function readGamesDB() {
   try {
-    const stat = fs3.statSync(DB_PATH);
+    const stat = fs4.statSync(DB_PATH);
     if (gamesDbCache && stat.mtimeMs === gamesDbCacheMtime) {
       return gamesDbCache;
     }
-    const raw = fs3.readFileSync(DB_PATH, "utf-8");
+    const raw = fs4.readFileSync(DB_PATH, "utf-8");
     gamesDbCache = JSON.parse(raw);
     gamesDbCacheMtime = stat.mtimeMs;
     return gamesDbCache || {};
@@ -2904,19 +3568,19 @@ function readPitLookups() {
   }
   const result = {};
   try {
-    const pPath = path3.join(process.cwd(), "pitcher_stats_pit.json");
-    if (fs3.existsSync(pPath)) {
-      const parsed = JSON.parse(fs3.readFileSync(pPath, "utf-8"));
+    const pPath = path4.join(process.cwd(), "pitcher_stats_pit.json");
+    if (fs4.existsSync(pPath)) {
+      const parsed = JSON.parse(fs4.readFileSync(pPath, "utf-8"));
       result.pitchers = parsed.pitchers || parsed;
     }
-    const oPath = path3.join(process.cwd(), "offense_stats_pit.json");
-    if (fs3.existsSync(oPath)) {
-      const parsed = JSON.parse(fs3.readFileSync(oPath, "utf-8"));
+    const oPath = path4.join(process.cwd(), "offense_stats_pit.json");
+    if (fs4.existsSync(oPath)) {
+      const parsed = JSON.parse(fs4.readFileSync(oPath, "utf-8"));
       result.offense = parsed.offense || parsed;
     }
-    const bPath = path3.join(process.cwd(), "boxscore_game_stats.json");
-    if (fs3.existsSync(bPath)) {
-      const parsed = JSON.parse(fs3.readFileSync(bPath, "utf-8"));
+    const bPath = path4.join(process.cwd(), "boxscore_game_stats.json");
+    if (fs4.existsSync(bPath)) {
+      const parsed = JSON.parse(fs4.readFileSync(bPath, "utf-8"));
       result.boxscore = parsed.boxscore || parsed;
     }
     pitLookupsCache = result;
@@ -2928,8 +3592,8 @@ function readPitLookups() {
 }
 function writeGamesDB(data) {
   try {
-    fs3.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-    const stat = fs3.statSync(DB_PATH);
+    fs4.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+    const stat = fs4.statSync(DB_PATH);
     gamesDbCache = data;
     gamesDbCacheMtime = stat.mtimeMs;
   } catch (err) {
@@ -2965,6 +3629,133 @@ function getGameTimestamp(game) {
   const time = value ? new Date(value).getTime() : 0;
   return Number.isFinite(time) ? time : 0;
 }
+function getNewYorkDateString() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(/* @__PURE__ */ new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+function isPastGameDate(date) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) && date < getNewYorkDateString();
+}
+var PITCHER_PROP_FIELDS = ["strikeoutProp", "strikeoutPropOverOdds", "strikeoutPropUnderOdds", "strikeoutPropBook", "strikeoutPropSource"];
+var BATTER_PROP_FIELDS = ["totalBasesProp", "totalBasesPropOverOdds", "totalBasesPropUnderOdds", "totalBasesPropBook", "totalBasesPropSource", "totalBasesPropHitRate", "totalBasesPropHitRateDisplay"];
+function hasStoredValue(value) {
+  return value !== void 0 && value !== null && value !== "";
+}
+function copyStoredFields(target, source, fields) {
+  if (!target || !source) return;
+  for (const field of fields) if (hasStoredValue(source[field])) target[field] = source[field];
+}
+function findMatchingStoredPlayer(players, current) {
+  const currentId = String(current?.id ?? current?.mlbId ?? "");
+  if (currentId) {
+    const byId = players.find((player) => String(player?.id ?? player?.mlbId ?? "") === currentId);
+    if (byId) return byId;
+  }
+  const currentName = String(current?.name || "").trim().toLowerCase();
+  return currentName ? players.find((player) => String(player?.name || "").trim().toLowerCase() === currentName) : void 0;
+}
+function preserveCapturedBettingData(targetGame, storedGame) {
+  if (!targetGame || !storedGame) return false;
+  let preserved = false;
+  if (hasRealBettingLines2(storedGame)) {
+    targetGame.betting_lines = storedGame.betting_lines;
+    preserved = true;
+  }
+  for (const side of ["home", "away"]) {
+    const storedPitcher = storedGame?.pitchers?.[side];
+    const targetPitcher = targetGame?.pitchers?.[side];
+    if (storedPitcher && targetPitcher && PITCHER_PROP_FIELDS.some((field) => hasStoredValue(storedPitcher[field]))) {
+      copyStoredFields(targetPitcher, storedPitcher, PITCHER_PROP_FIELDS);
+      preserved = true;
+    }
+    const storedPlayers = storedGame?.lineups?.[side] || [];
+    for (const targetPlayer of targetGame?.lineups?.[side] || []) {
+      const storedPlayer = findMatchingStoredPlayer(storedPlayers, targetPlayer);
+      if (storedPlayer && BATTER_PROP_FIELDS.some((field) => hasStoredValue(storedPlayer[field]))) {
+        copyStoredFields(targetPlayer, storedPlayer, BATTER_PROP_FIELDS);
+        preserved = true;
+      }
+    }
+  }
+  if (Array.isArray(storedGame.line_movements) && storedGame.line_movements.length > 0) {
+    targetGame.line_movements = storedGame.line_movements;
+    preserved = true;
+  }
+  if (Array.isArray(storedGame.betting_history) && storedGame.betting_history.length > 0) {
+    targetGame.betting_history = storedGame.betting_history;
+    preserved = true;
+  }
+  return preserved;
+}
+function getCapturedBettingDataCount(game) {
+  let count = hasRealBettingLines2(game) ? 1 : 0;
+  for (const side of ["home", "away"]) {
+    if (PITCHER_PROP_FIELDS.some((field) => hasStoredValue(game?.pitchers?.[side]?.[field]))) count += 1;
+    for (const player of game?.lineups?.[side] || []) {
+      if (BATTER_PROP_FIELDS.some((field) => hasStoredValue(player?.[field]))) count += 1;
+    }
+  }
+  return count;
+}
+function buildBettingSnapshot(game) {
+  const pitcherProps = ["home", "away"].map((side) => {
+    const pitcher = game?.pitchers?.[side] || {};
+    return {
+      side,
+      playerId: pitcher.pitcherId ?? null,
+      player: pitcher.name ?? null,
+      line: pitcher.strikeoutProp ?? null,
+      overOdds: pitcher.strikeoutPropOverOdds ?? null,
+      underOdds: pitcher.strikeoutPropUnderOdds ?? null,
+      book: pitcher.strikeoutPropBook ?? null,
+      source: pitcher.strikeoutPropSource ?? null
+    };
+  }).filter((prop) => hasStoredValue(prop.line));
+  const batterProps = ["home", "away"].flatMap(
+    (side) => (game?.lineups?.[side] || []).map((player) => ({
+      side,
+      playerId: player.id ?? player.mlbId ?? null,
+      player: player.name ?? null,
+      line: player.totalBasesProp ?? null,
+      overOdds: player.totalBasesPropOverOdds ?? null,
+      underOdds: player.totalBasesPropUnderOdds ?? null,
+      book: player.totalBasesPropBook ?? null,
+      source: player.totalBasesPropSource ?? null
+    })).filter((prop) => hasStoredValue(prop.line))
+  ).sort((a, b) => `${a.side}|${a.playerId}|${a.player}`.localeCompare(`${b.side}|${b.playerId}|${b.player}`));
+  return {
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    bettingLines: hasRealBettingLines2(game) ? game.betting_lines : null,
+    pitcherProps,
+    batterProps
+  };
+}
+function bettingSnapshotSignature(snapshot) {
+  if (!snapshot) return "";
+  const bettingLines = snapshot.bettingLines ? { ...snapshot.bettingLines } : null;
+  if (bettingLines) delete bettingLines.lineMovementSummary;
+  return JSON.stringify({ bettingLines, pitcherProps: snapshot.pitcherProps || [], batterProps: snapshot.batterProps || [] });
+}
+function appendBettingSnapshotIfChanged(game, storedGame) {
+  const snapshot = buildBettingSnapshot(game);
+  if (!snapshot.bettingLines && snapshot.pitcherProps.length === 0 && snapshot.batterProps.length === 0) return false;
+  const history = [...storedGame?.betting_history || game?.betting_history || []];
+  const previous = history[history.length - 1];
+  if (previous && bettingSnapshotSignature(previous) === bettingSnapshotSignature(snapshot)) {
+    game.betting_history = history;
+    return false;
+  }
+  history.push(snapshot);
+  game.betting_history = history;
+  console.log(`[Odds History] Snapshot ${history.length} guardado para el juego ${game.id}.`);
+  return true;
+}
 function getTheOddsApiPropsCount(game) {
   let count = 0;
   for (const side of ["home", "away"]) {
@@ -2982,8 +3773,9 @@ function maybeBackfillTheOddsApiForDate(date, dateGames) {
   if (!date || !Array.isArray(dateGames) || dateGames.length === 0) return;
   if (!process.env.ODDS_API_KEY) return;
   if (oddsApiBackfillsInFlight.has(date)) return;
-  const cacheFile = path3.join(process.cwd(), `odds_cache_${date}.json`);
-  const hasOddsCache = fs3.existsSync(cacheFile);
+  if (isPastGameDate(date)) return;
+  const cacheFile = path4.join(process.cwd(), `odds_cache_${date}.json`);
+  const hasOddsCache = fs4.existsSync(cacheFile);
   const apiPropsCount = getTheOddsApiPropsCountForGames(dateGames);
   if (hasOddsCache && apiPropsCount > 0) return;
   oddsApiBackfillsInFlight.add(date);
@@ -2993,9 +3785,9 @@ function maybeBackfillTheOddsApiForDate(date, dateGames) {
     try {
       let forceRefreshOdds = forceFirstOddsFetch;
       for (const game of dateGames) {
-        const gameId = String(game?.id || game?.metadata?.id || "");
-        if (!gameId) continue;
-        await updateSingleGameData(gameId, date, forceRefreshOdds);
+        const gameId2 = String(game?.id || game?.metadata?.id || "");
+        if (!gameId2) continue;
+        await updateSingleGameData(gameId2, date, forceRefreshOdds);
         forceRefreshOdds = false;
       }
       console.log(`[Odds Backfill] Completado para ${date}.`);
@@ -3018,6 +3810,10 @@ function getPitcherLast3DetailsCount(game) {
   return count;
 }
 function pickSyncedGame(remoteGame, localGame) {
+  const remoteBettingCount = getCapturedBettingDataCount(remoteGame);
+  const localBettingCount = getCapturedBettingDataCount(localGame);
+  if (localBettingCount > remoteBettingCount) return localGame;
+  if (remoteBettingCount > localBettingCount) return remoteGame;
   const remotePropsCount = getTheOddsApiPropsCount(remoteGame);
   const localPropsCount = getTheOddsApiPropsCount(localGame);
   if (localPropsCount > remotePropsCount) return localGame;
@@ -3045,7 +3841,7 @@ async function syncFirestoreToLocalDB(reason = "manual") {
 }
 function readErrorsDB() {
   try {
-    const raw = fs3.readFileSync(ERRORS_PATH, "utf-8");
+    const raw = fs4.readFileSync(ERRORS_PATH, "utf-8");
     return JSON.parse(raw);
   } catch (err) {
     console.error("Error reading errors database:", err);
@@ -3054,13 +3850,13 @@ function readErrorsDB() {
 }
 function writeErrorsDB(errors) {
   try {
-    fs3.writeFileSync(ERRORS_PATH, JSON.stringify(errors, null, 2));
+    fs4.writeFileSync(ERRORS_PATH, JSON.stringify(errors, null, 2));
   } catch (err) {
     console.error("Error writing errors database:", err);
   }
 }
 function validateGamePayload(game, errorsLog) {
-  const gameId = game.id || "unknown";
+  const gameId2 = game.id || "unknown";
   const gameErrors = [];
   const checkRange = (val, min, max, name, severity) => {
     if (val === "N/A") return;
@@ -3070,7 +3866,7 @@ function validateGamePayload(game, errorsLog) {
       errorsLog.push({
         id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-        gameId,
+        gameId: gameId2,
         source: "Validator",
         message: `El campo ${name} tiene un valor no num\xE9rico: ${val}`,
         severity
@@ -3080,7 +3876,7 @@ function validateGamePayload(game, errorsLog) {
       errorsLog.push({
         id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-        gameId,
+        gameId: gameId2,
         source: "Validator",
         message: `Campo ${name} con valor ${num} fuera de rango esperado (${min} y ${max})`,
         severity
@@ -3093,7 +3889,7 @@ function validateGamePayload(game, errorsLog) {
       errorsLog.push({
         id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-        gameId,
+        gameId: gameId2,
         source: "Validator",
         message: `El campo requerido (${name}) est\xE1 ausente o vac\xEDo.`,
         severity
@@ -3120,7 +3916,7 @@ function validateGamePayload(game, errorsLog) {
     errorsLog.push({
       id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-      gameId,
+      gameId: gameId2,
       source: "Validator",
       message: `El campo lineups est\xE1 ausente o no contiene arreglos v\xE1lidos de jugadores.`,
       severity: "medium"
@@ -3139,9 +3935,9 @@ function injectPitStats(games) {
   }
   const clonedGames = JSON.parse(JSON.stringify(games));
   for (const g of clonedGames) {
-    const gameId = String(g.id);
-    const pit = pitLookups.pitchers[gameId];
-    if (gameId === "823864") {
+    const gameId2 = String(g.id);
+    const pit = pitLookups.pitchers[gameId2];
+    if (gameId2 === "823864") {
       console.log(`[injectPitStats] Game 823864: pit found? ${!!pit}`);
       if (pit) console.log(`[injectPitStats] pit.home.totalStrikeouts: ${pit.home?.totalStrikeouts}`);
     }
@@ -3186,7 +3982,7 @@ app2.get("/api/games", async (req, res) => {
   let dateGames = db2[date] || [];
   if (dateGames.length > 0) {
     maybeBackfillTheOddsApiForDate(date, dateGames);
-    res.json({ games: injectPitStats(dateGames), totalGames: countLocalGames(db2) });
+    res.json({ games: injectPitStats(dateGames), totalGames: countLocalGames(db2), dateExtracted: true });
     return;
   }
   const firestoreGames = await loadGamesByDateFromFirestore(date);
@@ -3196,7 +3992,11 @@ app2.get("/api/games", async (req, res) => {
     dateGames = db2[date] || [];
   }
   maybeBackfillTheOddsApiForDate(date, dateGames);
-  res.json({ games: injectPitStats(dateGames), totalGames: countLocalGames(db2) });
+  res.json({
+    games: injectPitStats(dateGames),
+    totalGames: countLocalGames(db2),
+    dateExtracted: Object.prototype.hasOwnProperty.call(db2, date)
+  });
 });
 function flattenGameToJSON(g) {
   const hSplitRhp = g.offensive_splits?.home?.vsRhp;
@@ -3689,13 +4489,115 @@ app2.get("/api/batters-dataset/csv", async (req, res) => {
     res.status(500).send("Error al generar CSV de bateadores");
   }
 });
+function getDatasetGamesForDate(db2, date) {
+  if (typeof date === "string" && date.trim()) return db2[date] || [];
+  return Object.values(db2).flat();
+}
+app2.get("/api/datasets/pitcher-game/csv", (req, res) => {
+  const { date } = req.query;
+  const csv = generatePitcherGameDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename=MLB_PITCHER_GAME_DATASET_${date || "all"}.csv`);
+  res.send(csv);
+});
+app2.get("/api/datasets/game/csv", (req, res) => {
+  const { date } = req.query;
+  const csv = generateGameDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename=MLB_GAME_DATASET_${date || "all"}.csv`);
+  res.send(csv);
+});
+app2.get("/api/datasets/batter-game/csv", (req, res) => {
+  const { date } = req.query;
+  const csv = generateBatterGameDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename=MLB_BATTER_GAME_DATASET_${date || "all"}.csv`);
+  res.send(csv);
+});
+app2.get("/api/datasets/pitcher-props/csv", (req, res) => {
+  const { date } = req.query;
+  const csv = generatePitcherPropsDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename=MLB_PITCHER_PROPS_DATASET_${date || "all"}.csv`);
+  res.send(csv);
+});
+function buildRequestedKlabDataset(startDate, endDate) {
+  const allGames = Object.values(readGamesDB()).flat();
+  return buildKlabTrainingDataset(allGames, startDate, endDate);
+}
+app2.get("/api/datasets/klab-training/preview", (req, res) => {
+  try {
+    const result = buildRequestedKlabDataset(req.query.start_date, req.query.end_date);
+    res.json({ report: result.report, sample: result.rows.slice(0, 5) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Rango inv\xE1lido" });
+  }
+});
+app2.get("/api/datasets/klab-training/csv", (req, res) => {
+  try {
+    const result = buildRequestedKlabDataset(req.query.start_date, req.query.end_date);
+    const outputDirectory = path4.join(process.cwd(), "datasets", "ml");
+    fs4.mkdirSync(outputDirectory, { recursive: true });
+    fs4.writeFileSync(path4.join(outputDirectory, result.report.outputFilename), result.csv, "utf8");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename=${result.report.outputFilename}`);
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.send(result.csv);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "No se pudo generar el dataset" });
+  }
+});
+app2.post("/api/firestore/sync-local-range", async (req, res) => {
+  if (firestoreRangeSyncInFlight) {
+    res.status(409).json({ error: "Ya existe una sincronizaci\xF3n de Firestore en progreso" });
+    return;
+  }
+  try {
+    const { startDate, endDate } = validateKlabDateRange(req.body?.start_date, req.body?.end_date);
+    firestoreRangeSyncInFlight = true;
+    const remoteGames = await loadGamesByDateRangeFromFirestore(startDate, endDate);
+    const before = readGamesDB();
+    let added = 0;
+    let updated = 0;
+    let unchanged = 0;
+    for (const remoteGame of remoteGames) {
+      const date = remoteGame?.metadata?.date;
+      const id = String(remoteGame?.id || remoteGame?.metadata?.id || "");
+      const localGame = (before[date] || []).find((game) => String(game?.id || game?.metadata?.id || "") === id);
+      if (!localGame) {
+        added += 1;
+      } else if (JSON.stringify(pickSyncedGame(remoteGame, localGame)) === JSON.stringify(localGame)) {
+        unchanged += 1;
+      } else {
+        updated += 1;
+      }
+    }
+    if (remoteGames.length > 0) mergeGamesIntoLocalDB(remoteGames);
+    const dates = new Set(remoteGames.map((game) => game?.metadata?.date).filter(Boolean));
+    res.json({
+      startDate,
+      endDate,
+      remoteGames: remoteGames.length,
+      datesFound: dates.size,
+      added,
+      updated,
+      unchanged,
+      localGamesAfterSync: countLocalGames(readGamesDB()),
+      note: "Se sincronizaron documentos de juegos. Los snapshots pregame solo estar\xE1n disponibles si ya existen en el almac\xE9n local de snapshots."
+    });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "No se pudo sincronizar Firestore" });
+  } finally {
+    firestoreRangeSyncInFlight = false;
+  }
+});
 app2.get("/api/game/:gameId", async (req, res) => {
   try {
-    const { gameId } = req.params;
+    const { gameId: gameId2 } = req.params;
     const db2 = readGamesDB();
     let gameData = null;
     for (const date in db2) {
-      const found = db2[date]?.find((g) => String(g.id) === gameId);
+      const found = db2[date]?.find((g) => String(g.id) === gameId2);
       if (found) {
         gameData = found;
         break;
@@ -3714,7 +4616,7 @@ app2.get("/api/game/:gameId", async (req, res) => {
 });
 app2.get("/api/game/:gameId/csv", async (req, res) => {
   try {
-    const { gameId } = req.params;
+    const { gameId: gameId2 } = req.params;
     const { date } = req.query;
     const db2 = readGamesDB();
     const candidateGames = [];
@@ -3725,7 +4627,7 @@ app2.get("/api/game/:gameId/csv", async (req, res) => {
         candidateGames.push(...games);
       }
     }
-    const game = candidateGames.find((g) => String(g.id) === String(gameId));
+    const game = candidateGames.find((g) => String(g.id) === String(gameId2));
     if (!game) {
       res.status(404).send("Juego no encontrado");
       return;
@@ -3733,7 +4635,7 @@ app2.get("/api/game/:gameId/csv", async (req, res) => {
     const [enrichedGame] = await enrichGamesWithTotalBasesProps([game]);
     const csvContent = generateSingleGameCSV(enrichedGame);
     res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", `attachment; filename=mlb_game_${gameId}_${enrichedGame.metadata.date}.csv`);
+    res.setHeader("Content-Disposition", `attachment; filename=mlb_game_${gameId2}_${enrichedGame.metadata.date}.csv`);
     res.send(csvContent);
   } catch (err) {
     console.error("Error generating single game CSV:", err);
@@ -4149,10 +5051,10 @@ function fetchWithTimeout(url, ms = 8e3) {
   return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 async function fetchDataStreakSheetRows(date, statKey, cachePrefix, forceRefresh = false, excludeInjured = true) {
-  const cacheFile = path3.join(process.cwd(), `${cachePrefix}${excludeInjured ? "" : "_all"}_${date}.json`);
-  if (!forceRefresh && fs3.existsSync(cacheFile)) {
+  const cacheFile = path4.join(process.cwd(), `${cachePrefix}${excludeInjured ? "" : "_all"}_${date}.json`);
+  if (!forceRefresh && fs4.existsSync(cacheFile)) {
     try {
-      return JSON.parse(fs3.readFileSync(cacheFile, "utf-8"));
+      return JSON.parse(fs4.readFileSync(cacheFile, "utf-8"));
     } catch (e) {
       console.warn(`Error leyendo cache de DataStreak ${statKey}, se descargara nuevamente.`, e);
     }
@@ -4166,7 +5068,7 @@ async function fetchDataStreakSheetRows(date, statKey, cachePrefix, forceRefresh
     }
     const data = await res.json();
     const rows = Array.isArray(data?.rows) ? data.rows : [];
-    fs3.writeFileSync(cacheFile, JSON.stringify(rows, null, 2));
+    fs4.writeFileSync(cacheFile, JSON.stringify(rows, null, 2));
     return rows;
   } catch (err) {
     console.warn(`Error al obtener ${statKey} de DataStreak:`, err);
@@ -4176,18 +5078,24 @@ async function fetchDataStreakSheetRows(date, statKey, cachePrefix, forceRefresh
 async function fetchDataStreakPitcherStrikeoutProps(date, forceRefresh = false) {
   const dataStreakKs = await fetchDataStreakSheetRows(date, "mlb_pitcher_ks", "datastreak_pitcher_ks", forceRefresh, false);
   let rotowireKs = [];
-  try {
-    const rwData = await scrapeStrikeoutProps();
-    rotowireKs = rwData.map((p) => ({
-      player_name: p.playerName,
-      line: String(p.line),
-      odds: p.overOdds !== null ? String(p.overOdds) : null,
-      under_odds: p.underOdds !== null ? String(p.underOdds) : null,
-      vendor: p.sportsbook || "rotowire",
-      source: "rotowire"
-    }));
-  } catch (e) {
-    console.warn("No se pudo obtener Rotowire Ks:", e);
+  const now = /* @__PURE__ */ new Date();
+  const nyTimeStr = now.toLocaleString("en-US", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
+  const [month, day, year] = nyTimeStr.split("/");
+  const todayStr = `${year}-${month}-${day}`;
+  if (date >= todayStr) {
+    try {
+      const rwData = await scrapeStrikeoutProps();
+      rotowireKs = rwData.map((p) => ({
+        player_name: p.playerName,
+        line: String(p.line),
+        odds: p.overOdds !== null ? String(p.overOdds) : null,
+        under_odds: p.underOdds !== null ? String(p.underOdds) : null,
+        vendor: p.sportsbook || "rotowire",
+        source: "rotowire"
+      }));
+    } catch (e) {
+      console.warn("No se pudo obtener Rotowire Ks:", e);
+    }
   }
   return [...rotowireKs, ...dataStreakKs];
 }
@@ -4327,15 +5235,19 @@ async function enrichGamesWithTotalBasesProps(games) {
   });
 }
 async function fetchRealBettingLines(date, forceRefreshOdds = false, gamesList = []) {
-  const cacheFile = path3.join(process.cwd(), `odds_cache_${date}.json`);
-  if (!forceRefreshOdds && fs3.existsSync(cacheFile)) {
+  const cacheFile = path4.join(process.cwd(), `odds_cache_${date}.json`);
+  if (!forceRefreshOdds && fs4.existsSync(cacheFile)) {
     try {
       console.log(`Leyendo cuotas desde el cach\xE9 local: odds_cache_${date}.json`);
-      const cached = fs3.readFileSync(cacheFile, "utf-8");
+      const cached = fs4.readFileSync(cacheFile, "utf-8");
       return JSON.parse(cached);
     } catch (e) {
       console.warn("Error leyendo el cach\xE9 de cuotas, se ignorar\xE1 y se descargar\xE1 nuevamente.", e);
     }
+  }
+  if (isPastGameDate(date)) {
+    console.log(`[Odds] ${date} es una fecha pasada sin cach\xE9 utilizable; no se consultar\xE1n proveedores externos.`);
+    return null;
   }
   const apiKeys = [
     process.env.ODDS_API_KEY,
@@ -4369,11 +5281,11 @@ async function fetchRealBettingLines(date, forceRefreshOdds = false, gamesList =
   }
   if (!activeKey || !data) {
     console.error("[Odds API] Todas las keys de The Odds API agotaron su cuota o fallaron.");
-    if (fs3.existsSync(cacheFile) && fs3.statSync(cacheFile).size > 10) {
+    if (fs4.existsSync(cacheFile) && fs4.statSync(cacheFile).size > 10) {
       console.log(`Recuperando cuotas del cach\xE9 existente debido a falla de la API.`);
-      return JSON.parse(fs3.readFileSync(cacheFile, "utf-8"));
+      return JSON.parse(fs4.readFileSync(cacheFile, "utf-8"));
     }
-    fs3.writeFileSync(cacheFile, JSON.stringify([]));
+    fs4.writeFileSync(cacheFile, JSON.stringify([]));
     return null;
   }
   try {
@@ -4413,12 +5325,12 @@ async function fetchRealBettingLines(date, forceRefreshOdds = false, gamesList =
     const dataStreakPitcherKs = await fetchDataStreakPitcherStrikeoutProps(date, forceRefreshOdds);
     const eventsWithDataStreakProps = mergeDataStreakPitcherStrikeouts(eventsWithProps, dataStreakPitcherKs);
     try {
-      if (eventsWithDataStreakProps.length > 0 || !fs3.existsSync(cacheFile) || fs3.statSync(cacheFile).size < 10) {
-        fs3.writeFileSync(cacheFile, JSON.stringify(eventsWithDataStreakProps, null, 2));
+      if (eventsWithDataStreakProps.length > 0 || !fs4.existsSync(cacheFile) || fs4.statSync(cacheFile).size < 10) {
+        fs4.writeFileSync(cacheFile, JSON.stringify(eventsWithDataStreakProps, null, 2));
         console.log(`Cuotas guardadas en cache: odds_cache_${date}.json`);
       } else {
         console.log(`No se recibieron cuotas nuevas (posible fecha pasada). Conservando el cach\xE9 original: odds_cache_${date}.json`);
-        return JSON.parse(fs3.readFileSync(cacheFile, "utf-8"));
+        return JSON.parse(fs4.readFileSync(cacheFile, "utf-8"));
       }
     } catch (e) {
       console.warn("No se pudo guardar el cache de cuotas.", e);
@@ -5031,7 +5943,7 @@ async function fetchOffensiveSplits(teamId, season) {
     return { vsRhp: defaultSplit, vsLhp: defaultSplit };
   }
 }
-async function fetchAdvancedPitching(pitcherId, season) {
+async function fetchAdvancedPitching(pitcherId2, season) {
   const defaults = {
     xEra: null,
     fip: null,
@@ -5048,10 +5960,10 @@ async function fetchAdvancedPitching(pitcherId, season) {
     pitcher_k_pct_vs_lhb: null,
     pitcher_k_pct_vs_rhb: null
   };
-  if (!pitcherId) return defaults;
+  if (!pitcherId2) return defaults;
   try {
-    const stdUrl = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=season,seasonAdvanced&season=${season}&group=pitching`;
-    const splitsUrl = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=statSplits&season=${season}&group=pitching&sitCodes=vl,vr`;
+    const stdUrl = `https://statsapi.mlb.com/api/v1/people/${pitcherId2}/stats?stats=season,seasonAdvanced&season=${season}&group=pitching`;
+    const splitsUrl = `https://statsapi.mlb.com/api/v1/people/${pitcherId2}/stats?stats=statSplits&season=${season}&group=pitching&sitCodes=vl,vr`;
     const [stdRes, splitsRes] = await Promise.all([
       fetchWithTimeout(stdUrl, 5e3),
       fetchWithTimeout(splitsUrl, 5e3)
@@ -5149,11 +6061,11 @@ async function fetchAdvancedPitching(pitcherId, season) {
       pitcher_k_pct_vs_rhb
     };
   } catch (err) {
-    console.error(`Error fetching advanced pitching for ${pitcherId}:`, err);
+    console.error(`Error fetching advanced pitching for ${pitcherId2}:`, err);
     return defaults;
   }
 }
-async function fetchAdvancedPitchingLast7(pitcherId, season, targetDateStr) {
+async function fetchAdvancedPitchingLast7(pitcherId2, season, targetDateStr) {
   const defaults = {
     xEra: null,
     fip: null,
@@ -5168,9 +6080,9 @@ async function fetchAdvancedPitchingLast7(pitcherId, season, targetDateStr) {
     swingingStrikePct: null,
     projectedInnings: null
   };
-  if (!pitcherId) return defaults;
+  if (!pitcherId2) return defaults;
   try {
-    const url = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=gameLog&season=${season}&group=pitching`;
+    const url = `https://statsapi.mlb.com/api/v1/people/${pitcherId2}/stats?stats=gameLog&season=${season}&group=pitching`;
     const res = await fetchWithTimeout(url, 5e3);
     if (!res.ok) return defaults;
     const data = await res.json();
@@ -5225,14 +6137,14 @@ async function fetchAdvancedPitchingLast7(pitcherId, season, targetDateStr) {
       losses
     };
   } catch (err) {
-    console.error(`Error fetching last 7 for ${pitcherId}:`, err);
+    console.error(`Error fetching last 7 for ${pitcherId2}:`, err);
     return defaults;
   }
 }
-async function fetchPitcherLast5Profile(pitcherId, season, targetDateStr) {
-  if (!pitcherId) return {};
+async function fetchPitcherLast5Profile(pitcherId2, season, targetDateStr) {
+  if (!pitcherId2) return {};
   try {
-    const url = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=gameLog&season=${season}&group=pitching`;
+    const url = `https://statsapi.mlb.com/api/v1/people/${pitcherId2}/stats?stats=gameLog&season=${season}&group=pitching`;
     const res = await fetchWithTimeout(url, 5e3);
     if (!res.ok) return {};
     const data = await res.json();
@@ -5276,7 +6188,7 @@ async function fetchPitcherLast5Profile(pitcherId, season, targetDateStr) {
       battersFacedPerStart: last5BfAvg
     };
   } catch (err) {
-    console.error(`Error fetching last 5 profile for pitcher ${pitcherId}:`, err);
+    console.error(`Error fetching last 5 profile for pitcher ${pitcherId2}:`, err);
     return {};
   }
 }
@@ -5393,7 +6305,7 @@ async function fetchBatterSplits(batterId, season) {
     return defaults;
   }
 }
-async function fetchAdvancedPitchingVsOpp(pitcherId, opposingTeamId) {
+async function fetchAdvancedPitchingVsOpp(pitcherId2, opposingTeamId) {
   const defaults = {
     xEra: null,
     fip: null,
@@ -5408,9 +6320,9 @@ async function fetchAdvancedPitchingVsOpp(pitcherId, opposingTeamId) {
     swingingStrikePct: null,
     projectedInnings: null
   };
-  if (!pitcherId || !opposingTeamId) return defaults;
+  if (!pitcherId2 || !opposingTeamId) return defaults;
   try {
-    const url = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=vsTeamTotal&opposingTeamId=${opposingTeamId}&group=pitching`;
+    const url = `https://statsapi.mlb.com/api/v1/people/${pitcherId2}/stats?stats=vsTeamTotal&opposingTeamId=${opposingTeamId}&group=pitching`;
     const res = await fetchWithTimeout(url, 5e3);
     if (!res.ok) return defaults;
     const data = await res.json();
@@ -5456,14 +6368,14 @@ async function fetchAdvancedPitchingVsOpp(pitcherId, opposingTeamId) {
       losses: 0
     };
   } catch (err) {
-    console.error(`Error fetching vs Opp for ${pitcherId}:`, err);
+    console.error(`Error fetching vs Opp for ${pitcherId2}:`, err);
     return defaults;
   }
 }
-async function fetchPitcherLast3VsTeamProfile(pitcherId, opposingTeamId, season, targetDateStr) {
-  if (!pitcherId || !opposingTeamId) return {};
+async function fetchPitcherLast3VsTeamProfile(pitcherId2, opposingTeamId, season, targetDateStr) {
+  if (!pitcherId2 || !opposingTeamId) return {};
   try {
-    const url = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=gameLog&season=${season}&group=pitching`;
+    const url = `https://statsapi.mlb.com/api/v1/people/${pitcherId2}/stats?stats=gameLog&season=${season}&group=pitching`;
     const res = await fetchWithTimeout(url, 5e3);
     if (!res.ok) return {};
     const data = await res.json();
@@ -5482,7 +6394,7 @@ async function fetchPitcherLast3VsTeamProfile(pitcherId, opposingTeamId, season,
       last3VsTeamBfAvg: average(bf, 1)
     };
   } catch (err) {
-    console.error(`Error fetching last 3 vs team for pitcher ${pitcherId}:`, err);
+    console.error(`Error fetching last 3 vs team for pitcher ${pitcherId2}:`, err);
     return {};
   }
 }
@@ -5568,11 +6480,11 @@ async function fetchAdvancedOffense(teamId, season) {
     return defaults;
   }
 }
-async function fetchStarterFatigue(pitcherId, date, season) {
+async function fetchStarterFatigue(pitcherId2, date, season) {
   const defaults = { daysSinceLastStart: 5, pitchesLastStart: 0, pitchesLast3Starts: 0 };
-  if (!pitcherId) return defaults;
+  if (!pitcherId2) return defaults;
   try {
-    const url = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=gameLog&season=${season}&group=pitching`;
+    const url = `https://statsapi.mlb.com/api/v1/people/${pitcherId2}/stats?stats=gameLog&season=${season}&group=pitching`;
     const res = await fetchWithTimeout(url, 6e3);
     if (!res.ok) return defaults;
     const data = await res.json();
@@ -5598,7 +6510,7 @@ async function fetchStarterFatigue(pitcherId, date, season) {
       isInjuryReturn: daysSinceLastStart > 30
     };
   } catch (err) {
-    console.error(`Error fetching starter fatigue for pitcher ${pitcherId}:`, err);
+    console.error(`Error fetching starter fatigue for pitcher ${pitcherId2}:`, err);
     return defaults;
   }
 }
@@ -5856,7 +6768,7 @@ async function fetchGameResult(gamePk, bettingLines) {
     return void 0;
   }
 }
-function buildDirectGameData(gameId, homeName, awayName, venueName, date, matchTime, realMLBData, realOddsData, pitcherStrikeoutRows = [], totalBasesRows = []) {
+function buildDirectGameData(gameId2, homeName, awayName, venueName, date, matchTime, realMLBData, realOddsData, pitcherStrikeoutRows = [], totalBasesRows = []) {
   let odds = null;
   let homeKPropData = null;
   let awayKPropData = null;
@@ -5981,12 +6893,13 @@ function buildDirectGameData(gameId, homeName, awayName, venueName, date, matchT
     };
   }
   return {
-    id: gameId,
-    metadata: { id: gameId, date, time: matchTime, homeTeam: homeName, awayTeam: awayName, venue: venueName },
+    id: gameId2,
+    metadata: { id: gameId2, date, time: matchTime, homeTeam: homeName, awayTeam: awayName, venue: venueName },
     teams: { home: homeName, away: awayName },
     pitchers: {
       home: {
         name: realMLBData?.pitchers?.home?.name || "Por definir",
+        pitcherId: realMLBData?.pitcherIds?.home ?? null,
         era: safeFloat(realMLBData?.pitchers?.home?.era) ?? "N/A",
         whip: safeFloat(realMLBData?.pitchers?.home?.whip) ?? "N/A",
         kPct: safeFloat(realMLBData?.pitchers?.home?.kPct) ?? "N/A",
@@ -6009,6 +6922,7 @@ function buildDirectGameData(gameId, homeName, awayName, venueName, date, matchT
       },
       away: {
         name: realMLBData?.pitchers?.away?.name || "Por definir",
+        pitcherId: realMLBData?.pitcherIds?.away ?? null,
         era: safeFloat(realMLBData?.pitchers?.away?.era) ?? "N/A",
         whip: safeFloat(realMLBData?.pitchers?.away?.whip) ?? "N/A",
         kPct: safeFloat(realMLBData?.pitchers?.away?.kPct) ?? "N/A",
@@ -6175,6 +7089,11 @@ app2.post("/api/harvest", async (req, res) => {
     res.status(400).json({ error: "Fecha es requerida (formato YYYY-MM-DD)" });
     return;
   }
+  if (harvestDatesInFlight.has(date)) {
+    res.status(409).json({ error: `Ya existe una extracci\xF3n en progreso para ${date}` });
+    return;
+  }
+  harvestDatesInFlight.add(date);
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
@@ -6188,16 +7107,18 @@ app2.post("/api/harvest", async (req, res) => {
   };
   let isCancelled = false;
   res.on("close", () => {
+    harvestDatesInFlight.delete(date);
     if (!res.writableEnded) {
       isCancelled = true;
       console.log(`[ETL] Conexi\xF3n cerrada por el cliente. Cancelando proceso para ${date}...`);
     }
   });
   console.log(`Iniciando recolecci\xF3n MLB para fecha: ${date}`);
+  const harvestStartedAt = Date.now();
   emit({ phase: "schedule", step: "Conectando con MLB Stats API...", pct: 2 });
   let mlbMatches = [];
   try {
-    const mlbRes = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${date}`);
+    const mlbRes = await fetchWithTimeout(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${date}&hydrate=probablePitcher`, 12e3);
     const mlbData = await mlbRes.json();
     if (mlbData.dates && mlbData.dates[0] && mlbData.dates[0].games) {
       mlbMatches = mlbData.dates[0].games;
@@ -6205,9 +7126,34 @@ app2.post("/api/harvest", async (req, res) => {
   } catch (error) {
     console.error("Error consultando MLB Stats API:", error);
   }
-  const realOddsData = await fetchRealBettingLines(date, refreshOdds === true, mlbMatches);
-  const pitcherStrikeoutRows = await fetchDataStreakPitcherStrikeoutProps(date, refreshOdds === true);
-  const totalBasesRows = await fetchDataStreakTotalBasesProps(date, refreshOdds === true);
+  const currentDBSnapshot = readGamesDB();
+  const existingGamesForDate = currentDBSnapshot[date] || [];
+  const historicalDate = isPastGameDate(date);
+  const existingGamesById = new Map(existingGamesForDate.map((game) => [String(game?.id || game?.metadata?.id || ""), game]));
+  const canReuseStoredGame = (match) => {
+    if (forceRebuild) return false;
+    const stored = existingGamesById.get(String(match?.gamePk));
+    return Boolean(stored) && (historicalDate || isFinalGameStatus2(stored?.game_result?.gameStatus));
+  };
+  const matchesNeedingExtraction = mlbMatches.filter((match) => !canReuseStoredGame(match));
+  if (!forceRebuild && historicalDate && existingGamesForDate.length > 0 && matchesNeedingExtraction.length === 0) {
+    const cachedGames = mlbMatches.length > 0 ? mlbMatches.map((match) => existingGamesById.get(String(match.gamePk))).filter(Boolean) : existingGamesForDate;
+    console.log(`[Cach\xE9] ${date}: ${cachedGames.length} juego(s) hist\xF3ricos reutilizados; extracci\xF3n omitida por completo.`);
+    emit({
+      phase: "done",
+      step: `Fecha hist\xF3rica ya guardada \u2014 ${cachedGames.length} juego(s) reutilizados`,
+      pct: 100,
+      games: cachedGames,
+      cached: true,
+      skippedGames: cachedGames.length,
+      errorsCount: 0
+    });
+    res.end();
+    return;
+  }
+  const realOddsData = await fetchRealBettingLines(date, refreshOdds === true, matchesNeedingExtraction);
+  const pitcherStrikeoutRows = historicalDate ? [] : await fetchDataStreakPitcherStrikeoutProps(date, refreshOdds === true);
+  const totalBasesRows = historicalDate ? [] : await fetchDataStreakTotalBasesProps(date, refreshOdds === true);
   const season = date.substring(0, 4);
   emit({ phase: "schedule", step: "Cargando datos sabermetricos...", pct: 4 });
   await Promise.all([
@@ -6221,24 +7167,31 @@ app2.post("/api/harvest", async (req, res) => {
   const startStrPy = startDatePy.toISOString().split("T")[0];
   const endStrPy = endDatePy.toISOString().split("T")[0];
   let pybaseballStatcast = null;
+  let preloadedArsenalData = {};
+  let preloadedAdvancedMetrics = {};
   try {
+    const startedAt = Date.now();
     pybaseballStatcast = await getRecentStatcast(startStrPy, endStrPy);
+    for (const pitcher of pybaseballStatcast?.data?.pitchers_recent || []) {
+      preloadedAdvancedMetrics[String(pitcher.pitcher)] = {
+        spinRate: safeFloat(pitcher.avg_spin_rate),
+        chasePct: safeFloat(pitcher.chase_pct),
+        stuffPlus: null
+      };
+    }
+    console.log(`[ETL Timing] Statcast agregado: ${Date.now() - startedAt}ms, ${Object.keys(preloadedAdvancedMetrics).length} pitchers.`);
   } catch (err) {
     console.error("Error cargando PyBaseball", err);
   }
   emit({ phase: "schedule", step: "Precargando arsenal y m\xE9tricas avanzadas...", pct: 6 });
   try {
-    const allProbablePitchers = mlbMatches.flatMap((m) => [m.teams?.home?.probablePitcher?.id, m.teams?.away?.probablePitcher?.id]).map((id) => String(id)).filter((id) => id && id !== "undefined" && id !== "0");
+    const allProbablePitchers = matchesNeedingExtraction.flatMap((m) => [m.teams?.home?.probablePitcher?.id, m.teams?.away?.probablePitcher?.id]).map((id) => String(id)).filter((id) => id && id !== "undefined" && id !== "0");
     const uniquePitchers = [...new Set(allProbablePitchers)];
     if (uniquePitchers.length > 0) {
       console.log(`[ETL] Precargando PyBaseball para ${uniquePitchers.length} pitchers en lote...`);
-      const d = new Date(date);
-      const startD = new Date(d.getTime() - 30 * 24 * 60 * 60 * 1e3);
-      const advStartStr = startD.toISOString().split("T")[0];
-      await Promise.all([
-        getPitcherArsenals(uniquePitchers, season),
-        getPitcherAdvancedMetrics(uniquePitchers, advStartStr, date)
-      ]);
+      const startedAt = Date.now();
+      preloadedArsenalData = await getPitcherArsenals(uniquePitchers, season);
+      console.log(`[ETL Timing] Arsenal agregado: ${Date.now() - startedAt}ms, ${Object.keys(preloadedArsenalData).length} pitchers.`);
       console.log(`[ETL] Precarga de PyBaseball completada.`);
     }
   } catch (err) {
@@ -6266,8 +7219,6 @@ app2.post("/api/harvest", async (req, res) => {
       return;
     }
     const pctPerGame = Math.floor(87 / totalGames);
-    const currentDBSnapshot = readGamesDB();
-    const existingGamesForDate = currentDBSnapshot[date] || [];
     for (let gi = 0; gi < matchesToHarvest.length; gi++) {
       if (isCancelled) {
         console.log(`[ETL] Abortando bucle de juegos. Proceso cancelado.`);
@@ -6281,17 +7232,18 @@ app2.post("/api/harvest", async (req, res) => {
       const awayTeamId = match.teams.away.team.id;
       const venueName = match.venue?.name || "MLB Stadium";
       const matchTime = formatGameTime(match.gameDate);
-      const gameId = String(match.gamePk);
+      const gameId2 = String(match.gamePk);
       const gameLabel = `${awayName} @ ${homeName}`;
       const basePct = 5 + gi * pctPerGame;
+      const gameStartedAt = Date.now();
       if (!forceRebuild) {
-        const cachedGame = existingGamesForDate.find((g) => String(g.id) === String(gameId));
-        if (cachedGame && isFinalGameStatus2(cachedGame.game_result?.gameStatus)) {
-          console.log(`[Cach\xE9] Juego ${gameId} (${gameLabel}) ya FINALIZADO \u2014 cargando desde DB local.`);
+        const cachedGame = existingGamesForDate.find((g) => String(g.id) === String(gameId2));
+        if (cachedGame && (historicalDate || isFinalGameStatus2(cachedGame.game_result?.gameStatus))) {
+          console.log(`[Cach\xE9] Juego ${gameId2} (${gameLabel}) ya pas\xF3 o est\xE1 finalizado \u2014 cargando desde DB local.`);
           harvestedGames.push(cachedGame);
           emit({
             phase: "game_done",
-            step: `\u2713 ${gameLabel} (sin cambios \u2014 juego finalizado)`,
+            step: `\u2713 ${gameLabel} (sin cambios \u2014 reutilizado desde la base local)`,
             gameLabel,
             gameIndex: gi + 1,
             totalGames,
@@ -6309,8 +7261,8 @@ app2.post("/api/harvest", async (req, res) => {
         totalGames,
         pct: basePct + Math.floor(pctPerGame * 0.1)
       });
-      console.log(`Consultando MLB Stats API para datos reales del juego ${gameId}...`);
-      const realMLBData = await fetchRealMLBGameData(gameId, homeTeamId, awayTeamId, date);
+      console.log(`Consultando MLB Stats API para datos reales del juego ${gameId2}...`);
+      const realMLBData = await fetchRealMLBGameData(gameId2, homeTeamId, awayTeamId, date);
       console.log(`Datos reales: pitcher local=${realMLBData.pitchers?.home?.name || "N/D"}, visitante=${realMLBData.pitchers?.away?.name || "N/D"}`);
       emit({
         phase: "validate",
@@ -6320,7 +7272,7 @@ app2.post("/api/harvest", async (req, res) => {
         totalGames,
         pct: basePct + Math.floor(pctPerGame * 0.6)
       });
-      const gameDataParsed = buildDirectGameData(gameId, homeName, awayName, venueName, date, matchTime, realMLBData, realOddsData, pitcherStrikeoutRows, totalBasesRows);
+      const gameDataParsed = buildDirectGameData(gameId2, homeName, awayName, venueName, date, matchTime, realMLBData, realOddsData, pitcherStrikeoutRows, totalBasesRows);
       emit({
         phase: "advanced_data",
         step: `Clima y Sabermetr\xEDa: ${gameLabel}`,
@@ -6329,7 +7281,7 @@ app2.post("/api/harvest", async (req, res) => {
         totalGames,
         pct: basePct + Math.floor(pctPerGame * 0.35)
       });
-      console.log(`fetching climate, splits, fatigue and advanced stats for game ${gameId}...`);
+      console.log(`fetching climate, splits, fatigue and advanced stats for game ${gameId2}...`);
       const season2 = date.substring(0, 4);
       const homePitcherId = realMLBData.pitcherIds?.home || 0;
       const awayPitcherId = realMLBData.pitcherIds?.away || 0;
@@ -6407,14 +7359,8 @@ app2.post("/api/harvest", async (req, res) => {
         }
       }
       try {
-        const d = new Date(date);
-        const startD = new Date(d.getTime() - 30 * 24 * 60 * 60 * 1e3);
-        const startDStr = startD.toISOString().split("T")[0];
-        const validPitchers = [String(homePitcherId), String(awayPitcherId)].filter((id) => id !== "0");
-        const [pitcherArsenalData, advancedMetricsData] = await Promise.all([
-          getPitcherArsenals(validPitchers, season2),
-          getPitcherAdvancedMetrics(validPitchers, startDStr, date)
-        ]);
+        const pitcherArsenalData = preloadedArsenalData;
+        const advancedMetricsData = preloadedAdvancedMetrics;
         const homeArsenal = pitcherArsenalData[String(homePitcherId)];
         const awayArsenal = pitcherArsenalData[String(awayPitcherId)];
         const homeAdvSavant = advancedMetricsData[String(homePitcherId)];
@@ -6446,7 +7392,7 @@ app2.post("/api/harvest", async (req, res) => {
           awayAdvPitching.pitcher_stuff_plus = awayAdvSavant.stuffPlus;
         }
       } catch (arsenalErr) {
-        console.warn(`[Python Scraper] Error al obtener arsenal/metricas para juego ${gameId}:`, arsenalErr);
+        console.warn(`[Python Scraper] Error al obtener arsenal/metricas para juego ${gameId2}:`, arsenalErr);
       }
       if (pybaseballStatcast?.data?.pitchers_recent) {
         const homePStats = pybaseballStatcast.data.pitchers_recent.find((p) => String(p.pitcher) === String(homePitcherId));
@@ -6539,16 +7485,7 @@ app2.post("/api/harvest", async (req, res) => {
       const getLineupVsHandProjection = (lineup, pitcherHand) => {
         if (!lineup.length) return { kPct: null, contactPct: null };
         const isLefty = pitcherHand === "L";
-        const validKPlayers = lineup.map((p) => ({
-          val: safeFloat(isLefty ? p.k_pct_vs_lhp : p.k_pct_vs_rhp) ?? safeFloat(p.strikeout_pct) ?? safeFloat(p.kPct),
-          pa: p.pa && p.pa > 0 ? p.pa : 50
-        })).filter((p) => p.val !== null && p.val > 0);
-        let kPct = null;
-        if (validKPlayers.length > 0) {
-          const totalWeightedK = validKPlayers.reduce((sum, p) => sum + p.val * p.pa, 0);
-          const totalPA = validKPlayers.reduce((sum, p) => sum + p.pa, 0);
-          kPct = totalPA > 0 ? totalWeightedK / totalPA : null;
-        }
+        const kPct = calculateOpponentLineupKPct(lineup, pitcherHand);
         const validContactPlayers = lineup.map((p) => ({
           val: safeFloat(isLefty ? p.contact_pct_vs_lhp : p.contact_pct_vs_rhp),
           pa: p.pa && p.pa > 0 ? p.pa : 50
@@ -6603,24 +7540,13 @@ app2.post("/api/harvest", async (req, res) => {
         gameDataParsed.bullpen.home.usageLast3Days = getUsage(fatigue.bullpen.home.ipLast3Days);
         gameDataParsed.bullpen.away.usageLast3Days = getUsage(fatigue.bullpen.away.ipLast3Days);
       }
-      const existingGame = existingGamesForDate.find((g) => String(g.id) === String(gameId));
-      if (existingGame) {
-        if (!hasRealBettingLines2(gameDataParsed) && hasRealBettingLines2(existingGame)) {
-          console.log(`[Persistencia] Preservando odds (betting_lines) del juego ${gameId} desde la base de datos local (Modo Batch).`);
-          gameDataParsed.betting_lines = existingGame.betting_lines;
-          if (existingGame.pitchers?.home?.strikeoutProp && !gameDataParsed.pitchers?.home?.strikeoutProp) {
-            gameDataParsed.pitchers.home.strikeoutProp = existingGame.pitchers.home.strikeoutProp;
-            gameDataParsed.pitchers.home.strikeoutPropOverOdds = existingGame.pitchers.home.strikeoutPropOverOdds;
-            gameDataParsed.pitchers.home.strikeoutPropUnderOdds = existingGame.pitchers.home.strikeoutPropUnderOdds;
-          }
-          if (existingGame.pitchers?.away?.strikeoutProp && !gameDataParsed.pitchers?.away?.strikeoutProp) {
-            gameDataParsed.pitchers.away.strikeoutProp = existingGame.pitchers.away.strikeoutProp;
-            gameDataParsed.pitchers.away.strikeoutPropOverOdds = existingGame.pitchers.away.strikeoutPropOverOdds;
-            gameDataParsed.pitchers.away.strikeoutPropUnderOdds = existingGame.pitchers.away.strikeoutPropUnderOdds;
-          }
+      const existingGame = existingGamesForDate.find((g) => String(g.id) === String(gameId2));
+      if (existingGame && (historicalDate || !hasRealBettingLines2(gameDataParsed))) {
+        if (preserveCapturedBettingData(gameDataParsed, existingGame)) {
+          console.log(`[Persistencia] L\xEDneas y props capturados preservados para el juego ${gameId2} (Modo Batch).`);
         }
       }
-      const lineMovements = existingGame?.line_movements || [];
+      const lineMovements = [...existingGame?.line_movements || []];
       const currentOdds = gameDataParsed.betting_lines;
       const newMovement = {
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
@@ -6636,22 +7562,23 @@ app2.post("/api/harvest", async (req, res) => {
         overOdds: currentOdds.overOdds,
         underOdds: currentOdds.underOdds
       };
-      lineMovements.push(newMovement);
+      if (!historicalDate || lineMovements.length === 0) lineMovements.push(newMovement);
       gameDataParsed.line_movements = lineMovements;
+      appendBettingSnapshotIfChanged(gameDataParsed, existingGame);
       gameDataParsed.model_features = calculateModelFeatures(gameDataParsed);
-      const gameResult = await fetchGameResult(gameId, currentOdds);
+      const gameResult = await fetchGameResult(gameId2, currentOdds);
       if (gameResult) {
         gameDataParsed.game_result = gameResult;
       }
       const canUseActualKs = isFinalGameStatus2(gameDataParsed.game_result?.gameStatus);
       if (canUseActualKs) {
         try {
-          const bsStats = await getStarterBoxscoreStats(gameId);
+          const bsStats = await getStarterBoxscoreStats(gameId2);
           gameDataParsed.boxscore_stats = bsStats;
           gameDataParsed.advanced_pitching.home.actualStrikeouts = bsStats.home?.strikeOuts ?? null;
           gameDataParsed.advanced_pitching.away.actualStrikeouts = bsStats.away?.strikeOuts ?? null;
         } catch (err) {
-          console.warn(`Could not fetch boxscore for ${gameId}:`, err);
+          console.warn(`Could not fetch boxscore for ${gameId2}:`, err);
         }
       } else {
         gameDataParsed.boxscore_stats = null;
@@ -6665,18 +7592,27 @@ app2.post("/api/harvest", async (req, res) => {
         checkedAt: (/* @__PURE__ */ new Date()).toISOString()
       };
       gameDataParsed.timestamp = (/* @__PURE__ */ new Date()).toISOString();
-      saveGameData(gameId, gameDataParsed).catch((fsErr) => {
-        console.error(`Error saving to Firestore for game ${gameId}:`, fsErr);
+      capturePregameSnapshot(gameDataParsed);
+      saveGameData(gameId2, gameDataParsed).catch((fsErr) => {
+        console.error(`Error saving to Firestore for game ${gameId2}:`, fsErr);
         errorsCollection.push({
           id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-          gameId,
+          gameId: gameId2,
           source: "Firestore",
           message: `Fallo al sincronizar con Firestore: ${fsErr instanceof Error ? fsErr.message : String(fsErr)}`,
           severity: "medium"
         });
       });
       harvestedGames.push(gameDataParsed);
+      const incrementalDB = readGamesDB();
+      const incrementalDateGames = [...incrementalDB[date] || []];
+      const incrementalIndex = incrementalDateGames.findIndex((game) => String(game.id) === String(gameId2));
+      if (incrementalIndex >= 0) incrementalDateGames[incrementalIndex] = gameDataParsed;
+      else incrementalDateGames.push(gameDataParsed);
+      incrementalDB[date] = incrementalDateGames;
+      writeGamesDB(incrementalDB);
+      console.log(`[ETL Timing] Juego ${gameId2}: ${Date.now() - gameStartedAt}ms.`);
       emit({
         phase: "game_done",
         step: `\u2713 ${gameLabel}`,
@@ -6692,6 +7628,7 @@ app2.post("/api/harvest", async (req, res) => {
     db2[date] = harvestedGames;
     writeGamesDB(db2);
     writeErrorsDB(errorsCollection);
+    console.log(`[ETL Timing] Extracci\xF3n ${date}: ${Date.now() - harvestStartedAt}ms para ${harvestedGames.length} juegos.`);
     emit({
       phase: "done",
       step: `Extracci\xF3n completada \u2014 ${harvestedGames.length} juego(s)`,
@@ -6706,30 +7643,30 @@ app2.post("/api/harvest", async (req, res) => {
     res.end();
   }
 });
-async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
-  console.log(`Actualizando juego individual ${gameId} para la fecha ${date}...`);
+async function updateSingleGameData(gameId2, date, forceRefreshOdds = false) {
+  console.log(`Actualizando juego individual ${gameId2} para la fecha ${date}...`);
   const mlbRes = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${date}`);
   const mlbData = await mlbRes.json();
   let match = null;
   let actualDate = date;
   if (mlbData.dates && mlbData.dates[0] && mlbData.dates[0].games) {
-    match = mlbData.dates[0].games.find((g) => String(g.gamePk) === String(gameId));
+    match = mlbData.dates[0].games.find((g) => String(g.gamePk) === String(gameId2));
   }
   if (!match) {
-    const byGamePkRes = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&gamePk=${gameId}`);
+    const byGamePkRes = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&gamePk=${gameId2}`);
     const byGamePkData = await byGamePkRes.json();
     for (const scheduleDate of byGamePkData.dates || []) {
-      const found = (scheduleDate.games || []).find((g) => String(g.gamePk) === String(gameId));
+      const found = (scheduleDate.games || []).find((g) => String(g.gamePk) === String(gameId2));
       if (found) {
         match = found;
         actualDate = scheduleDate.date || String(found.gameDate || "").split("T")[0] || date;
-        console.warn(`Juego ${gameId} no pertenece a ${date}; usando fecha real ${actualDate}.`);
+        console.warn(`Juego ${gameId2} no pertenece a ${date}; usando fecha real ${actualDate}.`);
         break;
       }
     }
   }
   if (!match) {
-    throw new Error(`Juego ${gameId} no encontrado en el calendario de MLB`);
+    throw new Error(`Juego ${gameId2} no encontrado en el calendario de MLB`);
   }
   const homeName = match.teams.home.team.name;
   const awayName = match.teams.away.team.name;
@@ -6737,11 +7674,12 @@ async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
   const awayTeamId = match.teams.away.team.id;
   const venueName = match.venue?.name || "MLB Stadium";
   const matchTime = formatGameTime(match.gameDate);
+  const historicalDate = isPastGameDate(actualDate);
   const realOddsData = await fetchRealBettingLines(actualDate, forceRefreshOdds);
-  const pitcherStrikeoutRows = await fetchDataStreakPitcherStrikeoutProps(actualDate, forceRefreshOdds);
-  const totalBasesRows = await fetchDataStreakTotalBasesProps(actualDate, forceRefreshOdds);
-  const realMLBData = await fetchRealMLBGameData(gameId, homeTeamId, awayTeamId, actualDate);
-  const gameDataParsed = buildDirectGameData(gameId, homeName, awayName, venueName, actualDate, matchTime, realMLBData, realOddsData, pitcherStrikeoutRows, totalBasesRows);
+  const pitcherStrikeoutRows = historicalDate ? [] : await fetchDataStreakPitcherStrikeoutProps(actualDate, forceRefreshOdds);
+  const totalBasesRows = historicalDate ? [] : await fetchDataStreakTotalBasesProps(actualDate, forceRefreshOdds);
+  const realMLBData = await fetchRealMLBGameData(gameId2, homeTeamId, awayTeamId, actualDate);
+  const gameDataParsed = buildDirectGameData(gameId2, homeName, awayName, venueName, actualDate, matchTime, realMLBData, realOddsData, pitcherStrikeoutRows, totalBasesRows);
   const season = actualDate.substring(0, 4);
   await Promise.all([
     savantCache.load(parseInt(season)),
@@ -6821,13 +7759,21 @@ async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
   }
   try {
     const d = new Date(actualDate);
-    const startD = new Date(d.getTime() - 30 * 24 * 60 * 60 * 1e3);
+    const startD = new Date(d.getTime() - 10 * 24 * 60 * 60 * 1e3);
     const startDStr = startD.toISOString().split("T")[0];
     const validPitchersU = [String(homePitcherId), String(awayPitcherId)].filter((id) => id !== "0");
-    const [pitcherArsenalDataU, advancedMetricsDataU] = await Promise.all([
+    const [pitcherArsenalDataU, recentStatcastU] = await Promise.all([
       getPitcherArsenals(validPitchersU, season),
-      getPitcherAdvancedMetrics(validPitchersU, startDStr, actualDate)
+      getRecentStatcast(startDStr, actualDate)
     ]);
+    const advancedMetricsDataU = {};
+    for (const pitcher of recentStatcastU?.data?.pitchers_recent || []) {
+      advancedMetricsDataU[String(pitcher.pitcher)] = {
+        spinRate: safeFloat(pitcher.avg_spin_rate),
+        chasePct: safeFloat(pitcher.chase_pct),
+        stuffPlus: null
+      };
+    }
     const homeArsenalU = pitcherArsenalDataU[String(homePitcherId)];
     const awayArsenalU = pitcherArsenalDataU[String(awayPitcherId)];
     const homeAdvSavantU = advancedMetricsDataU[String(homePitcherId)];
@@ -6857,7 +7803,7 @@ async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
       awayAdvPitching.pitcher_stuff_plus = awayAdvSavantU.stuffPlus;
     }
   } catch (arsenalErr) {
-    console.warn(`[Python Scraper] Error al obtener arsenal/metricas para juego ${gameId}:`, arsenalErr);
+    console.warn(`[Python Scraper] Error al obtener arsenal/metricas para juego ${gameId2}:`, arsenalErr);
   }
   const homeLineupU = gameDataParsed.lineups?.home || [];
   const awayLineupU = gameDataParsed.lineups?.away || [];
@@ -6938,9 +7884,8 @@ async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
   const getLineupVsHandProjection = (lineup, pitcherHand) => {
     if (!lineup.length) return { kPct: null, contactPct: null };
     const isLefty = pitcherHand === "L";
-    const kValues = lineup.map((p) => safeFloat(isLefty ? p.k_pct_vs_lhp : p.k_pct_vs_rhp) ?? safeFloat(p.strikeout_pct) ?? safeFloat(p.kPct)).filter((value) => value !== null && value > 0);
     const contactValues = lineup.map((p) => safeFloat(isLefty ? p.contact_pct_vs_lhp : p.contact_pct_vs_rhp)).filter((value) => value !== null && value > 0);
-    const kPct = average(kValues, 1);
+    const kPct = calculateOpponentLineupKPct(lineup, pitcherHand);
     return {
       kPct,
       contactPct: contactValues.length > 0 ? average(contactValues, 1) : null
@@ -6984,24 +7929,13 @@ async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
   }
   const currentDB = readGamesDB();
   const existingGamesForDate = currentDB[actualDate] || [];
-  const existingGame = existingGamesForDate.find((g) => String(g.id) === String(gameId));
-  if (existingGame) {
-    if (!hasRealBettingLines2(gameDataParsed) && hasRealBettingLines2(existingGame)) {
-      console.log(`[Persistencia] Preservando odds (betting_lines) del juego ${gameId} desde la base de datos local (Modo Single).`);
-      gameDataParsed.betting_lines = existingGame.betting_lines;
-      if (existingGame.pitchers?.home?.strikeoutProp && !gameDataParsed.pitchers?.home?.strikeoutProp) {
-        gameDataParsed.pitchers.home.strikeoutProp = existingGame.pitchers.home.strikeoutProp;
-        gameDataParsed.pitchers.home.strikeoutPropOverOdds = existingGame.pitchers.home.strikeoutPropOverOdds;
-        gameDataParsed.pitchers.home.strikeoutPropUnderOdds = existingGame.pitchers.home.strikeoutPropUnderOdds;
-      }
-      if (existingGame.pitchers?.away?.strikeoutProp && !gameDataParsed.pitchers?.away?.strikeoutProp) {
-        gameDataParsed.pitchers.away.strikeoutProp = existingGame.pitchers.away.strikeoutProp;
-        gameDataParsed.pitchers.away.strikeoutPropOverOdds = existingGame.pitchers.away.strikeoutPropOverOdds;
-        gameDataParsed.pitchers.away.strikeoutPropUnderOdds = existingGame.pitchers.away.strikeoutPropUnderOdds;
-      }
+  const existingGame = existingGamesForDate.find((g) => String(g.id) === String(gameId2));
+  if (existingGame && (historicalDate || !hasRealBettingLines2(gameDataParsed))) {
+    if (preserveCapturedBettingData(gameDataParsed, existingGame)) {
+      console.log(`[Persistencia] L\xEDneas y props capturados preservados para el juego ${gameId2} (Modo Single).`);
     }
   }
-  const lineMovements = existingGame?.line_movements || [];
+  const lineMovements = [...existingGame?.line_movements || []];
   const currentOdds = gameDataParsed.betting_lines;
   const newMovement = {
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
@@ -7017,10 +7951,11 @@ async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
     overOdds: currentOdds.overOdds,
     underOdds: currentOdds.underOdds
   };
-  lineMovements.push(newMovement);
+  if (!historicalDate || lineMovements.length === 0) lineMovements.push(newMovement);
   gameDataParsed.line_movements = lineMovements;
+  appendBettingSnapshotIfChanged(gameDataParsed, existingGame);
   gameDataParsed.model_features = calculateModelFeatures(gameDataParsed);
-  const gameResult = await fetchGameResult(gameId, currentOdds);
+  const gameResult = await fetchGameResult(gameId2, currentOdds);
   if (gameResult) {
     gameDataParsed.game_result = gameResult;
   }
@@ -7036,13 +7971,14 @@ async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
     checkedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   gameDataParsed.timestamp = (/* @__PURE__ */ new Date()).toISOString();
-  saveGameData(gameId, gameDataParsed).catch((fsErr) => {
-    console.error(`Error saving to Firestore for game ${gameId}:`, fsErr);
+  capturePregameSnapshot(gameDataParsed);
+  saveGameData(gameId2, gameDataParsed).catch((fsErr) => {
+    console.error(`Error saving to Firestore for game ${gameId2}:`, fsErr);
   });
   const updatedGames = existingGamesForDate.map(
-    (g) => String(g.id) === String(gameId) ? gameDataParsed : g
+    (g) => String(g.id) === String(gameId2) ? gameDataParsed : g
   );
-  if (!existingGamesForDate.some((g) => String(g.id) === String(gameId))) {
+  if (!existingGamesForDate.some((g) => String(g.id) === String(gameId2))) {
     updatedGames.push(gameDataParsed);
   }
   currentDB[actualDate] = updatedGames;
@@ -7051,16 +7987,16 @@ async function updateSingleGameData(gameId, date, forceRefreshOdds = false) {
   return gameDataParsed;
 }
 app2.post("/api/harvest-game", async (req, res) => {
-  const { gameId, date, refreshOdds } = req.body;
-  if (!gameId || !date || typeof gameId !== "string" || typeof date !== "string") {
+  const { gameId: gameId2, date, refreshOdds } = req.body;
+  if (!gameId2 || !date || typeof gameId2 !== "string" || typeof date !== "string") {
     res.status(400).json({ error: "gameId y date son requeridos" });
     return;
   }
   try {
-    const updatedGame = await updateSingleGameData(gameId, date, refreshOdds === true);
+    const updatedGame = await updateSingleGameData(gameId2, date, refreshOdds === true);
     res.json({ success: true, game: updatedGame });
   } catch (err) {
-    console.error(`Error al actualizar juego individual ${gameId}:`, err);
+    console.error(`Error al actualizar juego individual ${gameId2}:`, err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -7142,17 +8078,31 @@ async function startServer() {
         middlewareMode: true,
         hmr: process.env.DISABLE_HMR !== "true",
         watch: process.env.DISABLE_HMR === "true" ? null : {
-          ignored: ["**/mlb_database.json", "**/mlb_errors.json", "**/datastreak_*.json", "**/odds_cache_*.json", "**/savant_*.json", "**/games_db*.json"]
+          ignored: [
+            "**/mlb_*.json",
+            "**/datastreak_*.json",
+            "**/odds_*.json",
+            "**/savant_*.json",
+            "**/games_db*.json",
+            "**/boxscore_*.json",
+            "**/pitcher_stats_*.json",
+            "**/offense_stats_*.json",
+            "**/cache/**",
+            "**/datasets/**",
+            "**/*.csv",
+            "**/server.mjs",
+            "**/dev-server.log"
+          ]
         }
       },
       appType: "spa"
     });
     app2.use(vite.middlewares);
   } else {
-    const distPath = path3.join(process.cwd(), "dist");
+    const distPath = path4.join(process.cwd(), "dist");
     app2.use(express.static(distPath));
     app2.get("*", (req, res) => {
-      res.sendFile(path3.join(distPath, "index.html"));
+      res.sendFile(path4.join(distPath, "index.html"));
     });
   }
   app2.listen(PORT, "0.0.0.0", () => {

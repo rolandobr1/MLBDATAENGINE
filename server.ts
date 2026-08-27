@@ -7,7 +7,7 @@
 // CRÍTICO: dotenv debe cargarse ANTES de importar firebase.ts y otros módulos
 // que leen process.env en su inicialización.
 import { format } from "date-fns";
-import { getRecentStatcast, getPitcherArsenals, getPitcherAdvancedMetrics } from './src/etl/extractors/pybaseballApi';
+import { getRecentStatcast, getPitcherArsenals } from './src/etl/extractors/pybaseballApi';
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
@@ -36,7 +36,7 @@ for (const key in process.env) {
 
 import express from "express";
 import { createServer as createViteServer } from "vite";
-import { saveGameData, loadAllGamesFromFirestore, loadGamesByDateFromFirestore, loadLatestGamesFromFirestore, loadExtractedDatesFromFirestore, ensureAnonymousAuth } from "./src/services/firestoreService";
+import { saveGameData, loadAllGamesFromFirestore, loadGamesByDateFromFirestore, loadGamesByDateRangeFromFirestore, loadLatestGamesFromFirestore, loadExtractedDatesFromFirestore, ensureAnonymousAuth } from "./src/services/firestoreService";
 import { scrapeStrikeoutProps } from "./src/etl/extractors/rotowireScraper";
 import {
   WeatherData,
@@ -57,6 +57,15 @@ import { enrichWithVortexMetrics } from "./src/etl/transformers/vortexMetrics";
 import { savantCache } from "./src/etl/extractors/savantScraper";
 import { parkFactorsScraper } from "./src/etl/extractors/parkFactorsScraper";
 import { getStarterBoxscoreStats } from "./src/etl/extractors/mlbBoxscorePitcherExtractor";
+import { capturePregameSnapshot } from "./src/datasets/pregameSnapshots";
+import {
+  generateBatterGameDatasetCSV,
+  generateGameDatasetCSV,
+  generatePitcherGameDatasetCSV,
+  generatePitcherPropsDatasetCSV,
+} from "./src/datasets/derivedDatasets";
+import { calculateOpponentLineupKPct } from "./src/utils/lineupMetrics";
+import { buildKlabTrainingDataset, validateKlabDateRange } from "./src/datasets/klabTrainingDataset";
 
 const app = express();
 app.use(express.json());
@@ -73,6 +82,8 @@ let gamesDbCache: Record<string, any[]> | null = null;
 let gamesDbCacheMtime = 0;
 let latestFirestoreRestoreInFlight: Promise<void> | null = null;
 const oddsApiBackfillsInFlight = new Set<string>();
+const harvestDatesInFlight = new Set<string>();
+let firestoreRangeSyncInFlight = false;
 
 // Ensure files exist
 if (!fs.existsSync(DB_PATH)) {
@@ -200,6 +211,140 @@ function getGameTimestamp(game: any): number {
   return Number.isFinite(time) ? time : 0;
 }
 
+function getNewYorkDateString(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function isPastGameDate(date: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) && date < getNewYorkDateString();
+}
+
+const PITCHER_PROP_FIELDS = ["strikeoutProp", "strikeoutPropOverOdds", "strikeoutPropUnderOdds", "strikeoutPropBook", "strikeoutPropSource"] as const;
+const BATTER_PROP_FIELDS = ["totalBasesProp", "totalBasesPropOverOdds", "totalBasesPropUnderOdds", "totalBasesPropBook", "totalBasesPropSource", "totalBasesPropHitRate", "totalBasesPropHitRateDisplay"] as const;
+
+function hasStoredValue(value: any): boolean {
+  return value !== undefined && value !== null && value !== "";
+}
+
+function copyStoredFields(target: any, source: any, fields: readonly string[]) {
+  if (!target || !source) return;
+  for (const field of fields) if (hasStoredValue(source[field])) target[field] = source[field];
+}
+
+function findMatchingStoredPlayer(players: any[], current: any): any | undefined {
+  const currentId = String(current?.id ?? current?.mlbId ?? "");
+  if (currentId) {
+    const byId = players.find((player) => String(player?.id ?? player?.mlbId ?? "") === currentId);
+    if (byId) return byId;
+  }
+  const currentName = String(current?.name || "").trim().toLowerCase();
+  return currentName ? players.find((player) => String(player?.name || "").trim().toLowerCase() === currentName) : undefined;
+}
+
+// Las líneas son datos temporales: una vez capturadas, no deben reconstruirse ni borrarse.
+function preserveCapturedBettingData(targetGame: any, storedGame: any): boolean {
+  if (!targetGame || !storedGame) return false;
+  let preserved = false;
+  if (hasRealBettingLines(storedGame)) {
+    targetGame.betting_lines = storedGame.betting_lines;
+    preserved = true;
+  }
+  for (const side of ["home", "away"]) {
+    const storedPitcher = storedGame?.pitchers?.[side];
+    const targetPitcher = targetGame?.pitchers?.[side];
+    if (storedPitcher && targetPitcher && PITCHER_PROP_FIELDS.some((field) => hasStoredValue(storedPitcher[field]))) {
+      copyStoredFields(targetPitcher, storedPitcher, PITCHER_PROP_FIELDS);
+      preserved = true;
+    }
+    const storedPlayers = storedGame?.lineups?.[side] || [];
+    for (const targetPlayer of targetGame?.lineups?.[side] || []) {
+      const storedPlayer = findMatchingStoredPlayer(storedPlayers, targetPlayer);
+      if (storedPlayer && BATTER_PROP_FIELDS.some((field) => hasStoredValue(storedPlayer[field]))) {
+        copyStoredFields(targetPlayer, storedPlayer, BATTER_PROP_FIELDS);
+        preserved = true;
+      }
+    }
+  }
+  if (Array.isArray(storedGame.line_movements) && storedGame.line_movements.length > 0) {
+    targetGame.line_movements = storedGame.line_movements;
+    preserved = true;
+  }
+  if (Array.isArray(storedGame.betting_history) && storedGame.betting_history.length > 0) {
+    targetGame.betting_history = storedGame.betting_history;
+    preserved = true;
+  }
+  return preserved;
+}
+
+function getCapturedBettingDataCount(game: any): number {
+  let count = hasRealBettingLines(game) ? 1 : 0;
+  for (const side of ["home", "away"]) {
+    if (PITCHER_PROP_FIELDS.some((field) => hasStoredValue(game?.pitchers?.[side]?.[field]))) count += 1;
+    for (const player of game?.lineups?.[side] || []) {
+      if (BATTER_PROP_FIELDS.some((field) => hasStoredValue(player?.[field]))) count += 1;
+    }
+  }
+  return count;
+}
+
+function buildBettingSnapshot(game: any) {
+  const pitcherProps = ["home", "away"].map((side) => {
+    const pitcher = game?.pitchers?.[side] || {};
+    return {
+      side, playerId: pitcher.pitcherId ?? null, player: pitcher.name ?? null,
+      line: pitcher.strikeoutProp ?? null,
+      overOdds: pitcher.strikeoutPropOverOdds ?? null,
+      underOdds: pitcher.strikeoutPropUnderOdds ?? null,
+      book: pitcher.strikeoutPropBook ?? null, source: pitcher.strikeoutPropSource ?? null,
+    };
+  }).filter((prop) => hasStoredValue(prop.line));
+
+  const batterProps = ["home", "away"].flatMap((side) =>
+    (game?.lineups?.[side] || []).map((player: any) => ({
+      side, playerId: player.id ?? player.mlbId ?? null, player: player.name ?? null,
+      line: player.totalBasesProp ?? null,
+      overOdds: player.totalBasesPropOverOdds ?? null,
+      underOdds: player.totalBasesPropUnderOdds ?? null,
+      book: player.totalBasesPropBook ?? null, source: player.totalBasesPropSource ?? null,
+    })).filter((prop: any) => hasStoredValue(prop.line))
+  ).sort((a: any, b: any) => `${a.side}|${a.playerId}|${a.player}`.localeCompare(`${b.side}|${b.playerId}|${b.player}`));
+
+  return {
+    timestamp: new Date().toISOString(),
+    bettingLines: hasRealBettingLines(game) ? game.betting_lines : null,
+    pitcherProps,
+    batterProps,
+  };
+}
+
+function bettingSnapshotSignature(snapshot: any): string {
+  if (!snapshot) return "";
+  const bettingLines = snapshot.bettingLines ? { ...snapshot.bettingLines } : null;
+  if (bettingLines) delete bettingLines.lineMovementSummary;
+  return JSON.stringify({ bettingLines, pitcherProps: snapshot.pitcherProps || [], batterProps: snapshot.batterProps || [] });
+}
+
+function appendBettingSnapshotIfChanged(game: any, storedGame?: any): boolean {
+  const snapshot = buildBettingSnapshot(game);
+  if (!snapshot.bettingLines && snapshot.pitcherProps.length === 0 && snapshot.batterProps.length === 0) return false;
+
+  const history = [...(storedGame?.betting_history || game?.betting_history || [])];
+  const previous = history[history.length - 1];
+  if (previous && bettingSnapshotSignature(previous) === bettingSnapshotSignature(snapshot)) {
+    game.betting_history = history;
+    return false;
+  }
+
+  history.push(snapshot);
+  game.betting_history = history;
+  console.log(`[Odds History] Snapshot ${history.length} guardado para el juego ${game.id}.`);
+  return true;
+}
+
 function getTheOddsApiPropsCount(game: any): number {
   let count = 0;
   for (const side of ["home", "away"]) {
@@ -221,11 +366,7 @@ function maybeBackfillTheOddsApiForDate(date: string, dateGames: any[]) {
   if (oddsApiBackfillsInFlight.has(date)) return;
 
   // Evitar backfill para fechas pasadas, ya que destruiría los props de Rotowire de ese día
-  const now = new Date();
-  const nyTimeStr = now.toLocaleString("en-US", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
-  const [month, day, year] = nyTimeStr.split("/");
-  const todayStr = `${year}-${month}-${day}`;
-  if (date < todayStr) return;
+  if (isPastGameDate(date)) return;
 
   const cacheFile = path.join(process.cwd(), `odds_cache_${date}.json`);
   const hasOddsCache = fs.existsSync(cacheFile);
@@ -267,6 +408,10 @@ function getPitcherLast3DetailsCount(game: any): number {
 }
 
 function pickSyncedGame(remoteGame: any, localGame: any) {
+  const remoteBettingCount = getCapturedBettingDataCount(remoteGame);
+  const localBettingCount = getCapturedBettingDataCount(localGame);
+  if (localBettingCount > remoteBettingCount) return localGame;
+  if (remoteBettingCount > localBettingCount) return remoteGame;
   const remotePropsCount = getTheOddsApiPropsCount(remoteGame);
   const localPropsCount = getTheOddsApiPropsCount(localGame);
   if (localPropsCount > remotePropsCount) return localGame;
@@ -466,7 +611,7 @@ app.get("/api/games", async (req, res) => {
 
   if (dateGames.length > 0) {
     maybeBackfillTheOddsApiForDate(date, dateGames);
-    res.json({ games: injectPitStats(dateGames), totalGames: countLocalGames(db) });
+    res.json({ games: injectPitStats(dateGames), totalGames: countLocalGames(db), dateExtracted: true });
     return;
   }
 
@@ -477,7 +622,11 @@ app.get("/api/games", async (req, res) => {
     dateGames = db[date] || [];
   }
   maybeBackfillTheOddsApiForDate(date, dateGames);
-  res.json({ games: injectPitStats(dateGames), totalGames: countLocalGames(db) });
+  res.json({
+    games: injectPitStats(dateGames),
+    totalGames: countLocalGames(db),
+    dateExtracted: Object.prototype.hasOwnProperty.call(db, date),
+  });
 });
 
 // Helper function to flatten games for ML JSON endpoint
@@ -1006,6 +1155,121 @@ app.get("/api/batters-dataset/csv", async (req, res) => {
   } catch (err) {
     console.error("Error generating Batters CSV:", err);
     res.status(500).send("Error al generar CSV de bateadores");
+  }
+});
+
+function getDatasetGamesForDate(db: Record<string, MLBGame[]>, date: unknown): MLBGame[] {
+  if (typeof date === "string" && date.trim()) return db[date] || [];
+  return Object.values(db).flat() as MLBGame[];
+}
+
+// Derived ML datasets are intentionally separate from the master batters CSV.
+// They only emit games with an immutable pregame snapshot.
+app.get("/api/datasets/pitcher-game/csv", (req, res) => {
+  const { date } = req.query;
+  const csv = generatePitcherGameDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename=MLB_PITCHER_GAME_DATASET_${date || "all"}.csv`);
+  res.send(csv);
+});
+
+app.get("/api/datasets/game/csv", (req, res) => {
+  const { date } = req.query;
+  const csv = generateGameDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename=MLB_GAME_DATASET_${date || "all"}.csv`);
+  res.send(csv);
+});
+
+app.get("/api/datasets/batter-game/csv", (req, res) => {
+  const { date } = req.query;
+  const csv = generateBatterGameDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename=MLB_BATTER_GAME_DATASET_${date || "all"}.csv`);
+  res.send(csv);
+});
+
+app.get("/api/datasets/pitcher-props/csv", (req, res) => {
+  const { date } = req.query;
+  const csv = generatePitcherPropsDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename=MLB_PITCHER_PROPS_DATASET_${date || "all"}.csv`);
+  res.send(csv);
+});
+
+function buildRequestedKlabDataset(startDate: unknown, endDate: unknown) {
+  const allGames = Object.values(readGamesDB()).flat() as MLBGame[];
+  return buildKlabTrainingDataset(allGames, startDate, endDate);
+}
+
+// Historical K-lab training data is generated only for an explicit inclusive range.
+// Preview performs every validation without writing a file.
+app.get("/api/datasets/klab-training/preview", (req, res) => {
+  try {
+    const result = buildRequestedKlabDataset(req.query.start_date, req.query.end_date);
+    res.json({ report: result.report, sample: result.rows.slice(0, 5) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Rango inválido" });
+  }
+});
+
+app.get("/api/datasets/klab-training/csv", (req, res) => {
+  try {
+    const result = buildRequestedKlabDataset(req.query.start_date, req.query.end_date);
+    const outputDirectory = path.join(process.cwd(), "datasets", "ml");
+    fs.mkdirSync(outputDirectory, { recursive: true });
+    fs.writeFileSync(path.join(outputDirectory, result.report.outputFilename), result.csv, "utf8");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename=${result.report.outputFilename}`);
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.send(result.csv);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "No se pudo generar el dataset" });
+  }
+});
+
+app.post("/api/firestore/sync-local-range", async (req, res) => {
+  if (firestoreRangeSyncInFlight) {
+    res.status(409).json({ error: "Ya existe una sincronización de Firestore en progreso" });
+    return;
+  }
+
+  try {
+    const { startDate, endDate } = validateKlabDateRange(req.body?.start_date, req.body?.end_date);
+    firestoreRangeSyncInFlight = true;
+    const remoteGames = await loadGamesByDateRangeFromFirestore(startDate, endDate);
+
+    const before = readGamesDB();
+    let added = 0;
+    let updated = 0;
+    let unchanged = 0;
+    for (const remoteGame of remoteGames) {
+      const date = remoteGame?.metadata?.date;
+      const id = String(remoteGame?.id || remoteGame?.metadata?.id || "");
+      const localGame = (before[date] || []).find((game: any) => String(game?.id || game?.metadata?.id || "") === id);
+      if (!localGame) {
+        added += 1;
+      } else if (JSON.stringify(pickSyncedGame(remoteGame, localGame)) === JSON.stringify(localGame)) {
+        unchanged += 1;
+      } else {
+        updated += 1;
+      }
+    }
+
+    if (remoteGames.length > 0) mergeGamesIntoLocalDB(remoteGames);
+    const dates = new Set(remoteGames.map((game) => game?.metadata?.date).filter(Boolean));
+    res.json({
+      startDate, endDate,
+      remoteGames: remoteGames.length,
+      datesFound: dates.size,
+      added, updated, unchanged,
+      localGamesAfterSync: countLocalGames(readGamesDB()),
+      note: "Se sincronizaron documentos de juegos. Los snapshots pregame solo estarán disponibles si ya existen en el almacén local de snapshots.",
+    });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "No se pudo sincronizar Firestore" });
+  } finally {
+    firestoreRangeSyncInFlight = false;
   }
 });
 
@@ -2050,6 +2314,13 @@ async function fetchRealBettingLines(date: string, forceRefreshOdds: boolean = f
     } catch (e) {
       console.warn("Error leyendo el caché de cuotas, se ignorará y se descargará nuevamente.", e);
     }
+  }
+
+  // Un mercado cerrado no se puede reconstruir. Para fechas pasadas solo se
+  // permite usar el caché capturado arriba; nunca se vuelven a llamar proveedores.
+  if (isPastGameDate(date)) {
+    console.log(`[Odds] ${date} es una fecha pasada sin caché utilizable; no se consultarán proveedores externos.`);
+    return null;
   }
 
   // Build ordered list of API keys (primary + backups)
@@ -3982,6 +4253,7 @@ function buildDirectGameData(
     pitchers: {
       home: {
         name: realMLBData?.pitchers?.home?.name || "Por definir",
+        pitcherId: realMLBData?.pitcherIds?.home ?? null,
         era: safeFloat(realMLBData?.pitchers?.home?.era) ?? "N/A",
         whip: safeFloat(realMLBData?.pitchers?.home?.whip) ?? "N/A",
         kPct: safeFloat(realMLBData?.pitchers?.home?.kPct) ?? "N/A",
@@ -4004,6 +4276,7 @@ function buildDirectGameData(
       },
       away: {
         name: realMLBData?.pitchers?.away?.name || "Por definir",
+        pitcherId: realMLBData?.pitcherIds?.away ?? null,
         era: safeFloat(realMLBData?.pitchers?.away?.era) ?? "N/A",
         whip: safeFloat(realMLBData?.pitchers?.away?.whip) ?? "N/A",
         kPct: safeFloat(realMLBData?.pitchers?.away?.kPct) ?? "N/A",
@@ -4172,6 +4445,11 @@ app.post("/api/harvest", async (req, res) => {
     res.status(400).json({ error: "Fecha es requerida (formato YYYY-MM-DD)" });
     return;
   }
+  if (harvestDatesInFlight.has(date)) {
+    res.status(409).json({ error: `Ya existe una extracción en progreso para ${date}` });
+    return;
+  }
+  harvestDatesInFlight.add(date);
 
   // Switch to SSE mode
   res.writeHead(200, {
@@ -4187,6 +4465,7 @@ app.post("/api/harvest", async (req, res) => {
 
   let isCancelled = false;
   res.on('close', () => {
+    harvestDatesInFlight.delete(date);
     if (!res.writableEnded) {
       isCancelled = true;
       console.log(`[ETL] Conexión cerrada por el cliente. Cancelando proceso para ${date}...`);
@@ -4194,12 +4473,13 @@ app.post("/api/harvest", async (req, res) => {
   });
 
   console.log(`Iniciando recolección MLB para fecha: ${date}`);
+  const harvestStartedAt = Date.now();
   emit({ phase: "schedule", step: "Conectando con MLB Stats API...", pct: 2 });
 
   // Fetch actual MLB Schedule from MLB Stats API
   let mlbMatches: any[] = [];
   try {
-    const mlbRes = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${date}`);
+    const mlbRes = await fetchWithTimeout(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${date}&hydrate=probablePitcher`, 12000);
     const mlbData = await mlbRes.json();
     if (mlbData.dates && mlbData.dates[0] && mlbData.dates[0].games) {
       mlbMatches = mlbData.dates[0].games;
@@ -4208,10 +4488,42 @@ app.post("/api/harvest", async (req, res) => {
     console.error("Error consultando MLB Stats API:", error);
   }
 
-  // Fetch real odds for the day
-  const realOddsData = await fetchRealBettingLines(date, refreshOdds === true, mlbMatches);
-  const pitcherStrikeoutRows = await fetchDataStreakPitcherStrikeoutProps(date, refreshOdds === true);
-  const totalBasesRows = await fetchDataStreakTotalBasesProps(date, refreshOdds === true);
+  // Leer primero la base: las líneas históricas persistidas son inmutables.
+  const currentDBSnapshot = readGamesDB();
+  const existingGamesForDate = currentDBSnapshot[date] || [];
+  const historicalDate = isPastGameDate(date);
+  const existingGamesById = new Map(existingGamesForDate.map((game: any) => [String(game?.id || game?.metadata?.id || ""), game]));
+  const canReuseStoredGame = (match: any) => {
+    if (forceRebuild) return false;
+    const stored = existingGamesById.get(String(match?.gamePk));
+    return Boolean(stored) && (historicalDate || isFinalGameStatus((stored as any)?.game_result?.gameStatus));
+  };
+  const matchesNeedingExtraction = mlbMatches.filter((match) => !canReuseStoredGame(match));
+
+  // A past game already stored is immutable for batch extraction. If the whole
+  // date is cached, finish here before loading odds, Savant, weather or PyBaseball.
+  if (!forceRebuild && historicalDate && existingGamesForDate.length > 0 && matchesNeedingExtraction.length === 0) {
+    const cachedGames = mlbMatches.length > 0
+      ? mlbMatches.map((match) => existingGamesById.get(String(match.gamePk))).filter(Boolean)
+      : existingGamesForDate;
+    console.log(`[Caché] ${date}: ${cachedGames.length} juego(s) históricos reutilizados; extracción omitida por completo.`);
+    emit({
+      phase: "done",
+      step: `Fecha histórica ya guardada — ${cachedGames.length} juego(s) reutilizados`,
+      pct: 100,
+      games: cachedGames,
+      cached: true,
+      skippedGames: cachedGames.length,
+      errorsCount: 0,
+    });
+    res.end();
+    return;
+  }
+
+  // Para fechas pasadas fetchRealBettingLines solo admite el caché ya capturado.
+  const realOddsData = await fetchRealBettingLines(date, refreshOdds === true, matchesNeedingExtraction);
+  const pitcherStrikeoutRows = historicalDate ? [] : await fetchDataStreakPitcherStrikeoutProps(date, refreshOdds === true);
+  const totalBasesRows = historicalDate ? [] : await fetchDataStreakTotalBasesProps(date, refreshOdds === true);
 
   // Pre-cargar Baseball Savant (una sola descarga para toda la sesión)
   const season = date.substring(0, 4);
@@ -4229,8 +4541,19 @@ app.post("/api/harvest", async (req, res) => {
   const startStrPy = startDatePy.toISOString().split('T')[0];
   const endStrPy = endDatePy.toISOString().split('T')[0];
   let pybaseballStatcast: any = null;
+  let preloadedArsenalData: Record<string, any> = {};
+  let preloadedAdvancedMetrics: Record<string, any> = {};
   try {
+    const startedAt = Date.now();
     pybaseballStatcast = await getRecentStatcast(startStrPy, endStrPy);
+    for (const pitcher of pybaseballStatcast?.data?.pitchers_recent || []) {
+      preloadedAdvancedMetrics[String(pitcher.pitcher)] = {
+        spinRate: safeFloat(pitcher.avg_spin_rate),
+        chasePct: safeFloat(pitcher.chase_pct),
+        stuffPlus: null,
+      };
+    }
+    console.log(`[ETL Timing] Statcast agregado: ${Date.now() - startedAt}ms, ${Object.keys(preloadedAdvancedMetrics).length} pitchers.`);
   } catch (err) {
     console.error("Error cargando PyBaseball", err);
   }
@@ -4238,7 +4561,7 @@ app.post("/api/harvest", async (req, res) => {
   // Pre-cargar Arsenal y Métricas Avanzadas de todos los pitchers probables del día en una sola pasada
   emit({ phase: "schedule", step: "Precargando arsenal y métricas avanzadas...", pct: 6 });
   try {
-    const allProbablePitchers = mlbMatches
+    const allProbablePitchers = matchesNeedingExtraction
       .flatMap(m => [m.teams?.home?.probablePitcher?.id, m.teams?.away?.probablePitcher?.id])
       .map(id => String(id))
       .filter(id => id && id !== 'undefined' && id !== '0');
@@ -4247,14 +4570,9 @@ app.post("/api/harvest", async (req, res) => {
     
     if (uniquePitchers.length > 0) {
       console.log(`[ETL] Precargando PyBaseball para ${uniquePitchers.length} pitchers en lote...`);
-      const d = new Date(date);
-      const startD = new Date(d.getTime() - 30 * 24 * 60 * 60 * 1000);
-      const advStartStr = startD.toISOString().split('T')[0];
-      
-      await Promise.all([
-        getPitcherArsenals(uniquePitchers, season),
-        getPitcherAdvancedMetrics(uniquePitchers, advStartStr, date)
-      ]);
+      const startedAt = Date.now();
+      preloadedArsenalData = await getPitcherArsenals(uniquePitchers, season);
+      console.log(`[ETL Timing] Arsenal agregado: ${Date.now() - startedAt}ms, ${Object.keys(preloadedArsenalData).length} pitchers.`);
       console.log(`[ETL] Precarga de PyBaseball completada.`);
     }
   } catch (err) {
@@ -4291,10 +4609,6 @@ app.post("/api/harvest", async (req, res) => {
     // pct layout: 5% schedule | 5–92% games (each game = 87/N %) | 92–100% save
     const pctPerGame = Math.floor(87 / totalGames);
 
-    // Pre-leer la DB local una sola vez antes del loop (evita N lecturas de disco)
-    const currentDBSnapshot = readGamesDB();
-    const existingGamesForDate = currentDBSnapshot[date] || [];
-
     for (let gi = 0; gi < matchesToHarvest.length; gi++) {
       if (isCancelled) {
         console.log(`[ETL] Abortando bucle de juegos. Proceso cancelado.`);
@@ -4311,16 +4625,17 @@ app.post("/api/harvest", async (req, res) => {
       const gameId = String(match.gamePk);
       const gameLabel = `${awayName} @ ${homeName}`;
       const basePct = 5 + gi * pctPerGame; // starting pct for this game
+      const gameStartedAt = Date.now();
 
       // CACHÉ INTELIGENTE: Si el juego ya está en la DB local y terminó, no hacemos ninguna llamada a APIs
       if (!forceRebuild) {
         const cachedGame = existingGamesForDate.find((g: any) => String(g.id) === String(gameId));
-        if (cachedGame && isFinalGameStatus(cachedGame.game_result?.gameStatus)) {
-          console.log(`[Caché] Juego ${gameId} (${gameLabel}) ya FINALIZADO — cargando desde DB local.`);
+        if (cachedGame && (historicalDate || isFinalGameStatus(cachedGame.game_result?.gameStatus))) {
+          console.log(`[Caché] Juego ${gameId} (${gameLabel}) ya pasó o está finalizado — cargando desde DB local.`);
           harvestedGames.push(cachedGame);
           emit({
             phase: "game_done",
-            step: `✓ ${gameLabel} (sin cambios — juego finalizado)`,
+            step: `✓ ${gameLabel} (sin cambios — reutilizado desde la base local)`,
             gameLabel,
             gameIndex: gi + 1,
             totalGames,
@@ -4452,16 +4767,10 @@ app.post("/api/harvest", async (req, res) => {
       // Inyectar Arsenal de pitcheos desde Python (fuente primaria — sin límite min=10)
       // El caché es diario y compartido entre juegos, así que solo descarga 1 vez por día.
       try {
-        const d = new Date(date);
-        const startD = new Date(d.getTime() - 30 * 24 * 60 * 60 * 1000);
-        const startDStr = startD.toISOString().split('T')[0];
-        
-        const validPitchers = [String(homePitcherId), String(awayPitcherId)].filter(id => id !== '0');
-        
-        const [pitcherArsenalData, advancedMetricsData] = await Promise.all([
-          getPitcherArsenals(validPitchers, season),
-          getPitcherAdvancedMetrics(validPitchers, startDStr, date)
-        ]);
+        // Los mapas se construyen una vez antes del bucle. No se vuelve a descargar
+        // Statcast por cada juego; si falta un pitcher se conserva el fallback Savant.
+        const pitcherArsenalData = preloadedArsenalData;
+        const advancedMetricsData = preloadedAdvancedMetrics;
 
         const homeArsenal = pitcherArsenalData[String(homePitcherId)];
         const awayArsenal = pitcherArsenalData[String(awayPitcherId)];
@@ -4604,18 +4913,7 @@ app.post("/api/harvest", async (req, res) => {
       const getLineupVsHandProjection = (lineup: any[], pitcherHand: string) => {
         if (!lineup.length) return { kPct: null, contactPct: null };
         const isLefty = pitcherHand === "L";
-        
-        const validKPlayers = lineup.map((p: any) => ({
-          val: safeFloat(isLefty ? p.k_pct_vs_lhp : p.k_pct_vs_rhp) ?? safeFloat(p.strikeout_pct) ?? safeFloat(p.kPct),
-          pa: (p.pa && p.pa > 0) ? p.pa : 50,
-        })).filter(p => p.val !== null && p.val > 0);
-
-        let kPct = null;
-        if (validKPlayers.length > 0) {
-          const totalWeightedK = validKPlayers.reduce((sum, p) => sum + (p.val! * p.pa), 0);
-          const totalPA = validKPlayers.reduce((sum, p) => sum + p.pa, 0);
-          kPct = totalPA > 0 ? totalWeightedK / totalPA : null;
-        }
+        const kPct = calculateOpponentLineupKPct(lineup, pitcherHand);
 
         const validContactPlayers = lineup.map((p: any) => ({
           val: safeFloat(isLefty ? p.contact_pct_vs_lhp : p.contact_pct_vs_rhp),
@@ -4684,25 +4982,13 @@ app.post("/api/harvest", async (req, res) => {
       // Handle Line Movements timeline (usamos el snapshot pre-leído antes del loop)
       const existingGame = existingGamesForDate.find((g: any) => String(g.id) === String(gameId));
       
-      if (existingGame) {
-        if (!hasRealBettingLines(gameDataParsed) && hasRealBettingLines(existingGame)) {
-          console.log(`[Persistencia] Preservando odds (betting_lines) del juego ${gameId} desde la base de datos local (Modo Batch).`);
-          gameDataParsed.betting_lines = existingGame.betting_lines;
-          
-          if (existingGame.pitchers?.home?.strikeoutProp && !gameDataParsed.pitchers?.home?.strikeoutProp) {
-            gameDataParsed.pitchers.home.strikeoutProp = existingGame.pitchers.home.strikeoutProp;
-            gameDataParsed.pitchers.home.strikeoutPropOverOdds = existingGame.pitchers.home.strikeoutPropOverOdds;
-            gameDataParsed.pitchers.home.strikeoutPropUnderOdds = existingGame.pitchers.home.strikeoutPropUnderOdds;
-          }
-          if (existingGame.pitchers?.away?.strikeoutProp && !gameDataParsed.pitchers?.away?.strikeoutProp) {
-            gameDataParsed.pitchers.away.strikeoutProp = existingGame.pitchers.away.strikeoutProp;
-            gameDataParsed.pitchers.away.strikeoutPropOverOdds = existingGame.pitchers.away.strikeoutPropOverOdds;
-            gameDataParsed.pitchers.away.strikeoutPropUnderOdds = existingGame.pitchers.away.strikeoutPropUnderOdds;
-          }
+      if (existingGame && (historicalDate || !hasRealBettingLines(gameDataParsed))) {
+        if (preserveCapturedBettingData(gameDataParsed, existingGame)) {
+          console.log(`[Persistencia] Líneas y props capturados preservados para el juego ${gameId} (Modo Batch).`);
         }
       }
 
-      const lineMovements: LineMovement[] = existingGame?.line_movements || [];
+      const lineMovements: LineMovement[] = [...(existingGame?.line_movements || [])];
 
       const currentOdds = gameDataParsed.betting_lines;
       const newMovement: LineMovement = {
@@ -4719,8 +5005,9 @@ app.post("/api/harvest", async (req, res) => {
         overOdds: currentOdds.overOdds,
         underOdds: currentOdds.underOdds
       };
-      lineMovements.push(newMovement);
+      if (!historicalDate || lineMovements.length === 0) lineMovements.push(newMovement);
       gameDataParsed.line_movements = lineMovements;
+      appendBettingSnapshotIfChanged(gameDataParsed, existingGame);
 
       // Calculate Model Features (Home - Away, odds variations)
       gameDataParsed.model_features = calculateModelFeatures(gameDataParsed);
@@ -4761,6 +5048,9 @@ app.post("/api/harvest", async (req, res) => {
       };
       gameDataParsed.timestamp = new Date().toISOString();
 
+      // First pregame representation is immutable and powers leak-free ML datasets.
+      capturePregameSnapshot(gameDataParsed);
+
       // Sincronizar con Firestore de forma asíncrona para no bloquear el flujo
       saveGameData(gameId, gameDataParsed).catch((fsErr) => {
         console.error(`Error saving to Firestore for game ${gameId}:`, fsErr);
@@ -4775,6 +5065,16 @@ app.post("/api/harvest", async (req, res) => {
       });
 
       harvestedGames.push(gameDataParsed);
+
+      // Checkpoint recuperable: si el proceso se interrumpe, este juego no se pierde.
+      const incrementalDB = readGamesDB();
+      const incrementalDateGames = [...(incrementalDB[date] || [])];
+      const incrementalIndex = incrementalDateGames.findIndex((game: any) => String(game.id) === String(gameId));
+      if (incrementalIndex >= 0) incrementalDateGames[incrementalIndex] = gameDataParsed;
+      else incrementalDateGames.push(gameDataParsed);
+      incrementalDB[date] = incrementalDateGames;
+      writeGamesDB(incrementalDB);
+      console.log(`[ETL Timing] Juego ${gameId}: ${Date.now() - gameStartedAt}ms.`);
 
       emit({
         phase: "game_done",
@@ -4795,6 +5095,7 @@ app.post("/api/harvest", async (req, res) => {
     db[date] = harvestedGames;
     writeGamesDB(db);
     writeErrorsDB(errorsCollection);
+    console.log(`[ETL Timing] Extracción ${date}: ${Date.now() - harvestStartedAt}ms para ${harvestedGames.length} juegos.`);
 
     // Final SSE event with all results
     emit({
@@ -4850,10 +5151,11 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
   const venueName = match.venue?.name || "MLB Stadium";
   const matchTime = formatGameTime(match.gameDate);
 
-  // 2. Fetch real odds
+  // 2. Fetch real odds. Los mercados históricos se leen solo de DB/caché.
+  const historicalDate = isPastGameDate(actualDate);
   const realOddsData = await fetchRealBettingLines(actualDate, forceRefreshOdds);
-  const pitcherStrikeoutRows = await fetchDataStreakPitcherStrikeoutProps(actualDate, forceRefreshOdds);
-  const totalBasesRows = await fetchDataStreakTotalBasesProps(actualDate, forceRefreshOdds);
+  const pitcherStrikeoutRows = historicalDate ? [] : await fetchDataStreakPitcherStrikeoutProps(actualDate, forceRefreshOdds);
+  const totalBasesRows = historicalDate ? [] : await fetchDataStreakTotalBasesProps(actualDate, forceRefreshOdds);
 
   // 3. Fetch real MLB game data
   const realMLBData = await fetchRealMLBGameData(gameId, homeTeamId, awayTeamId, actualDate);
@@ -4946,14 +5248,22 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
   // Inyectar Arsenal de pitcheos desde Python (fuente primaria — sin límite min=10)
   try {
     const d = new Date(actualDate);
-    const startD = new Date(d.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const startD = new Date(d.getTime() - 10 * 24 * 60 * 60 * 1000);
     const startDStr = startD.toISOString().split('T')[0];
     const validPitchersU = [String(homePitcherId), String(awayPitcherId)].filter(id => id !== '0');
 
-    const [pitcherArsenalDataU, advancedMetricsDataU] = await Promise.all([
+    const [pitcherArsenalDataU, recentStatcastU] = await Promise.all([
       getPitcherArsenals(validPitchersU, season),
-      getPitcherAdvancedMetrics(validPitchersU, startDStr, actualDate)
+      getRecentStatcast(startDStr, actualDate)
     ]);
+    const advancedMetricsDataU: Record<string, any> = {};
+    for (const pitcher of recentStatcastU?.data?.pitchers_recent || []) {
+      advancedMetricsDataU[String(pitcher.pitcher)] = {
+        spinRate: safeFloat(pitcher.avg_spin_rate),
+        chasePct: safeFloat(pitcher.chase_pct),
+        stuffPlus: null,
+      };
+    }
 
     const homeArsenalU = pitcherArsenalDataU[String(homePitcherId)];
     const awayArsenalU = pitcherArsenalDataU[String(awayPitcherId)];
@@ -5079,13 +5389,10 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
   const getLineupVsHandProjection = (lineup: any[], pitcherHand: string) => {
     if (!lineup.length) return { kPct: null, contactPct: null };
     const isLefty = pitcherHand === "L";
-    const kValues = lineup
-      .map((p: any) => safeFloat(isLefty ? p.k_pct_vs_lhp : p.k_pct_vs_rhp) ?? safeFloat(p.strikeout_pct) ?? safeFloat(p.kPct))
-      .filter((value): value is number => value !== null && value > 0);
     const contactValues = lineup
       .map((p: any) => safeFloat(isLefty ? p.contact_pct_vs_lhp : p.contact_pct_vs_rhp))
       .filter((value): value is number => value !== null && value > 0);
-    const kPct = average(kValues, 1);
+    const kPct = calculateOpponentLineupKPct(lineup, pitcherHand);
     return {
       kPct,
       contactPct: contactValues.length > 0 ? average(contactValues, 1) : null
@@ -5139,25 +5446,13 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
   const existingGamesForDate = currentDB[actualDate] || [];
   const existingGame = existingGamesForDate.find((g: any) => String(g.id) === String(gameId));
   
-  if (existingGame) {
-    if (!hasRealBettingLines(gameDataParsed) && hasRealBettingLines(existingGame)) {
-      console.log(`[Persistencia] Preservando odds (betting_lines) del juego ${gameId} desde la base de datos local (Modo Single).`);
-      gameDataParsed.betting_lines = existingGame.betting_lines;
-      
-      if (existingGame.pitchers?.home?.strikeoutProp && !gameDataParsed.pitchers?.home?.strikeoutProp) {
-        gameDataParsed.pitchers.home.strikeoutProp = existingGame.pitchers.home.strikeoutProp;
-        gameDataParsed.pitchers.home.strikeoutPropOverOdds = existingGame.pitchers.home.strikeoutPropOverOdds;
-        gameDataParsed.pitchers.home.strikeoutPropUnderOdds = existingGame.pitchers.home.strikeoutPropUnderOdds;
-      }
-      if (existingGame.pitchers?.away?.strikeoutProp && !gameDataParsed.pitchers?.away?.strikeoutProp) {
-        gameDataParsed.pitchers.away.strikeoutProp = existingGame.pitchers.away.strikeoutProp;
-        gameDataParsed.pitchers.away.strikeoutPropOverOdds = existingGame.pitchers.away.strikeoutPropOverOdds;
-        gameDataParsed.pitchers.away.strikeoutPropUnderOdds = existingGame.pitchers.away.strikeoutPropUnderOdds;
-      }
+  if (existingGame && (historicalDate || !hasRealBettingLines(gameDataParsed))) {
+    if (preserveCapturedBettingData(gameDataParsed, existingGame)) {
+      console.log(`[Persistencia] Líneas y props capturados preservados para el juego ${gameId} (Modo Single).`);
     }
   }
 
-  const lineMovements: LineMovement[] = existingGame?.line_movements || [];
+  const lineMovements: LineMovement[] = [...(existingGame?.line_movements || [])];
 
   const currentOdds = gameDataParsed.betting_lines;
   const newMovement: LineMovement = {
@@ -5174,8 +5469,9 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
     overOdds: currentOdds.overOdds,
     underOdds: currentOdds.underOdds
   };
-  lineMovements.push(newMovement);
+  if (!historicalDate || lineMovements.length === 0) lineMovements.push(newMovement);
   gameDataParsed.line_movements = lineMovements;
+  appendBettingSnapshotIfChanged(gameDataParsed, existingGame);
 
   gameDataParsed.model_features = calculateModelFeatures(gameDataParsed);
 
@@ -5203,6 +5499,9 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
     checkedAt: new Date().toISOString()
   };
   gameDataParsed.timestamp = new Date().toISOString();
+
+  // Live/final refreshes cannot overwrite an already captured pregame snapshot.
+  capturePregameSnapshot(gameDataParsed);
 
   // Firestore sync
   saveGameData(gameId, gameDataParsed).catch((fsErr) => {
@@ -5333,7 +5632,11 @@ async function startServer() {
         middlewareMode: true,
         hmr: process.env.DISABLE_HMR !== 'true',
         watch: process.env.DISABLE_HMR === 'true' ? null : {
-          ignored: ['**/mlb_database.json', '**/mlb_errors.json', '**/datastreak_*.json', '**/odds_cache_*.json', '**/savant_*.json', '**/games_db*.json'],
+          ignored: [
+            '**/mlb_*.json', '**/datastreak_*.json', '**/odds_*.json', '**/savant_*.json',
+            '**/games_db*.json', '**/boxscore_*.json', '**/pitcher_stats_*.json', '**/offense_stats_*.json',
+            '**/cache/**', '**/datasets/**', '**/*.csv', '**/server.mjs', '**/dev-server.log',
+          ],
         }
       },
       appType: "spa",

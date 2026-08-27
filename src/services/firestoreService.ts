@@ -25,16 +25,16 @@ export async function ensureAnonymousAuth(): Promise<boolean> {
   }
 }
 
-async function withFirestoreReadTimeout<T>(promise: Promise<T>, fallback: T, label: string): Promise<T> {
+async function withFirestoreReadTimeout<T>(promise: Promise<T>, fallback: T, label: string, timeoutMs = FIRESTORE_READ_TIMEOUT_MS): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<T>((resolve) => {
         timeout = setTimeout(() => {
-          console.warn(`[Firestore] Timeout leyendo ${label} despues de ${FIRESTORE_READ_TIMEOUT_MS}ms.`);
+          console.warn(`[Firestore] Timeout leyendo ${label} despues de ${timeoutMs}ms.`);
           resolve(fallback);
-        }, FIRESTORE_READ_TIMEOUT_MS);
+        }, timeoutMs);
       }),
     ]);
   } finally {
@@ -84,6 +84,14 @@ export const saveGameData = async (gameId: string, gameData: any) => {
         const lineId = lastLine.timestamp ? String(lastLine.timestamp).replace(/[:.]/g, '-') : String(Date.now());
         const lineRef = doc(collection(gameRef, 'line_movements'), lineId);
         await setDoc(lineRef, lastLine);
+      }
+    }
+    if (gameData.betting_history && gameData.betting_history.length > 0) {
+      const lastSnapshot = gameData.betting_history[gameData.betting_history.length - 1];
+      if (lastSnapshot?.timestamp) {
+        const snapshotId = String(lastSnapshot.timestamp).replace(/[:.]/g, '-');
+        const bettingRef = doc(collection(gameRef, 'betting_history'), snapshotId);
+        await setDoc(bettingRef, lastSnapshot);
       }
     }
     if (gameData.offensive_splits) {
@@ -205,6 +213,27 @@ export const loadGamesByDateFromFirestore = async (date: string): Promise<any[]>
   } catch (error) {
     console.error(`Error al cargar juegos de Firestore para ${date}:`, error);
     return [];
+  }
+};
+
+export const loadGamesByDateRangeFromFirestore = async (startDate: string, endDate: string): Promise<any[]> => {
+  try {
+    if (!db) return [];
+    const isAuthed = await ensureAnonymousAuth();
+    if (!isAuthed) return [];
+
+    const gamesQuery = query(
+      collection(db, "games"),
+      where("metadata.date", ">=", startDate),
+      where("metadata.date", "<=", endDate),
+      orderBy("metadata.date", "asc"),
+    );
+    const snapshot = await withFirestoreReadTimeout(getDocs(gamesQuery), null, `juegos entre ${startDate} y ${endDate}`, 20000);
+    if (!snapshot) throw new Error("Firestore no respondió dentro de 20 segundos");
+    return snapshot.docs.map((gameDocument) => gameDocument.data());
+  } catch (error) {
+    console.error(`[Firestore] Error leyendo rango ${startDate}..${endDate}:`, error);
+    throw error;
   }
 };
 

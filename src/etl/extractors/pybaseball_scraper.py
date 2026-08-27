@@ -13,21 +13,33 @@ def get_recent_statcast(start_date, end_date):
             return {"error": "No data found for given dates."}
         
         # Filtramos campos pesados
-        cols_to_keep = ['game_date', 'player_name', 'pitcher', 'batter', 'events', 'description', 
-                        'pitch_type', 'release_speed', 'type', 'game_pk', 'home_team', 'away_team', 'inning_topbot']
+        cols_to_keep = ['game_date', 'player_name', 'pitcher', 'batter', 'events', 'description',
+                        'pitch_type', 'release_speed', 'release_spin_rate', 'zone', 'type',
+                        'game_pk', 'home_team', 'away_team', 'inning_topbot']
         df = data[cols_to_keep].copy()
         
         # Opcional: procesar un poco para no enviar 10MB de JSON a NodeJS
         # Calcularemos CSW (Called Strike + Whiff) por pitcher
         df['is_csw'] = df['description'].isin(['called_strike', 'swinging_strike', 'swinging_strike_blocked'])
+        df['out_of_zone'] = df['zone'].isin([11, 12, 13, 14])
+        swings = ['swinging_strike', 'swinging_strike_blocked', 'foul', 'hit_into_play',
+                  'foul_tip', 'foul_bunt', 'missed_bunt']
+        df['is_swing'] = df['description'].isin(swings)
+        df['chase_swing'] = df['out_of_zone'] & df['is_swing']
         
         csw_grouped = df.groupby('pitcher').agg(
             total_pitches=('pitch_type', 'count'),
             csw_pitches=('is_csw', 'sum'),
-            avg_velocity=('release_speed', 'mean')
+            avg_velocity=('release_speed', 'mean'),
+            avg_spin_rate=('release_spin_rate', 'mean'),
+            chase_swings=('chase_swing', 'sum'),
+            chase_opps=('out_of_zone', 'sum')
         ).reset_index()
         
         csw_grouped['csw_pct'] = csw_grouped['csw_pitches'] / csw_grouped['total_pitches']
+        csw_grouped['chase_pct'] = (csw_grouped['chase_swings'] / csw_grouped['chase_opps'].replace(0, 1)) * 100
+        csw_grouped['avg_spin_rate'] = csw_grouped['avg_spin_rate'].round(1)
+        csw_grouped['chase_pct'] = csw_grouped['chase_pct'].round(1)
         
         return {
             "success": True,

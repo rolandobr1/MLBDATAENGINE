@@ -16,6 +16,8 @@ export interface GameMetadata {
 
 export interface PitcherStats {
   name: string;
+  /** Stable MLB player identifier for dataset joins. */
+  pitcherId?: number | string | null;
   era: number | string;
   whip: number | string;
   kPct: number | string; // K%

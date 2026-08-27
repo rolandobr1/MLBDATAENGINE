@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { CalendarDays, Database, FileSpreadsheet } from "lucide-react";
 import { MLBGame } from "../types";
 
@@ -9,6 +9,81 @@ interface GoogleSheetsSyncProps {
 }
 
 export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({ games, selectedDate, compact = false }) => {
+  const [klabStartDate, setKlabStartDate] = useState("");
+  const [klabEndDate, setKlabEndDate] = useState("");
+  const [klabPreview, setKlabPreview] = useState<any>(null);
+  const [klabError, setKlabError] = useState("");
+  const [klabLoading, setKlabLoading] = useState(false);
+  const [klabSyncResult, setKlabSyncResult] = useState<any>(null);
+
+  const klabQuery = () => `start_date=${encodeURIComponent(klabStartDate)}&end_date=${encodeURIComponent(klabEndDate)}`;
+  const previewMatchesRange = klabPreview?.startDate === klabStartDate && klabPreview?.endDate === klabEndDate;
+
+  const handleKlabPreview = async () => {
+    setKlabLoading(true);
+    setKlabError("");
+    try {
+      const res = await fetch(`/api/datasets/klab-training/preview?${klabQuery()}&_=${Date.now()}`);
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || "No se pudo analizar el rango");
+      setKlabPreview(payload.report);
+    } catch (error) {
+      setKlabPreview(null);
+      setKlabError(error instanceof Error ? error.message : "No se pudo analizar el rango");
+    } finally {
+      setKlabLoading(false);
+    }
+  };
+
+  const handleFirestoreRangeSync = async () => {
+    setKlabLoading(true);
+    setKlabError("");
+    setKlabSyncResult(null);
+    try {
+      const syncRes = await fetch("/api/firestore/sync-local-range", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ start_date: klabStartDate, end_date: klabEndDate }),
+      });
+      const syncPayload = await syncRes.json();
+      if (!syncRes.ok) throw new Error(syncPayload.error || "No se pudo sincronizar Firestore");
+      setKlabSyncResult(syncPayload);
+
+      const previewRes = await fetch(`/api/datasets/klab-training/preview?${klabQuery()}&_=${Date.now()}`);
+      const previewPayload = await previewRes.json();
+      if (!previewRes.ok) throw new Error(previewPayload.error || "La sincronización terminó, pero falló la previsualización");
+      setKlabPreview(previewPayload.report);
+    } catch (error) {
+      setKlabError(error instanceof Error ? error.message : "No se pudo sincronizar Firestore");
+    } finally {
+      setKlabLoading(false);
+    }
+  };
+
+  const handleDownloadKlabCSV = async () => {
+    setKlabLoading(true);
+    setKlabError("");
+    try {
+      const res = await fetch(`/api/datasets/klab-training/csv?${klabQuery()}&_=${Date.now()}`);
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(payload?.error || "No se pudo generar el dataset");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `KLAB_PITCHER_TRAINING_DATASET_${klabStartDate}_${klabEndDate}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setKlabError(error instanceof Error ? error.message : "No se pudo generar el dataset");
+    } finally {
+      setKlabLoading(false);
+    }
+  };
   const fetchBattersCSV = async () => {
     const res = await fetch(`/api/batters-dataset/csv?date=${encodeURIComponent(selectedDate)}&_=${Date.now()}`);
     if (!res.ok) {
@@ -91,6 +166,24 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({ games, selec
     }
   };
 
+  const handleDownloadDerivedCSV = async (dataset: "pitcher-game" | "game" | "batter-game" | "pitcher-props", filename: string) => {
+    try {
+      const res = await fetch(`/api/datasets/${dataset}/csv?date=${encodeURIComponent(selectedDate)}&_=${Date.now()}`);
+      if (!res.ok) throw new Error(await res.text());
+      const blob = new Blob([await res.text()], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Error downloading derived ML CSV:", err);
+    }
+  };
+
   return (
     <div className={`bg-white border border-slate-200 rounded-xl font-sans shadow-sm ${compact ? "p-4 space-y-4" : "p-6 space-y-6"}`}>
       <div className="flex items-center gap-3">
@@ -169,6 +262,60 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({ games, selec
                 <span>Descargar Bases Totales (Bateadores)</span>
               </button>
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+              Datasets ML derivados (snapshot pregame)
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button onClick={() => handleDownloadDerivedCSV("pitcher-game", `MLB_PITCHER_GAME_DATASET_${selectedDate}.csv`)} disabled={games.length === 0} className="py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition cursor-pointer">Pitcher por juego</button>
+              <button onClick={() => handleDownloadDerivedCSV("game", `MLB_GAME_DATASET_${selectedDate}.csv`)} disabled={games.length === 0} className="py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition cursor-pointer">Juego</button>
+              <button onClick={() => handleDownloadDerivedCSV("batter-game", `MLB_BATTER_GAME_DATASET_${selectedDate}.csv`)} disabled={games.length === 0} className="py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition cursor-pointer">Bateador por juego</button>
+              <button onClick={() => handleDownloadDerivedCSV("pitcher-props", `MLB_PITCHER_PROPS_DATASET_${selectedDate}.csv`)} disabled={games.length === 0} className="py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition cursor-pointer">Props de pitchers</button>
+            </div>
+          </div>
+
+          <div className="space-y-3 border-t border-slate-200 pt-4">
+            <div>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                Histórico de entrenamiento K-lab
+              </span>
+              <p className="text-xs text-slate-500 mt-1">Selecciona un rango inclusivo. Primero se muestra la validación; no se usa todo el historial por defecto.</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <label className="text-xs font-semibold text-slate-600">
+                Fecha inicial
+                <input type="date" required value={klabStartDate} onChange={(event) => { setKlabStartDate(event.target.value); setKlabPreview(null); setKlabSyncResult(null); }} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-700" />
+              </label>
+              <label className="text-xs font-semibold text-slate-600">
+                Fecha final
+                <input type="date" required value={klabEndDate} onChange={(event) => { setKlabEndDate(event.target.value); setKlabPreview(null); setKlabSyncResult(null); }} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-700" />
+              </label>
+            </div>
+            <button onClick={handleFirestoreRangeSync} disabled={klabLoading || !klabStartDate || !klabEndDate} className="w-full py-2 px-3 border border-sky-300 bg-sky-50 hover:bg-sky-100 disabled:opacity-50 text-sky-800 text-xs font-semibold rounded-lg transition cursor-pointer">
+              {klabLoading ? "Procesando…" : "Sincronizar rango desde Firestore al local"}
+            </button>
+            <button onClick={handleKlabPreview} disabled={klabLoading || !klabStartDate || !klabEndDate} className="w-full py-2 px-3 border border-indigo-300 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 text-indigo-800 text-xs font-semibold rounded-lg transition cursor-pointer">
+              {klabLoading ? "Analizando…" : "Analizar rango antes de generar"}
+            </button>
+            {klabError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">{klabError}</p>}
+            {klabSyncResult && <p className="text-xs text-sky-700 bg-sky-50 border border-sky-200 rounded-lg p-2">Firestore: {klabSyncResult.remoteGames} juegos en {klabSyncResult.datesFound} fechas; agregados {klabSyncResult.added}, actualizados {klabSyncResult.updated}, sin cambios {klabSyncResult.unchanged}. Luego se recalculó la previsualización K-lab.</p>}
+            {previewMatchesRange && (
+              <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2 text-xs text-slate-600">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <span><strong className="block text-slate-800">{klabPreview.totalGames}</strong> juegos</span>
+                  <span><strong className="block text-slate-800">{klabPreview.candidatePitchers}</strong> pitchers candidatos</span>
+                  <span><strong className="block text-slate-800">{klabPreview.candidateRows}</strong> filas candidatas</span>
+                  <span><strong className="block text-emerald-700">{klabPreview.finalRows}</strong> filas finales</span>
+                </div>
+                <p>Descartadas sin K real: {klabPreview.discardedWithoutActualK}; K inválido: {klabPreview.discardedInvalidActualK}; duplicados: {klabPreview.duplicateKeys.length}; fuera de rango: {klabPreview.outOfRangeRows}.</p>
+                <p>Juegos sin snapshot pregame: {klabPreview.gamesWithoutPregameSnapshot}; anomalías para revisión: {klabPreview.anomalies.length}; columnas con fuga: {klabPreview.leakageColumns.length}.</p>
+                <button onClick={handleDownloadKlabCSV} disabled={klabLoading || klabPreview.finalRows === 0} className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition cursor-pointer">
+                  Generar y descargar {klabPreview.outputFilename}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

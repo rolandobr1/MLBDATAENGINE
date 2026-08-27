@@ -5,9 +5,13 @@
   "scripts": {
     "dev": "esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=server.mjs && node server.mjs",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "test": "tsx src/utils/lineupMetrics.test.ts && tsx src/datasets/klabTrainingDataset.test.ts",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "klab:recover-history": "tsx src/datasets/firestorePregameHistory.ts",
+    "klab:history": "tsx src/datasets/klabHistoricalMatching.ts",
+    "klab:match-history": "tsx src/datasets/klabHistoricalMatching.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

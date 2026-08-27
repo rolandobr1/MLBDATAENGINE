@@ -192,9 +192,6 @@ export default function App() {
       // Fetch local extracted dates instantly
       const dates = await fetchExtractedDates(false);
       if (cancelled) return;
-      if (dates.length > 0 && !dates.includes(today) && localStorage.getItem("mlb_selected_date") === dates[0]) {
-        setSelectedDate(dates[0]); // fallback if today has no data and user preferred another
-      }
     };
 
     loadInitialDate();
@@ -311,7 +308,7 @@ export default function App() {
   }, [games, selectedDate, fetchLocalDB, fetchErrorsDB]);
 
   // Handle Extraction Trigger — reads real SSE progress from server
-  const handleHarvest = async (date: string, refreshOdds: boolean = true) => {
+  const handleHarvest = React.useCallback(async (date: string, refreshOdds: boolean = true) => {
     // Mark that user has explicitly selected this date — prevent auto-redirect
     userHasSelectedDate.current = true;
     setIsLoading(true);
@@ -385,7 +382,39 @@ export default function App() {
       setIsLoading(false);
       setHarvestProgress({ pct: 0, step: "" });
     }
-  };
+  }, [fetchErrorsDB, fetchExtractedDates, fetchLocalDB]);
+
+  // Al abrir la aplicación, cosechar automáticamente el día MLB actual una sola vez
+  // cuando nunca haya sido procesado. dateExtracted también cubre días sin juegos.
+  const autoHarvestAttemptedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (autoHarvestAttemptedRef.current) return;
+    autoHarvestAttemptedRef.current = true;
+    let cancelled = false;
+
+    const autoHarvestToday = async () => {
+      const today = getLocalDateString();
+      try {
+        const res = await fetch(`/api/games?date=${today}&_=${Date.now()}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (cancelled || data.dateExtracted === true || (data.games || []).length > 0) return;
+
+        console.log(`[Auto-Harvest] No hay extracción para ${today}; iniciando ETL automáticamente.`);
+        setSelectedDate(today);
+        await handleHarvest(today, true);
+      } catch (err) {
+        console.error("[Auto-Harvest] No se pudo verificar/iniciar la extracción automática:", err);
+      }
+    };
+
+    autoHarvestToday();
+    return () => {
+      cancelled = true;
+      // React StrictMode desmonta y monta el efecto una vez en desarrollo.
+      autoHarvestAttemptedRef.current = false;
+    };
+  }, [handleHarvest]);
 
   const handleCancelHarvest = () => {
     if (abortControllerRef.current) {
@@ -443,9 +472,42 @@ export default function App() {
         }
 
         const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
         while (true) {
-          const { done } = await reader.read();
+          const { done, value } = await reader.read();
           if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+
+          for (const part of parts) {
+            const line = part.trim();
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.phase === "error") throw new Error(event.step || `Error extrayendo ${date}`);
+
+              const dateProgress = Math.max(0, Math.min(100, Number(event.pct) || 0));
+              const overallProgress = missingDates.length > 0
+                ? Math.round(((i + dateProgress / 100) / missingDates.length) * 100)
+                : 100;
+              setHarvestProgress({
+                pct: overallProgress,
+                step: `[${i + 1}/${missingDates.length}] ${date}: ${event.step || "Procesando…"}`,
+                gameLabel: event.gameLabel,
+                gameIndex: event.gameIndex,
+                totalGames: event.totalGames,
+                phase: event.phase === "done" && i < missingDates.length - 1 ? "save" : event.phase,
+              });
+            } catch (eventError) {
+              if (eventError instanceof SyntaxError) {
+                console.error("Error parsing batch SSE event:", eventError);
+              } else {
+                throw eventError;
+              }
+            }
+          }
         }
       }
 
