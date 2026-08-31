@@ -65,7 +65,9 @@ import {
   generatePitcherPropsDatasetCSV,
 } from "./src/datasets/derivedDatasets";
 import { calculateOpponentLineupKPct } from "./src/utils/lineupMetrics";
+import { isFinalGameStatus } from "./src/utils/gameStatus";
 import { buildKlabTrainingDataset, validateKlabDateRange } from "./src/datasets/klabTrainingDataset";
+import { registerCronPipelineRoutes } from "./src/routes/cronPipelineRoutes";
 
 const app = express();
 app.use(express.json());
@@ -84,6 +86,13 @@ let latestFirestoreRestoreInFlight: Promise<void> | null = null;
 const oddsApiBackfillsInFlight = new Set<string>();
 const harvestDatesInFlight = new Set<string>();
 let firestoreRangeSyncInFlight = false;
+
+// Fase 3, punto 2 del plan de mejora: un juego histórico sin cobertura PIT ya no se
+// da por "cacheado para siempre" desde su primera captura. En vez de eso, se reintenta
+// cada REVERIFY_COOLDOWN_DAYS días hasta lograr cobertura, para que juegos capturados
+// antes de un fix (como el de la Fase 1) puedan corregirse solos con el tiempo, sin
+// tener que recurrir a un forceRebuild manual de toda la fecha.
+const REVERIFY_COOLDOWN_DAYS = 3;
 
 // Ensure files exist
 if (!fs.existsSync(DB_PATH)) {
@@ -551,7 +560,7 @@ function validateGamePayload(game: any, errorsLog: any[]): any {
 // API Routes
 // --------------------------------------------------------------------
 
-function injectPitStats(games: any[]): any[] {
+function injectPitStats(games: MLBGame[]): MLBGame[] {
   const pitLookups = readPitLookups();
   if (!pitLookups || !pitLookups.pitchers) {
     console.log("[injectPitStats] No pitLookups or pitchers found!");
@@ -566,33 +575,43 @@ function injectPitStats(games: any[]): any[] {
       console.log(`[injectPitStats] Game 823864: pit found? ${!!pit}`);
       if (pit) console.log(`[injectPitStats] pit.home.totalStrikeouts: ${pit.home?.totalStrikeouts}`);
     }
-    if (pit) {
-      if (pit.home && g.pitchers?.home) {
-        Object.assign(g.pitchers.home, {
-          era: pit.home.era ?? g.pitchers.home.era,
-          whip: pit.home.whip ?? g.pitchers.home.whip,
-          kPct: pit.home.kPct ?? g.pitchers.home.kPct,
-          bbPct: pit.home.bbPct ?? g.pitchers.home.bbPct,
-          wins: pit.home.wins ?? g.pitchers.home.wins,
-          losses: pit.home.losses ?? g.pitchers.home.losses,
-          ip: pit.home.ip ?? g.pitchers.home.ip,
-          totalStrikeouts: pit.home.totalStrikeouts ?? g.pitchers.home.totalStrikeouts,
-          starts: pit.home.gs ?? g.pitchers.home.starts
-        });
-      }
-      if (pit.away && g.pitchers?.away) {
-        Object.assign(g.pitchers.away, {
-          era: pit.away.era ?? g.pitchers.away.era,
-          whip: pit.away.whip ?? g.pitchers.away.whip,
-          kPct: pit.away.kPct ?? g.pitchers.away.kPct,
-          bbPct: pit.away.bbPct ?? g.pitchers.away.bbPct,
-          wins: pit.away.wins ?? g.pitchers.away.wins,
-          losses: pit.away.losses ?? g.pitchers.away.losses,
-          ip: pit.away.ip ?? g.pitchers.away.ip,
-          totalStrikeouts: pit.away.totalStrikeouts ?? g.pitchers.away.totalStrikeouts,
-          starts: pit.away.gs ?? g.pitchers.away.starts
-        });
-      }
+    // CORREGIDO (auditoría del pipeline, bug de stats de temporada congeladas):
+    // antes, cuando no había valor PIT, se usaba en silencio el valor crudo
+    // (g.pitchers.home.*), que puede venir de la llamada rota a la API de MLB
+    // (ver fetchPitcherStats) y por lo tanto no ser point-in-time. Ahora, sin
+    // cobertura PIT, el campo queda en null explícito — nunca se sustituye por
+    // el valor crudo sin avisar — y se agrega pitcherStatsSource para saber por qué.
+    if (pit?.home && g.pitchers?.home) {
+      Object.assign(g.pitchers.home, {
+        era: pit.home.era ?? null,
+        whip: pit.home.whip ?? null,
+        kPct: pit.home.kPct ?? null,
+        bbPct: pit.home.bbPct ?? null,
+        wins: pit.home.wins ?? null,
+        losses: pit.home.losses ?? null,
+        ip: pit.home.ip ?? null,
+        totalStrikeouts: pit.home.totalStrikeouts ?? null,
+        starts: pit.home.gs ?? null,
+        pitcherStatsSource: "pit"
+      });
+    } else if (g.pitchers?.home) {
+      g.pitchers.home.pitcherStatsSource = "raw_unverified";
+    }
+    if (pit?.away && g.pitchers?.away) {
+      Object.assign(g.pitchers.away, {
+        era: pit.away.era ?? null,
+        whip: pit.away.whip ?? null,
+        kPct: pit.away.kPct ?? null,
+        bbPct: pit.away.bbPct ?? null,
+        wins: pit.away.wins ?? null,
+        losses: pit.away.losses ?? null,
+        ip: pit.away.ip ?? null,
+        totalStrikeouts: pit.away.totalStrikeouts ?? null,
+        starts: pit.away.gs ?? null,
+        pitcherStatsSource: "pit"
+      });
+    } else if (g.pitchers?.away) {
+      g.pitchers.away.pitcherStatsSource = "raw_unverified";
     }
   }
   return clonedGames;
@@ -1920,15 +1939,9 @@ function calculateVortexProjectedKs(
   return projectedKsBase;
 }
 
-function isFinalGameStatus(status: any): boolean {
-  const normalized = String(status || "").toLowerCase();
-  return (
-    normalized.includes("final") ||
-    normalized === "game over" ||
-    normalized === "completed early" ||
-    normalized === "completed"
-  );
-}
+// isFinalGameStatus se movió a src/utils/gameStatus.ts (Fase 2, punto 1 del plan de
+// mejora) para que server.ts y src/workflow.ts compartan un único criterio de
+// "juego terminado" en vez de mantener dos implementaciones independientes.
 
 const MLB_TEAM_ABBR: Record<string, string> = {
   "Arizona Diamondbacks": "ARI",
@@ -2442,6 +2455,18 @@ async function fetchRealMLBGameData(
   date: string
 ): Promise<any> {
   const season = date.substring(0, 4);
+  // Fecha de corte point-in-time: el día calendario anterior al juego, para no incluir
+  // nunca estadísticas del propio juego objetivo ni de fechas posteriores.
+  // OJO: stats=season con startDate/endDate NO filtra — la API de MLB ignora esos
+  // parámetros para ese tipo de stat y devuelve el acumulado "actual" al momento de
+  // la consulta (este era el origen del bug de columnas de temporada congeladas/con
+  // fuga de fechas futuras, ver auditoría del pipeline). stats=byDateRange sí los
+  // respeta — es el mismo patrón que ya funciona en backfill_pitcher_stats_pit.py.
+  const pitStatsCutoffDate = (() => {
+    const d = new Date(`${date}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - 1);
+    return d.toISOString().split("T")[0];
+  })();
   const realData: any = {
     pitchers: { home: null, away: null },
     lineups: { home: [], away: [] },
@@ -2472,8 +2497,15 @@ async function fetchRealMLBGameData(
       if (!pitcher?.id) return null;
       try {
         const [statsRes, splitsRes, personRes] = await Promise.all([
-          fetchWithTimeout(`https://statsapi.mlb.com/api/v1/people/${pitcher.id}/stats?stats=season&season=${season}&group=pitching&startDate=${season}-01-01&endDate=${date}`), // FIX: point-in-time — stats as of game date
-          fetchWithTimeout(`https://statsapi.mlb.com/api/v1/people/${pitcher.id}/stats?stats=statSplits&season=${season}&group=pitching&sitCodes=vl,vr&startDate=${season}-01-01&endDate=${date}`), // FIX: point-in-time
+          // CORREGIDO: stats=byDateRange sí respeta startDate/endDate (stats=season no).
+          // endDate = pitStatsCutoffDate (día anterior al juego) para que sea genuinamente point-in-time.
+          fetchWithTimeout(`https://statsapi.mlb.com/api/v1/people/${pitcher.id}/stats?stats=byDateRange&season=${season}&group=pitching&startDate=${season}-01-01&endDate=${pitStatsCutoffDate}&sportId=1`),
+          // TODO(auditoría, sin verificar): no se pudo confirmar en vivo si stats=statSplits respeta
+          // startDate/endDate de la misma forma que stats=season (sin acceso de red a statsapi.mlb.com
+          // desde este entorno). Estos splits solo alimentan pitcher_allowed_avg/slg_vs_lhb/rhb, no las
+          // columnas de temporada del bug reportado. Verificar manualmente antes de confiar en que esto
+          // ya es point-in-time.
+          fetchWithTimeout(`https://statsapi.mlb.com/api/v1/people/${pitcher.id}/stats?stats=statSplits&season=${season}&group=pitching&sitCodes=vl,vr&startDate=${season}-01-01&endDate=${date}`),
           fetchWithTimeout(`https://statsapi.mlb.com/api/v1/people/${pitcher.id}`)
         ]);
 
@@ -4103,6 +4135,43 @@ function americanOddsToProbability(odds: number): number {
 // --------------------------------------------------------------------
 // Bypasses Gemini purely for 'direct' mode
 // --------------------------------------------------------------------
+// Fase 2, punto 3 del plan de mejora: hoy una celda vacía en *_strikeout_prop
+// significa tres cosas distintas sin forma de distinguirlas ("no había mercado",
+// "no se intentó capturar" por la restricción de fechas pasadas de The Odds API,
+// o "hubo mercado pero el nombre del lanzador no hizo match"). Este tipo y las
+// funciones de abajo calculan cuál de los tres casos aplica.
+type PropCaptureStatus = "captured" | "no_market" | "no_name_match" | "not_attempted";
+
+function hasMatchupPropRows(rows: any[], pitcherTeam: string, opponentTeam: string): boolean {
+  if (!Array.isArray(rows) || rows.length === 0) return false;
+  const teamAbbr = getTeamAbbr(pitcherTeam);
+  const opponentAbbr = getTeamAbbr(opponentTeam);
+  return rows.some((row: any) => {
+    const rowTeam = String(row.team_abbr || row.team || "").toUpperCase();
+    const rowOpponent = String(row.opponent || "").toUpperCase();
+    const teamMatches = !teamAbbr || !rowTeam || rowTeam === teamAbbr;
+    const opponentMatches = !opponentAbbr || !rowOpponent || rowOpponent === opponentAbbr;
+    return teamMatches && opponentMatches;
+  });
+}
+
+function resolvePropCaptureStatus(opts: {
+  attempted: boolean;
+  propData: any;
+  pitcherName: string;
+  hadOddsApiMarketForGame: boolean;
+  dataStreakRows: any[];
+  pitcherTeam: string;
+  opponentTeam: string;
+}): PropCaptureStatus {
+  const { attempted, propData, pitcherName, hadOddsApiMarketForGame, dataStreakRows, pitcherTeam, opponentTeam } = opts;
+  if (!attempted) return "not_attempted";
+  if (propData && propData.point != null) return "captured";
+  if (!pitcherName || pitcherName === "Por definir" || pitcherName === "TBD") return "no_market";
+  const hadAnyMatchupMarket = hadOddsApiMarketForGame || hasMatchupPropRows(dataStreakRows, pitcherTeam, opponentTeam);
+  return hadAnyMatchupMarket ? "no_name_match" : "no_market";
+}
+
 function buildDirectGameData(
   gameId: string,
   homeName: string,
@@ -4113,12 +4182,14 @@ function buildDirectGameData(
   realMLBData: any,
   realOddsData: any,
   pitcherStrikeoutRows: any[] = [],
-  totalBasesRows: any[] = []
+  totalBasesRows: any[] = [],
+  propsFetchAttempted: boolean = true
 ) {
   // Try to match odds if provided
   let odds: any = null;
   let homeKPropData: any = null;
   let awayKPropData: any = null;
+  let hadOddsApiPitcherKMarket = false;
 
   if (realOddsData && Array.isArray(realOddsData)) {
     const matchOdds = realOddsData.find((o: any) => {
@@ -4177,6 +4248,8 @@ function buildDirectGameData(
         totalBasesRows = [...oddsApiTotalBasesRows, ...totalBasesRows];
       }
 
+      hadOddsApiPitcherKMarket = pitcherStrikeoutsOutcomes.length > 0;
+
       if (pitcherStrikeoutsOutcomes.length > 0) {
         const matchProp = (pitcherName: string) => {
            if (!pitcherName || pitcherName === "Por definir" || pitcherName === "TBD") return null;
@@ -4234,6 +4307,25 @@ function buildDirectGameData(
     homeName
   );
 
+  const homeStrikeoutPropCaptureStatus = resolvePropCaptureStatus({
+    attempted: propsFetchAttempted,
+    propData: homeKPropData,
+    pitcherName: realMLBData?.pitchers?.home?.name,
+    hadOddsApiMarketForGame: hadOddsApiPitcherKMarket,
+    dataStreakRows: pitcherStrikeoutRows,
+    pitcherTeam: homeName,
+    opponentTeam: awayName,
+  });
+  const awayStrikeoutPropCaptureStatus = resolvePropCaptureStatus({
+    attempted: propsFetchAttempted,
+    propData: awayKPropData,
+    pitcherName: realMLBData?.pitchers?.away?.name,
+    hadOddsApiMarketForGame: hadOddsApiPitcherKMarket,
+    dataStreakRows: pitcherStrikeoutRows,
+    pitcherTeam: awayName,
+    opponentTeam: homeName,
+  });
+
   // Fallback odds if matching failed
   if (!odds) {
     odds = {
@@ -4268,6 +4360,7 @@ function buildDirectGameData(
         strikeoutPropOverOdds: homeKPropData?.overOdds ?? null,
         strikeoutPropUnderOdds: homeKPropData?.underOdds ?? null,
         strikeoutPropSource: homeKPropData?.source ?? null,
+        strikeoutPropCaptureStatus: homeStrikeoutPropCaptureStatus,
         pitchHand: realMLBData?.pitchers?.home?.pitchHand || "R",
         pitcher_allowed_avg_vs_lhb: safeFloat(realMLBData?.pitchers?.home?.pitcher_allowed_avg_vs_lhb) ?? 0,
         pitcher_allowed_avg_vs_rhb: safeFloat(realMLBData?.pitchers?.home?.pitcher_allowed_avg_vs_rhb) ?? 0,
@@ -4291,6 +4384,7 @@ function buildDirectGameData(
         strikeoutPropOverOdds: awayKPropData?.overOdds ?? null,
         strikeoutPropUnderOdds: awayKPropData?.underOdds ?? null,
         strikeoutPropSource: awayKPropData?.source ?? null,
+        strikeoutPropCaptureStatus: awayStrikeoutPropCaptureStatus,
         pitchHand: realMLBData?.pitchers?.away?.pitchHand || "R",
         pitcher_allowed_avg_vs_lhb: safeFloat(realMLBData?.pitchers?.away?.pitcher_allowed_avg_vs_lhb) ?? 0,
         pitcher_allowed_avg_vs_rhb: safeFloat(realMLBData?.pitchers?.away?.pitcher_allowed_avg_vs_rhb) ?? 0,
@@ -4493,10 +4587,33 @@ app.post("/api/harvest", async (req, res) => {
   const existingGamesForDate = currentDBSnapshot[date] || [];
   const historicalDate = isPastGameDate(date);
   const existingGamesById = new Map(existingGamesForDate.map((game: any) => [String(game?.id || game?.metadata?.id || ""), game]));
+  const pitLookupsForReverify = readPitLookups();
+  const hasPitCoverage = (gamePk: string, stored: MLBGame | undefined): boolean => {
+    const homeName = stored?.pitchers?.home?.name;
+    const awayName = stored?.pitchers?.away?.name;
+    const homeNeedsPit = homeName && homeName !== "Por definir" && homeName !== "TBD";
+    const awayNeedsPit = awayName && awayName !== "Por definir" && awayName !== "TBD";
+    const pit = pitLookupsForReverify.pitchers?.[gamePk];
+    if (homeNeedsPit && !pit?.home) return false;
+    if (awayNeedsPit && !pit?.away) return false;
+    return true;
+  };
   const canReuseStoredGame = (match: any) => {
     if (forceRebuild) return false;
-    const stored = existingGamesById.get(String(match?.gamePk));
-    return Boolean(stored) && (historicalDate || isFinalGameStatus((stored as any)?.game_result?.gameStatus));
+    const gamePk = String(match?.gamePk);
+    const stored = existingGamesById.get(gamePk);
+    if (!stored) return false;
+    if (!historicalDate) return isFinalGameStatus(stored?.game_result?.gameStatus);
+    // Fecha histórica: si ya tiene cobertura PIT, es seguro reutilizarla para siempre
+    // (el resultado del juego no cambia). Si NO tiene cobertura PIT, solo se reutiliza
+    // mientras no haya pasado el período de reverificación — pasado ese período, se
+    // vuelve a extraer (lo cual también reintenta fetchPitcherStats con la corrección
+    // de la Fase 1, por si el juego se capturó originalmente con el bug).
+    if (hasPitCoverage(gamePk, stored)) return true;
+    const lastAttempt = stored?.lastReverifyAttempt;
+    if (!lastAttempt) return false;
+    const daysSinceLastAttempt = (Date.now() - new Date(lastAttempt).getTime()) / (1000 * 60 * 60 * 24);
+    return daysSinceLastAttempt < REVERIFY_COOLDOWN_DAYS;
   };
   const matchesNeedingExtraction = mlbMatches.filter((match) => !canReuseStoredGame(match));
 
@@ -4670,7 +4787,7 @@ app.post("/api/harvest", async (req, res) => {
         pct: basePct + Math.floor(pctPerGame * 0.6),
       });
 
-      const gameDataParsed: any = buildDirectGameData(gameId, homeName, awayName, venueName, date, matchTime, realMLBData, realOddsData, pitcherStrikeoutRows, totalBasesRows);
+      const gameDataParsed: any = buildDirectGameData(gameId, homeName, awayName, venueName, date, matchTime, realMLBData, realOddsData, pitcherStrikeoutRows, totalBasesRows, !historicalDate);
 
       // 3. Fetch Clima, Sabermetría, Splits, Fatiga y Resultados
       emit({
@@ -5047,6 +5164,9 @@ app.post("/api/harvest", async (req, res) => {
         checkedAt: new Date().toISOString()
       };
       gameDataParsed.timestamp = new Date().toISOString();
+      // Fase 3, punto 2: se marca el momento de este intento para poder aplicar el
+      // período de reverificación en canReuseStoredGame de la próxima corrida.
+      gameDataParsed.lastReverifyAttempt = gameDataParsed.timestamp;
 
       // First pregame representation is immutable and powers leak-free ML datasets.
       capturePregameSnapshot(gameDataParsed);
@@ -5092,6 +5212,33 @@ app.post("/api/harvest", async (req, res) => {
     // Persist to local JSON DB
     emit({ phase: "save", step: "Guardando en base de datos local...", pct: 93 });
     const db = readGamesDB();
+
+    // Fase 2, punto 2 del plan de mejora: detectar game_id que ya existan bajo OTRA
+    // fecha antes de guardar. No se auto-elimina nada (la fecha "correcta" depende de
+    // si MLB pospuso/reprogramó el juego o si es un juego suspendido-y-reanudado que
+    // la propia API de MLB lista bajo dos fechas), solo se alerta para revisión manual.
+    // Ver auditoría §4.3 / PLAN_DE_MEJORA_MLBDATAENGINE.md Fase 2.2.
+    for (const newGame of harvestedGames) {
+      const newGameId = String(newGame.id);
+      for (const otherDate of Object.keys(db)) {
+        if (otherDate === date) continue;
+        const otherGames: any[] = Array.isArray(db[otherDate]) ? db[otherDate] : [];
+        const clash = otherGames.find((g: any) => String(g?.id) === newGameId);
+        if (clash) {
+          const msg = `[DUPLICADO game_id] ${newGameId} ya existe bajo la fecha ${otherDate} (status=${clash?.game_result?.gameStatus ?? "?"}) y se está guardando también bajo ${date} (status=${newGame?.game_result?.gameStatus ?? "?"}). Revisar manualmente cuál fecha es la vigente.`;
+          console.warn(msg);
+          errorsCollection.push({
+            id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+            timestamp: new Date().toISOString(),
+            gameId: newGameId,
+            source: "DuplicateGameId",
+            message: msg,
+            severity: "low",
+          });
+        }
+      }
+    }
+
     db[date] = harvestedGames;
     writeGamesDB(db);
     writeErrorsDB(errorsCollection);
@@ -5161,7 +5308,7 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
   const realMLBData = await fetchRealMLBGameData(gameId, homeTeamId, awayTeamId, actualDate);
 
   // 4. Build game data
-  const gameDataParsed: any = buildDirectGameData(gameId, homeName, awayName, venueName, actualDate, matchTime, realMLBData, realOddsData, pitcherStrikeoutRows, totalBasesRows);
+  const gameDataParsed: any = buildDirectGameData(gameId, homeName, awayName, venueName, actualDate, matchTime, realMLBData, realOddsData, pitcherStrikeoutRows, totalBasesRows, !historicalDate);
 
   // 5. Fetch advanced stats
   const season = actualDate.substring(0, 4);
@@ -5499,6 +5646,7 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
     checkedAt: new Date().toISOString()
   };
   gameDataParsed.timestamp = new Date().toISOString();
+  gameDataParsed.lastReverifyAttempt = gameDataParsed.timestamp;
 
   // Live/final refreshes cannot overwrite an already captured pregame snapshot.
   capturePregameSnapshot(gameDataParsed);
@@ -5538,6 +5686,34 @@ app.post("/api/harvest-game", async (req, res) => {
     console.error(`Error al actualizar juego individual ${gameId}:`, err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fase 3, puntos 1 y 3 del plan de mejora: pipeline automatizado con pasos
+// separados y logueados, disparado por un Cron Job externo (Render Cron Job,
+// Programador de tareas de Windows, etc.) en vez de depender de que alguien abra
+// la UI. Ver PLAN_DE_MEJORA_MLBDATAENGINE.md Fase 3.
+//
+// Fase 4, punto 1: las rutas (/api/cron/run-daily-pipeline, /api/cron/runs) y
+// sus 3 helpers viven ahora en src/routes/cronPipelineRoutes.ts — se registran
+// acá pasándole por inyección de dependencias las funciones locales de este
+// archivo que necesitan (readGamesDB, readPitLookups, los enrichers, etc.),
+// para no tener que exportarlas todas ni crear un import circular.
+//
+// Deliberadamente NO se tocó el endpoint /api/harvest (SSE, usado por la UI en
+// vivo): el paso de "extracción" lo invoca por loopback HTTP y consume su
+// stream SSE, tratándolo como una caja negra ya probada, en vez de duplicar
+// ~500 líneas de lógica de extracción o arriesgar romper la UI al refactorizarlo.
+// ─────────────────────────────────────────────────────────────────────────────
+
+registerCronPipelineRoutes(app, {
+  port: PORT,
+  readGamesDB,
+  readPitLookups,
+  generateBattersCSV,
+  enrichGamesWithSavantBatterContact,
+  enrichGamesWithTotalBasesProps,
+  getNewYorkDateString,
 });
 
 // Auto-updater for live/in-progress games in background (every 2 minutes)

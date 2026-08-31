@@ -5,10 +5,14 @@
   "scripts": {
     "dev": "esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=server.mjs && node server.mjs",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
-    "test": "tsx src/utils/lineupMetrics.test.ts && tsx src/datasets/klabTrainingDataset.test.ts && tsx src/datasets/firestorePregameIdAudit.test.ts && tsx src/datasets/klabDynamicHistoryAudit.test.ts && tsx src/datasets/klabDynamicRollingFeatures.test.ts && tsx src/datasets/klabDynamicRollingExperiment.test.ts && tsx src/datasets/klabDynamicRollingMigrationAudit.test.ts && tsx src/datasets/klabDynamicRollingModelComparison.test.ts",
+    "test": "npm run test:unit && npm run test:klab",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:klab": "tsx src/utils/lineupMetrics.test.ts && tsx src/datasets/klabTrainingDataset.test.ts && tsx src/datasets/firestorePregameIdAudit.test.ts && tsx src/datasets/klabDynamicHistoryAudit.test.ts && tsx src/datasets/klabDynamicRollingFeatures.test.ts && tsx src/datasets/klabDynamicRollingExperiment.test.ts && tsx src/datasets/klabDynamicRollingMigrationAudit.test.ts && tsx src/datasets/klabDynamicRollingModelComparison.test.ts",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
+    "tool": "tsx tool.ts",
     "klab:recover-history": "tsx src/datasets/firestorePregameHistory.ts",
     "klab:history": "tsx src/datasets/klabHistoricalMatching.ts",
     "klab:match-history": "tsx src/datasets/klabHistoricalMatching.ts",
@@ -49,6 +53,7 @@
     "tsx": "^4.16.2",
     "typescript": "~5.8.2",
     "vite": "^5.4.11",
-    "vite-plugin-pwa": "^1.3.0"
+    "vite-plugin-pwa": "^1.3.0",
+    "vitest": "^2.1.9"
   }
 }

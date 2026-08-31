@@ -38,7 +38,21 @@ OUTPUT_BOXSCORE = Path(__file__).parent / "boxscore_game_stats.json"
 RATE_LIMIT_DELAY = 0.25   # seconds between API calls
 REQUEST_TIMEOUT = 15       # seconds
 
-FINAL_STATUSES = {"final", "game over", "completed", "completed early"}
+# Criterio único de "juego terminado" (Fase 2, punto 1 del plan de mejora).
+# Python no puede importar el módulo TS, así que esta lógica debe reflejar
+# exactamente src/utils/gameStatus.ts::isFinalGameStatus — si cambias una,
+# cambia la otra. Antes esta constante hacía match EXACTO contra un set fijo,
+# lo cual no cubría variantes que la API de MLB devuelve como "Final: Tied" o
+# "Completed Early: Rain"; is_final() ahora usa el mismo criterio "final" como
+# substring que ya usaba isFinalGameStatus en server.ts.
+#
+# Fase 4, punto 6: el match exacto contra este set en realidad SEGUÍA sin
+# capturar "Completed Early: Rain" (con motivo incluido) porque
+# "completed early" solo hacía match exacto, no substring — el mismo bug que
+# tenía isFinalGameStatus en TS hasta que las pruebas nuevas (gameStatus.test.ts)
+# lo encontraron comparando contra el propio ejemplo de este comentario.
+# is_final() ahora también trata "completed early" como substring.
+FINAL_STATUSES = {"game over", "completed"}
 
 SESSION = requests.Session()
 SESSION.headers.update({
@@ -90,7 +104,8 @@ def thirds_to_ip_string(thirds: int) -> str:
 
 
 def is_final(status: str | None) -> bool:
-    return str(status or "").strip().lower() in FINAL_STATUSES
+    normalized = str(status or "").strip().lower()
+    return "final" in normalized or "completed early" in normalized or normalized in FINAL_STATUSES
 
 
 def safe_int(val, default=0) -> int:
@@ -361,12 +376,15 @@ def run_backfill(args):
     game_list.sort(key=lambda x: get_nested(x[1], "metadata", "date", default=""))
 
     total = len(game_list)
-    print(f"Processing {total} games...\n")
+    reverify = bool(getattr(args, "reverify", False))
+    print(f"Processing {total} games...{' (REVERIFY MODE: recomputing + diffing existing entries)' if reverify else ''}\n")
 
     # Load existing outputs so we can resume interrupted runs
     pitcher_out  = load_existing(OUTPUT_PITCHER)
     offense_out  = load_existing(OUTPUT_OFFENSE)
     boxscore_out = load_existing(OUTPUT_BOXSCORE)
+
+    reverify_diffs = []  # (game_id, field, old_value, new_value) — only populated in --reverify mode
 
     for idx, (game_id, game) in enumerate(game_list, 1):
         date   = get_nested(game, "metadata", "date")
@@ -394,18 +412,26 @@ def run_backfill(args):
         print(f"[{idx}/{total}] {game_id} | {date} | {home_team} vs {away_team} | {status}")
 
         # ── Pitcher PIT stats ──
-        if game_id not in pitcher_out:
+        if game_id not in pitcher_out or reverify:
             home_pit = get_pitcher_stats_up_to_date(home_pitcher_id, date, season) if home_pitcher_id else None
             away_pit = get_pitcher_stats_up_to_date(away_pitcher_id, date, season) if away_pitcher_id else None
-            pitcher_out[game_id] = {"home": home_pit, "away": away_pit}
+            new_val = {"home": home_pit, "away": away_pit}
+            if reverify and game_id in pitcher_out and pitcher_out[game_id] != new_val:
+                reverify_diffs.append((game_id, "pitcher", pitcher_out[game_id], new_val))
+                print(f"  [REVERIFY-DIFF] pitcher PIT changed: {pitcher_out[game_id]} -> {new_val}")
+            pitcher_out[game_id] = new_val
         else:
             print(f"  [SKIP] pitcher PIT already exists")
 
         # ── Team offense PIT stats ──
-        if game_id not in offense_out:
+        if game_id not in offense_out or reverify:
             home_off = get_team_offense_up_to_date(home_team_id, date, season) if home_team_id else None
             away_off = get_team_offense_up_to_date(away_team_id, date, season) if away_team_id else None
-            offense_out[game_id] = {"home": home_off, "away": away_off}
+            new_val = {"home": home_off, "away": away_off}
+            if reverify and game_id in offense_out and offense_out[game_id] != new_val:
+                reverify_diffs.append((game_id, "offense", offense_out[game_id], new_val))
+                print(f"  [REVERIFY-DIFF] offense PIT changed: {offense_out[game_id]} -> {new_val}")
+            offense_out[game_id] = new_val
         else:
             print(f"  [SKIP] offense PIT already exists")
 
@@ -437,6 +463,20 @@ def run_backfill(args):
     save_json(OUTPUT_BOXSCORE, boxscore_out)
     print(f"\nDone! Processed {total} games.")
 
+    if reverify:
+        diff_path = Path("reverify_diffs.json")
+        save_json(diff_path, {
+            "generated_at": __import__("datetime").datetime.now().isoformat(),
+            "games_processed": total,
+            "diffs_found": len(reverify_diffs),
+            "diffs": [
+                {"game_id": gid, "field": field, "old": old, "new": new}
+                for gid, field, old, new in reverify_diffs
+            ],
+        })
+        print(f"\n[REVERIFY] {len(reverify_diffs)} entries differed from what was already on disk.")
+        print(f"[REVERIFY] Full diff report written to {diff_path}")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ENTRY POINT
@@ -447,5 +487,9 @@ if __name__ == "__main__":
     parser.add_argument("--sample",    type=int,   help="Process only first N games (for testing)")
     parser.add_argument("--game_id",   type=str,   help="Process a single game_id only")
     parser.add_argument("--from_date", type=str,   help="Process only games on or after YYYY-MM-DD")
+    parser.add_argument("--reverify",  action="store_true",
+                         help="Recompute PIT stats even for games that already have an entry, "
+                              "diff the recomputed value against what's on disk, and log any "
+                              "differences to reverify_diffs.json instead of silently skipping.")
     args = parser.parse_args()
     run_backfill(args)

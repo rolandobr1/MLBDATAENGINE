@@ -1,4 +1,19 @@
 /**
+ * ⚠️ ARCHIVADO / NO USADO EN PRODUCCIÓN (Fase 4, punto 3 del plan de mejora).
+ *
+ * A pesar del nombre y del comentario de abajo (que suena a que resuelve el
+ * bug de point-in-time correctness), este archivo no lo importa nadie — ni
+ * `server.ts` ni ningún otro módulo (verificado con grep en todo el
+ * proyecto, incluyendo frontend). La lógica PIT que sí está en producción
+ * vive en `backfill_pitcher_stats_pit.py` + los helpers de PIT en
+ * `server.ts`. Probablemente un intento anterior de portar esa lógica a TS
+ * que nunca se conectó.
+ *
+ * Se deja en su lugar porque esta sesión no puede mover/eliminar archivos
+ * en tu máquina — ver el mensaje de la Fase 4 para el comando manual.
+ */
+
+/**
  * mlbGameLogExtractor.ts
  *
  * Fetches pitcher and team offense stats accumulated UP TO a given date

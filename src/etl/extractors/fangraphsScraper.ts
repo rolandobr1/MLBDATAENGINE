@@ -1,3 +1,13 @@
+/**
+ * ⚠️ ARCHIVADO / NO USADO EN PRODUCCIÓN (Fase 4, punto 3 del plan de mejora).
+ *
+ * No lo importa ningún archivo — ni `server.ts`, ni `src/workflow.ts`, ni
+ * ningún otro módulo del proyecto (verificado con grep en todo `src/` y en
+ * `server.ts`). Código completamente huérfano.
+ *
+ * Se deja en su lugar porque esta sesión no puede mover/eliminar archivos
+ * en tu máquina — ver el mensaje de la Fase 4 para el comando manual.
+ */
 import fs from "fs";
 import path from "path";
 import { parse } from "csv-parse/sync";

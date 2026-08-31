@@ -76,7 +76,7 @@ export function getTeamColor(teamName: string | undefined | null): string {
   if (name.includes('athletics')) return '#003831';
   if (name.includes('blue jays') || name.includes('bluejays')) return '#134a8e';
   if (name.includes('braves')) return '#ce1141';
-  if (name.includes('brewers')) return '#ffc52f';
+  if (name.includes('brewers')) return '#12284b'; // azul marino oficial — el dorado (#ffc52f) no tiene contraste suficiente con texto blanco
   if (name.includes('cardinals')) return '#c41e3a';
   if (name.includes('cubs')) return '#0e3386';
   if (name.includes('diamondbacks') || name.includes('d-backs')) return '#a71930';
@@ -90,7 +90,7 @@ export function getTeamColor(teamName: string | undefined | null): string {
   if (name.includes('orioles')) return '#df4601';
   if (name.includes('padres')) return '#2f241d';
   if (name.includes('phillies')) return '#e81828';
-  if (name.includes('pirates')) return '#fdb827';
+  if (name.includes('pirates')) return '#27251f'; // negro oficial — el dorado (#fdb827) no tiene contraste suficiente con texto blanco
   if (name.includes('rangers')) return '#003278';
   if (name.includes('rays')) return '#092c5c';
   if (name.includes('reds')) return '#c6011f';

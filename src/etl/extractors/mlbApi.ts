@@ -1,3 +1,13 @@
+/**
+ * ⚠️ ARCHIVADO / NO USADO EN PRODUCCIÓN (Fase 4, punto 3 del plan de mejora).
+ *
+ * Solo lo importa `src/workflow.ts` (también archivado). `server.ts` tiene
+ * su propia lógica de extracción de la API de MLB (mucho más completa,
+ * incluye point-in-time correctness) y no depende de este archivo.
+ *
+ * Se deja en su lugar porque esta sesión no puede mover/eliminar archivos
+ * en tu máquina — ver el mensaje de la Fase 4 para el comando manual.
+ */
 import axios from 'axios';
 
 const MLB_API_BASE = 'https://statsapi.mlb.com/api/v1';

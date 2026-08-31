@@ -5,6 +5,7 @@
 
 import { MLBGame } from "./types";
 import { enrichWithVortexMetrics } from "./etl/transformers/vortexMetrics";
+import { savantCache } from "./etl/extractors/savantScraper";
 
 function escapeCsvValue(val: any): string {
   if (val === undefined || val === null || val === "") return "";
@@ -186,6 +187,42 @@ function calculateIpPerStart(ipStr: string | number | undefined | null, starts: 
 }
 
 
+/**
+ * pitcherPitStatsBlockValues — Fase 4, punto 2 del plan de mejora.
+ *
+ * `generateMLDatasetCSV` y `generateBattersCSV` repetían, cada uno por su lado
+ * (una vez para el lanzador local y otra para el visitante), el mismo bloque
+ * de 11 columnas de stats de lanzador point-in-time (era/whip/kPct/bbPct/
+ * wins/losses/ip/strikeouts/gs/ipAvgPerStart/stats_source_flag). Cuando en la
+ * Fase 1 se corrigió el bug de "celda vacía si no hay cobertura PIT en vez de
+ * usar el valor crudo con fuga de fechas futuras", el fix se aplicó dos veces
+ * por separado en cada generador — exactamente el tipo de duplicación que
+ * hace fácil arreglar un lado y olvidarse del otro. Esta función es la única
+ * fuente de verdad para ese bloque; ambos generadores la llaman para el
+ * lanzador local y el visitante.
+ *
+ * `pit` es la entrada de PITLookups.pitchers[gameId].home/away (o
+ * PITLookups.boxscore[gameId].home/away en el caso de generateMLDatasetCSV) —
+ * sin tipo fuerte todavía porque PITLookups las declara como `any` (ver
+ * PITLookups en este mismo archivo); acotar ese `any` es tarea de la Fase 4,
+ * punto 5, no de este cambio.
+ */
+function pitcherPitStatsBlockValues(pit: PitStatsEntry | null | undefined): (string | number)[] {
+  return [
+    pit?.era ?? "",
+    pit?.whip ?? "",
+    pit?.kPct ?? "",
+    pit?.bbPct ?? "",
+    pit?.wins ?? "",
+    pit?.losses ?? "",
+    escapeCsvValue(pit?.ip ?? ""),
+    pit?.totalStrikeouts ?? "",
+    pit?.gs ?? "",
+    pit?.ipAvgPerStart ?? "",
+    pit ? "pit" : "",
+  ];
+}
+
 // Generate CSV string representing MLB_MASTER_DATA format (Requisito 7)
 
 function getPitcherDerivedMetrics(g: any, side: 'home' | 'away') {
@@ -348,12 +385,41 @@ export function generateMLBDataCSV(games: MLBGame[]): string {
 }
 
 // ─── PIT Lookup types ────────────────────────────────────────────────────────
+
+/**
+ * Fase 4, punto 5 del plan de mejora: forma real de una entrada de
+ * pitcher_stats_pit.json (lo que produce backfill_pitcher_stats_pit.py /
+ * generate_pit.ts, y lo que consumen injectPitStats y
+ * canReuseStoredGame/hasPitCoverage en server.ts, y
+ * pitcherPitStatsBlockValues acá mismo). Antes era `any` — quedaba sin
+ * chequear que los cuatro consumidores leyeran exactamente los mismos
+ * campos, que es justo el tipo de desincronización que causó que el bloque
+ * de lanzador se duplicara (punto 2 de esta misma fase).
+ */
+export interface PitStatsEntry {
+  era?: number | string | null;
+  whip?: number | string | null;
+  kPct?: number | string | null;
+  bbPct?: number | string | null;
+  wins?: number | string | null;
+  losses?: number | string | null;
+  ip?: number | string | null;
+  totalStrikeouts?: number | string | null;
+  gs?: number | string | null;
+  ipAvgPerStart?: number | string | null;
+}
+
 export interface PITLookups {
   /** pitcher_stats_pit.json: { [gameId]: { home: PitcherPIT, away: PitcherPIT } } */
-  pitchers?: Record<string, { home: any; away: any }>;
+  pitchers?: Record<string, { home?: PitStatsEntry; away?: PitStatsEntry }>;
   /** offense_stats_pit.json: { [gameId]: { home: OffensePIT, away: OffensePIT } } */
   offense?: Record<string, { home: any; away: any }>;
-  /** boxscore_game_stats.json: { [gameId]: { home: BoxscoreStats, away: BoxscoreStats } } */
+  /**
+   * boxscore_game_stats.json: { [gameId]: { home: BoxscoreStats, away: BoxscoreStats } } —
+   * forma distinta a PitStatsEntry (stats reales del boxscore del juego, no
+   * proyecciones de temporada: inningsPitched/battersFaced/strikeOuts/etc.),
+   * fuera del alcance acotado de la Fase 4 punto 5.
+   */
   boxscore?: Record<string, { home: any; away: any }>;
 }
 
@@ -363,8 +429,8 @@ export function generateMLDatasetCSV(games: MLBGame[], pitLookups: PITLookups = 
     // Metadata
     "game_id", "date", "time", "home_team", "away_team", "venue",
     // Pitchers standard
-    "home_pitcher", "home_pitcher_era", "home_pitcher_whip", "home_pitcher_kPct", "home_pitcher_bbPct", "home_pitcher_wins", "home_pitcher_losses", "home_pitcher_ip", "home_pitcher_strikeouts", "home_pitcher_gs", "home_pitcher_ip_avg_start",
-    "away_pitcher", "away_pitcher_era", "away_pitcher_whip", "away_pitcher_kPct", "away_pitcher_bbPct", "away_pitcher_wins", "away_pitcher_losses", "away_pitcher_ip", "away_pitcher_strikeouts", "away_pitcher_gs", "away_pitcher_ip_avg_start",
+    "home_pitcher", "home_pitcher_era", "home_pitcher_whip", "home_pitcher_kPct", "home_pitcher_bbPct", "home_pitcher_wins", "home_pitcher_losses", "home_pitcher_ip", "home_pitcher_strikeouts", "home_pitcher_gs", "home_pitcher_ip_avg_start", "home_pitcher_stats_source",
+    "away_pitcher", "away_pitcher_era", "away_pitcher_whip", "away_pitcher_kPct", "away_pitcher_bbPct", "away_pitcher_wins", "away_pitcher_losses", "away_pitcher_ip", "away_pitcher_strikeouts", "away_pitcher_gs", "away_pitcher_ip_avg_start", "away_pitcher_stats_source",
     // Bullpen standard
     "home_bullpen_era", "home_bullpen_usage", "home_bullpen_ip_7d",
     "away_bullpen_era", "away_bullpen_usage", "away_bullpen_ip_7d",
@@ -392,6 +458,13 @@ export function generateMLDatasetCSV(games: MLBGame[], pitLookups: PITLookups = 
     "away_offense_woba", "away_offense_xwoba", "away_offense_iso", "away_offense_babip", "away_offense_hardhit_pct", "away_offense_barrel_pct", "away_offense_contact_pct", "away_offense_k_pct_vs_pitch_hand", "away_projected_lineup_k_pct_vs_hand", "away_projected_lineup_contact_pct_vs_hand", "away_projected_lineup_whiff_pct_vs_hand", "away_offense_whiff_pct_vs_fastball", "away_offense_whiff_pct_vs_slider", "away_offense_whiff_pct_vs_curve", "away_offense_whiff_pct_vs_changeup", "away_offense_whiff_pct_vs_splitter",
     // Model Features
     "diff_era", "diff_xera", "diff_fip", "diff_ops", "diff_xwoba", "diff_bullpen_era", "diff_runs_per_game", "diff_record_last10", "diff_record_home_away", "diff_starter_rest", "diff_bullpen_fatigue",
+    // Metadata de confiabilidad point-in-time (ver auditoría del pipeline, sección 3):
+    // fecha en que se descargó el snapshot de Baseball Savant usado para las columnas
+    // xera/xwoba/hardhit_pct/barrel_pct/swstr_pct/csw_pct/arsenal%/framing de esta fila.
+    // Ese snapshot es "temporada completa hasta hoy", no recortado a la fecha del juego:
+    // si "date" de la fila es anterior a savant_metrics_asof_date, esas columnas pueden
+    // incluir información posterior al juego y no deben tratarse como point-in-time.
+    "savant_metrics_asof_date",
     // Game Results / ML Target Labels
     "home_score", "away_score", "winner", "game_status",
     // VORTEX V10.3 METRICS (47 Variables)
@@ -507,29 +580,14 @@ export function generateMLDatasetCSV(games: MLBGame[], pitLookups: PITLookups = 
       escapeStr(g.metadata.homeTeam),
       escapeStr(g.metadata.awayTeam),
       escapeStr(g.metadata.venue),
-      // Pitchers standard — PIT-corrected seasonal stats (fallback to document if no lookup)
+      // Pitchers standard — SOLO point-in-time verificado (backfill PIT). Sin cobertura
+      // PIT, la celda queda vacía en vez de usar el valor crudo (ver auditoría del
+      // pipeline, bug de stats de temporada congeladas/con fuga de fechas futuras).
+      // home/away_pitcher_stats_source documenta por qué: "pit" = confiable, vacío = sin cobertura PIT todavía.
       escapeStr(g.pitchers.home.name),
-      hPit?.era    ?? g.pitchers.home.era    ?? "",
-      hPit?.whip   ?? g.pitchers.home.whip   ?? "",
-      hPit?.kPct   ?? g.pitchers.home.kPct   ?? "",
-      hPit?.bbPct  ?? g.pitchers.home.bbPct  ?? "",
-      hPit?.wins   ?? g.pitchers.home.wins   ?? "",
-      hPit?.losses ?? g.pitchers.home.losses ?? "",
-      escapeStr(hPit?.ip ?? g.pitchers.home.ip),
-      hPit?.totalStrikeouts ?? g.pitchers.home.totalStrikeouts ?? "",
-      hPit?.gs     ?? g.pitchers.home.starts ?? "",
-      hPit?.ipAvgPerStart ?? calculateIpPerStart(g.pitchers.home.ip, g.pitchers.home.starts),
+      ...pitcherPitStatsBlockValues(hPit),
       escapeStr(g.pitchers.away.name),
-      aPit?.era    ?? g.pitchers.away.era    ?? "",
-      aPit?.whip   ?? g.pitchers.away.whip   ?? "",
-      aPit?.kPct   ?? g.pitchers.away.kPct   ?? "",
-      aPit?.bbPct  ?? g.pitchers.away.bbPct  ?? "",
-      aPit?.wins   ?? g.pitchers.away.wins   ?? "",
-      aPit?.losses ?? g.pitchers.away.losses ?? "",
-      escapeStr(aPit?.ip ?? g.pitchers.away.ip),
-      aPit?.totalStrikeouts ?? g.pitchers.away.totalStrikeouts ?? "",
-      aPit?.gs     ?? g.pitchers.away.starts ?? "",
-      aPit?.ipAvgPerStart ?? calculateIpPerStart(g.pitchers.away.ip, g.pitchers.away.starts),
+      ...pitcherPitStatsBlockValues(aPit),
       // Bullpen standard
       g.bullpen.home.era ?? "",
       escapeStr(g.bullpen.home.usageLast3Days),
@@ -729,6 +787,8 @@ export function generateMLDatasetCSV(games: MLBGame[], pitLookups: PITLookups = 
       g.model_features?.diffRecordHomeAway ?? "",
       g.model_features?.diffStarterRest ?? "",
       g.model_features?.diffBullpenFatigue ?? "",
+      // Metadata de confiabilidad point-in-time — ver comentario del header savant_metrics_asof_date
+      savantCache.getSnapshotDate() ?? "",
       // Results
       g.game_result?.homeScore ?? "",
       g.game_result?.awayScore ?? "",
@@ -981,10 +1041,10 @@ export function generateBattersCSV(games: any[], pitLookups: PITLookups = { pitc
     // --- Game Context & Team Stats (72 columns) ---
     "hora", "equipo_home", "equipo_visitante", "estadio",
     // Pitchers standard
-    "home_pitcher", "home_pitcher_era", "home_pitcher_whip", "home_pitcher_kPct", "home_pitcher_bbPct", "home_pitcher_wins", "home_pitcher_losses", "home_pitcher_ip", "home_pitcher_strikeouts", "home_pitcher_gs", "home_pitcher_ip_avg_start",
-    "home_pitcher_strikeout_prop", "home_pitcher_strikeout_prop_over_odds", "home_pitcher_strikeout_prop_under_odds", "home_pitcher_strikeout_prop_source",
-    "away_pitcher", "away_pitcher_era", "away_pitcher_whip", "away_pitcher_kPct", "away_pitcher_bbPct", "away_pitcher_wins", "away_pitcher_losses", "away_pitcher_ip", "away_pitcher_strikeouts", "away_pitcher_gs", "away_pitcher_ip_avg_start",
-    "away_pitcher_strikeout_prop", "away_pitcher_strikeout_prop_over_odds", "away_pitcher_strikeout_prop_under_odds", "away_pitcher_strikeout_prop_source",
+    "home_pitcher", "home_pitcher_era", "home_pitcher_whip", "home_pitcher_kPct", "home_pitcher_bbPct", "home_pitcher_wins", "home_pitcher_losses", "home_pitcher_ip", "home_pitcher_strikeouts", "home_pitcher_gs", "home_pitcher_ip_avg_start", "home_pitcher_stats_source",
+    "home_pitcher_strikeout_prop", "home_pitcher_strikeout_prop_over_odds", "home_pitcher_strikeout_prop_under_odds", "home_pitcher_strikeout_prop_source", "home_pitcher_strikeout_prop_capture_status",
+    "away_pitcher", "away_pitcher_era", "away_pitcher_whip", "away_pitcher_kPct", "away_pitcher_bbPct", "away_pitcher_wins", "away_pitcher_losses", "away_pitcher_ip", "away_pitcher_strikeouts", "away_pitcher_gs", "away_pitcher_ip_avg_start", "away_pitcher_stats_source",
+    "away_pitcher_strikeout_prop", "away_pitcher_strikeout_prop_over_odds", "away_pitcher_strikeout_prop_under_odds", "away_pitcher_strikeout_prop_source", "away_pitcher_strikeout_prop_capture_status",
     // Bullpen standard
     "bullpen_era_home", "bullpen_usage_home", "bullpen_ip_7d_home",
     "bullpen_era_away", "bullpen_usage_away", "bullpen_ip_7d_away",
@@ -1012,6 +1072,13 @@ export function generateBattersCSV(games: any[], pitLookups: PITLookups = { pitc
     "away_offense_woba", "away_offense_xwoba", "away_offense_iso", "away_offense_babip", "away_offense_hardhit_pct", "away_offense_barrel_pct", "away_offense_contact_pct", "away_offense_k_pct_vs_pitch_hand", "away_projected_lineup_k_pct_vs_hand", "away_projected_lineup_contact_pct_vs_hand", "away_projected_lineup_whiff_pct_vs_hand", "away_offense_whiff_pct_vs_fastball", "away_offense_whiff_pct_vs_slider", "away_offense_whiff_pct_vs_curve", "away_offense_whiff_pct_vs_changeup", "away_offense_whiff_pct_vs_splitter",
     // Model Features
     "diff_era", "diff_xera", "diff_fip", "diff_ops", "diff_xwoba", "diff_bullpen_era", "diff_runs_per_game", "diff_record_last10", "diff_record_home_away", "diff_starter_rest", "diff_bullpen_fatigue", "line_source",
+    // Metadata de confiabilidad point-in-time (ver auditoría del pipeline, sección 3):
+    // fecha en que se descargó el snapshot de Baseball Savant usado para las columnas
+    // xera/xwoba/hardhit_pct/barrel_pct/swstr_pct/csw_pct/arsenal%/framing de esta fila.
+    // Ese snapshot es "temporada completa hasta hoy", no recortado a la fecha del juego:
+    // si "date" de la fila es anterior a savant_metrics_asof_date, esas columnas pueden
+    // incluir información posterior al juego y no deben tratarse como point-in-time.
+    "savant_metrics_asof_date",
     // Game Results / ML Target Labels
     "resultado_carreras_home", "resultado_carreras_visitante", "resultado_ganador", "resultado_estado",
     // VORTEX V10.3 METRICS (47 Variables)
@@ -1067,35 +1134,19 @@ export function generateBattersCSV(games: any[], pitLookups: PITLookups = { pitc
       escapeStr(game.metadata.venue),
       // Pitchers standard
       escapeStr(game.pitchers.home.name),
-      hPit?.era ?? game.pitchers.home.era ?? "",
-      hPit?.whip ?? game.pitchers.home.whip ?? "",
-      hPit?.kPct ?? game.pitchers.home.kPct ?? "",
-      hPit?.bbPct ?? game.pitchers.home.bbPct ?? "",
-      hPit?.wins ?? game.pitchers.home.wins ?? "",
-      hPit?.losses ?? game.pitchers.home.losses ?? "",
-      escapeStr(hPit?.ip ?? game.pitchers.home.ip),
-      hPit?.totalStrikeouts ?? game.pitchers.home.totalStrikeouts ?? "",
-      hPit?.gs ?? game.pitchers.home.starts ?? "",
-      hPit?.ipAvgPerStart ?? calculateIpPerStart(game.pitchers.home.ip, game.pitchers.home.starts),
+      ...pitcherPitStatsBlockValues(hPit),
       game.pitchers.home.strikeoutProp ?? "",
       game.pitchers.home.strikeoutPropOverOdds ?? "",
       game.pitchers.home.strikeoutPropUnderOdds ?? "",
       escapeStr(game.pitchers.home.strikeoutPropSource),
+      escapeStr(game.pitchers.home.strikeoutPropCaptureStatus),
       escapeStr(game.pitchers.away.name),
-      aPit?.era ?? game.pitchers.away.era ?? "",
-      aPit?.whip ?? game.pitchers.away.whip ?? "",
-      aPit?.kPct ?? game.pitchers.away.kPct ?? "",
-      aPit?.bbPct ?? game.pitchers.away.bbPct ?? "",
-      aPit?.wins ?? game.pitchers.away.wins ?? "",
-      aPit?.losses ?? game.pitchers.away.losses ?? "",
-      escapeStr(aPit?.ip ?? game.pitchers.away.ip),
-      aPit?.totalStrikeouts ?? game.pitchers.away.totalStrikeouts ?? "",
-      aPit?.gs ?? game.pitchers.away.starts ?? "",
-      aPit?.ipAvgPerStart ?? calculateIpPerStart(game.pitchers.away.ip, game.pitchers.away.starts),
+      ...pitcherPitStatsBlockValues(aPit),
       game.pitchers.away.strikeoutProp ?? "",
       game.pitchers.away.strikeoutPropOverOdds ?? "",
       game.pitchers.away.strikeoutPropUnderOdds ?? "",
       escapeStr(game.pitchers.away.strikeoutPropSource),
+      escapeStr(game.pitchers.away.strikeoutPropCaptureStatus),
       // Bullpen standard
       game.bullpen.home.era ?? "",
       escapeStr(game.bullpen.home.usageLast3Days),
@@ -1301,6 +1352,8 @@ export function generateBattersCSV(games: any[], pitLookups: PITLookups = { pitc
       game.model_features?.diffStarterRest ?? "",
       game.model_features?.diffBullpenFatigue ?? "",
       canUseBettingLines ? escapeStr(getBettingLineSource(game)) : "",
+      // Metadata de confiabilidad point-in-time — ver comentario del header savant_metrics_asof_date
+      savantCache.getSnapshotDate() ?? "",
       // Results
       game.game_result?.homeScore ?? "",
       game.game_result?.awayScore ?? "",

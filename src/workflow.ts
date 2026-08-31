@@ -1,3 +1,15 @@
+/**
+ * ⚠️ ARCHIVADO / NO USADO EN PRODUCCIÓN (Fase 4, punto 3 del plan de mejora).
+ *
+ * Orquestador antiguo, solo referenciado desde `src/index.ts` (también
+ * archivado — no es el entrypoint real). El pipeline real vive dentro de
+ * `server.ts` (endpoint `/api/harvest` + `/api/cron/run-daily-pipeline`).
+ * Verificado con grep: ninguna ruta de `server.ts` importa este archivo.
+ *
+ * Se deja en su lugar porque esta sesión no tiene forma de mover/eliminar
+ * archivos en tu máquina — ver el mensaje de la Fase 4 para el comando de
+ * reubicación manual si querés separarlo físicamente en `_archive/`.
+ */
 import { fetchDailySchedule } from './etl/extractors/mlbApi';
 import { fetchPitcherSavantMetrics } from './etl/extractors/savantScraper';
 import { fetchDailyOdds } from './etl/extractors/oddsScraper';
@@ -7,6 +19,7 @@ import { saveGameData } from './services/firestoreService';
 import { enrichWithVortexMetrics } from './etl/transformers/vortexMetrics';
 import { getStarterBoxscoreStats } from './etl/extractors/mlbBoxscorePitcherExtractor';
 import { appendRowToMLSheet } from './services/googleSheetsService';
+import { isFinalGameStatus } from './utils/gameStatus';
 
 export const runDailyPipeline = async (dateStr: string) => {
   try {
@@ -143,9 +156,8 @@ export const runDailyPipeline = async (dateStr: string) => {
       let validGame: any = validation.data;
       validGame = enrichWithVortexMetrics(validGame);
       
-      const statusStr = String(validGame.game_result?.gameStatus || "").toLowerCase();
-      const isFinal = statusStr.includes("final") || statusStr === "game over" || statusStr === "completed early" || statusStr === "completed";
-      
+      const isFinal = isFinalGameStatus(validGame.game_result?.gameStatus);
+
       if (isFinal) {
         try {
           const bsStats = await getStarterBoxscoreStats(gameId);

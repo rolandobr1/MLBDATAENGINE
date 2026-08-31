@@ -11,13 +11,13 @@ import { GoogleSheetsSync } from "./components/GoogleSheetsSync";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
 import { BetTracking } from "./components/BetTracking";
 import { MLBGame, LoggedError } from "./types";
-import { 
-  Database, 
-  HelpCircle, 
-  FileSpreadsheet, 
-  Award, 
-  Sparkles, 
-  Activity, 
+import {
+  Database,
+  HelpCircle,
+  FileSpreadsheet,
+  Award,
+  Sparkles,
+  Activity,
   CheckCircle,
   FileCode,
   Search,
@@ -25,7 +25,13 @@ import {
   Eye,
   EyeOff,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  Clock,
+  ListChecks,
+  Landmark,
+  Compass,
+  Pin,
+  X
 } from "lucide-react";
 
 const mlbDivisions: Record<string, { league: string, division: string }> = {
@@ -67,7 +73,60 @@ function getLocalDateString(): string {
   return new Date(localDate.getTime() - tzOffset).toISOString().split("T")[0];
 }
 
+/**
+ * Fase 7 (Tanda D, mejora de rendimiento): en vez de reemplazar el array de
+ * juegos completo con objetos nuevos en cada refresh, conserva la referencia
+ * anterior de cada juego cuyo contenido no cambió. Así `React.memo` en
+ * `GameCard` puede saltarse el re-render/recálculo de tarjetas sin cambios
+ * reales (por ejemplo, el polling automático cada 60s de juegos en vivo).
+ */
+function mergeGamesById(prevGames: MLBGame[], newGames: MLBGame[]): MLBGame[] {
+  const prevById = new Map(prevGames.map(g => [String(g.id), g]));
+  return newGames.map(newGame => {
+    const prevGame = prevById.get(String(newGame.id));
+    if (prevGame && JSON.stringify(prevGame) === JSON.stringify(newGame)) {
+      return prevGame;
+    }
+    return newGame;
+  });
+}
+
+/**
+ * Fase 7 (Tanda C): la grilla de juegos usa `columns` de CSS (estilo
+ * Pinterest), que llena toda la columna izquierda antes de pasar a la
+ * derecha. Si los juegos están ordenados cronológicamente y se pintan en ese
+ * mismo orden, el orden visual "por fila" en 2 columnas no coincide con el
+ * orden cronológico real. Esta función reordena el array antes de pintarlo
+ * (repartiendo pares/impares como quien reparte cartas) para que, cuando el
+ * navegador llene primero la columna izquierda y luego la derecha, el
+ * resultado leído fila por fila sí sea cronológico. Solo debe aplicarse
+ * cuando la grilla realmente está en 2 columnas (breakpoint `xl`).
+ */
+function interleaveForTwoColumnMasonry<T>(items: T[]): T[] {
+  const left: T[] = [];
+  const right: T[] = [];
+  items.forEach((item, idx) => {
+    (idx % 2 === 0 ? left : right).push(item);
+  });
+  return [...left, ...right];
+}
+
+/** Fase 7 (Tanda C): true cuando el viewport está en el breakpoint `xl` de Tailwind (1280px) o más ancho. */
+function useIsXlScreen(): boolean {
+  const [isXl, setIsXl] = React.useState<boolean>(
+    () => typeof window !== "undefined" && window.matchMedia("(min-width: 1280px)").matches
+  );
+  React.useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1280px)");
+    const handler = (e: MediaQueryListEvent) => setIsXl(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+  return isXl;
+}
+
 export default function App() {
+  const isXlScreen = useIsXlScreen();
   const [selectedDate, setSelectedDate] = React.useState<string>("");
   const [games, setGames] = React.useState<MLBGame[]>([]);
   const [totalDatabaseGames, setTotalDatabaseGames] = React.useState<number>(0);
@@ -138,7 +197,7 @@ export default function App() {
       const res = await fetch(`/api/games?date=${dateToFetch}&_=${Date.now()}`);
       if (res.ok) {
         const data = await res.json();
-        setGames(data.games || []);
+        setGames(prev => mergeGamesById(prev, data.games || []));
         if (data.totalGames !== undefined) {
           setTotalDatabaseGames(data.totalGames);
         }
@@ -166,7 +225,14 @@ export default function App() {
 
   // References for scrolling
   const sheetsRef = React.useRef<HTMLDivElement>(null);
+  const harvesterSectionRef = React.useRef<HTMLDivElement>(null);
   const abortControllerRef = React.useRef<AbortController | null>(null);
+
+  // Expande el panel de Harvester y hace scroll hacia él (usado por el CTA del estado vacío)
+  const scrollToHarvester = () => {
+    setIsHarvesterExpanded(true);
+    harvesterSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const fetchExtractedDates = React.useCallback(async (remote = false) => {
     try {
@@ -348,7 +414,7 @@ export default function App() {
             const event = JSON.parse(line.slice(6));
 
             if (event.phase === "done") {
-              setGames(event.games || []);
+              setGames(prev => mergeGamesById(prev, event.games || []));
               setHarvestProgress({ pct: 100, step: event.step, phase: "done" });
             } else if (event.phase === "error") {
               alert("Error en la recolección: " + event.step);
@@ -545,7 +611,10 @@ export default function App() {
     }
   };
 
-  const handleRefreshGame = async (gameId: string, date: string) => {
+  // Fase 7 (Tanda D): useCallback para que la referencia de esta función sea
+  // estable entre renders de App — así el `onRefresh` que reciben las
+  // GameCard memoizadas no cambia solo porque el padre se re-renderizó.
+  const handleRefreshGame = React.useCallback(async (gameId: string, date: string) => {
     try {
       const res = await fetch("/api/harvest-game", {
         method: "POST",
@@ -569,13 +638,15 @@ export default function App() {
       console.error("Error actualizando juego:", err);
       alert("Error de red al actualizar juego");
     }
-  };
+  }, [fetchErrorsDB]);
 
   const scrollToSheets = () => {
     sheetsRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  const togglePin = (gameId: string) => {
+  // Fase 7 (Tanda D): misma razón — referencia estable para el `onTogglePin`
+  // que reciben las GameCard memoizadas.
+  const togglePin = React.useCallback((gameId: string) => {
     setPinnedGames(prev => {
       if (prev.includes(gameId)) {
         return prev.filter(id => id !== gameId);
@@ -583,7 +654,7 @@ export default function App() {
         return [...prev, gameId];
       }
     });
-  };
+  }, []);
 
   const sortedGames = [...games].sort((a, b) => {
     const indexA = pinnedGames.indexOf(String(a.id));
@@ -626,10 +697,12 @@ export default function App() {
       <main className="flex-1 max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 w-full">
         
         {/* Row 1: Harvester Controls Dashboard */}
-        <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div 
+        <section ref={harvesterSectionRef} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <button
+            type="button"
             onClick={() => setIsHarvesterExpanded(!isHarvesterExpanded)}
-            className="bg-slate-900 border-b border-slate-800 p-4 text-white flex items-center justify-between cursor-pointer hover:bg-slate-800 transition-colors"
+            aria-expanded={isHarvesterExpanded}
+            className="w-full text-left bg-slate-900 border-b border-slate-800 p-4 text-white flex items-center justify-between cursor-pointer hover:bg-slate-800 transition-colors"
           >
             <div className="flex items-center gap-2">
               <Sparkles className="text-amber-400" size={18} />
@@ -645,7 +718,7 @@ export default function App() {
                 {isHarvesterExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </div>
             </div>
-          </div>
+          </button>
 
           {isHarvesterExpanded && (
             <>
@@ -673,9 +746,11 @@ export default function App() {
 
         {/* Bet Tracking Panel */}
         <section className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div 
+          <button
+            type="button"
             onClick={() => setShowBetTracking(!showBetTracking)}
-            className="bg-gradient-to-r from-violet-700 to-indigo-700 border-b border-violet-800 p-4 text-white flex items-center justify-between cursor-pointer hover:from-violet-800 hover:to-indigo-800 transition-colors"
+            aria-expanded={showBetTracking}
+            className="w-full text-left bg-gradient-to-r from-violet-700 to-indigo-700 border-b border-violet-800 p-4 text-white flex items-center justify-between cursor-pointer hover:from-violet-800 hover:to-indigo-800 transition-colors"
           >
             <div className="flex items-center gap-2">
               <TrendingUp size={18} className="text-violet-200" />
@@ -686,7 +761,7 @@ export default function App() {
             <div className="bg-violet-800/50 p-1 rounded hover:bg-violet-800 transition">
               {showBetTracking ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </div>
-          </div>
+          </button>
           {showBetTracking && (
             <div className="p-6">
               <BetTracking
@@ -748,29 +823,57 @@ export default function App() {
 
                   {/* Selects: 2-col grid on mobile, single flex row on desktop */}
                   <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:flex-row sm:items-center sm:gap-2 sm:w-auto">
-                    <select value={filterTime} onChange={e => setFilterTime(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
-                      <option value="All">⏰ Hora (Todas)</option>
-                      <option value="Afternoon">Tarde (antes 6 PM)</option>
-                      <option value="Night">Noche (desde 6 PM)</option>
-                    </select>
-                    <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
-                      <option value="All">📋 Estatus (Todos)</option>
-                      <option value="Scheduled">Programado</option>
-                      <option value="In Progress">En Vivo</option>
-                      <option value="Final">Finalizado</option>
-                    </select>
-                    <select value={filterLeague} onChange={e => setFilterLeague(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
-                      <option value="All">🏟 Liga (Ambas)</option>
-                      <option value="AL">Americana (AL)</option>
-                      <option value="NL">Nacional (NL)</option>
-                    </select>
-                    <select value={filterDivision} onChange={e => setFilterDivision(e.target.value)} className="px-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
-                      <option value="All">🧭 División (Todas)</option>
-                      <option value="East">Este</option>
-                      <option value="Central">Central</option>
-                      <option value="West">Oeste</option>
-                    </select>
+                    <div className="relative w-full sm:w-auto">
+                      <Clock size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      <select value={filterTime} onChange={e => setFilterTime(e.target.value)} className="pl-7 pr-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
+                        <option value="All">Hora (Todas)</option>
+                        <option value="Afternoon">Tarde (antes 6 PM)</option>
+                        <option value="Night">Noche (desde 6 PM)</option>
+                      </select>
+                    </div>
+                    <div className="relative w-full sm:w-auto">
+                      <ListChecks size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="pl-7 pr-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
+                        <option value="All">Estatus (Todos)</option>
+                        <option value="Scheduled">Programado</option>
+                        <option value="In Progress">En Vivo</option>
+                        <option value="Final">Finalizado</option>
+                      </select>
+                    </div>
+                    <div className="relative w-full sm:w-auto">
+                      <Landmark size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      <select value={filterLeague} onChange={e => setFilterLeague(e.target.value)} className="pl-7 pr-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
+                        <option value="All">Liga (Ambas)</option>
+                        <option value="AL">Americana (AL)</option>
+                        <option value="NL">Nacional (NL)</option>
+                      </select>
+                    </div>
+                    <div className="relative w-full sm:w-auto">
+                      <Compass size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      <select value={filterDivision} onChange={e => setFilterDivision(e.target.value)} className="pl-7 pr-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
+                        <option value="All">División (Todas)</option>
+                        <option value="East">Este</option>
+                        <option value="Central">Central</option>
+                        <option value="West">Oeste</option>
+                      </select>
+                    </div>
                   </div>
+
+                  {(searchQuery !== "" || filterTime !== "All" || filterStatus !== "All" || filterLeague !== "All" || filterDivision !== "All") && (
+                    <button
+                      onClick={() => {
+                        setSearchQuery("");
+                        setFilterTime("All");
+                        setFilterStatus("All");
+                        setFilterLeague("All");
+                        setFilterDivision("All");
+                      }}
+                      className="flex items-center gap-1 px-2 py-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded shrink-0 transition-colors"
+                      title="Limpiar filtros"
+                    >
+                      <X size={13} /> Limpiar filtros
+                    </button>
+                  )}
 
                 </div>
               )}
@@ -804,8 +907,15 @@ export default function App() {
                   No hay registros locales para esta fecha
                 </h3>
                 <p className="text-slate-500 text-xs leading-relaxed">
-                  Haz click en **"Ejecutar Extracción ETL"** arriba. El software buscará los partidos oficiales del día en la API de MLB y los validará y estructurará para alimentar tu modelo predictivo.
+                  Haz click en <strong>"Ejecutar Extracción ETL"</strong>. El software buscará los partidos oficiales del día en la API de MLB y los validará y estructurará para alimentar tu modelo predictivo.
                 </p>
+                <button
+                  onClick={scrollToHarvester}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors"
+                >
+                  <Sparkles size={13} />
+                  Ir al Panel de Harvester
+                </button>
               </div>
             </div>
           ) : (
@@ -882,21 +992,46 @@ export default function App() {
                   );
                 }
 
-                return (
-                  <div className="columns-1 xl:columns-2 gap-6">
-                    {filteredGames.map((game) => (
-                      <div key={game.id} className="break-inside-avoid mb-6">
-                        <GameCard 
-                          game={game} 
-                          onRefresh={() => handleRefreshGame(game.id, game.metadata.date)} 
-                          isPinned={pinnedGames.includes(String(game.id))}
-                          onTogglePin={() => togglePin(String(game.id))}
-                          globalExpandToggle={globalExpandToggle}
-                          globalExpandTarget={globalExpandTarget}
-                        />
-                      </div>
-                    ))}
+                const pinnedInView = filteredGames.filter(g => pinnedGames.includes(String(g.id)));
+                const restInView = filteredGames.filter(g => !pinnedGames.includes(String(g.id)));
+
+                // Fase 7 (Tanda C): en 2 columnas (xl+), reordena para que el orden
+                // visual por fila coincida con el orden cronológico. En 1 columna
+                // (mobile/tablet) el orden natural ya es el correcto.
+                const pinnedForDisplay = isXlScreen ? interleaveForTwoColumnMasonry(pinnedInView) : pinnedInView;
+                const restForDisplay = isXlScreen ? interleaveForTwoColumnMasonry(restInView) : restInView;
+
+                const renderGameCard = (game: MLBGame) => (
+                  <div key={game.id} className="break-inside-avoid mb-6">
+                    <GameCard
+                      game={game}
+                      onRefresh={handleRefreshGame}
+                      isPinned={pinnedGames.includes(String(game.id))}
+                      onTogglePin={togglePin}
+                      globalExpandToggle={globalExpandToggle}
+                      globalExpandTarget={globalExpandTarget}
+                    />
                   </div>
+                );
+
+                return (
+                  <>
+                    {pinnedInView.length > 0 && (
+                      <div className="space-y-3 mb-6">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-blue-600 flex items-center gap-1.5">
+                          <Pin size={12} className="fill-blue-600" /> Fijados
+                        </h3>
+                        <div className="columns-1 xl:columns-2 gap-6">
+                          {pinnedForDisplay.map(renderGameCard)}
+                        </div>
+                      </div>
+                    )}
+                    {restInView.length > 0 && (
+                      <div className="columns-1 xl:columns-2 gap-6">
+                        {restForDisplay.map(renderGameCard)}
+                      </div>
+                    )}
+                  </>
                 );
               })()}
             </>

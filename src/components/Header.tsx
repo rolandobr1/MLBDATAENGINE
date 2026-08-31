@@ -27,6 +27,19 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [time, setTime] = React.useState<string>("");
   const [isPropsInfoOpen, setIsPropsInfoOpen] = React.useState<boolean>(false);
+  const propsInfoRef = React.useRef<HTMLDivElement>(null);
+
+  // Cierra el popover de "pitchers faltantes" al hacer click afuera
+  React.useEffect(() => {
+    if (!isPropsInfoOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (propsInfoRef.current && !propsInfoRef.current.contains(e.target as Node)) {
+        setIsPropsInfoOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isPropsInfoOpen]);
 
   React.useEffect(() => {
     const updateTime = () => {
@@ -117,11 +130,12 @@ export const Header: React.FC<HeaderProps> = ({
                   </div>
                   {propsCount.total === 0 && <AlertCircle size={12} className="animate-pulse" />}
                   {missingPitchers.length > 0 && (
-                    <div className="relative">
-                      <button 
+                    <div className="relative" ref={propsInfoRef}>
+                      <button
                         onClick={() => setIsPropsInfoOpen(!isPropsInfoOpen)}
                         className={`p-1 rounded hover:bg-slate-800 transition ${isPropsInfoOpen ? 'bg-slate-800 text-blue-400' : 'text-slate-400 hover:text-slate-200'}`}
                         title="Ver pitchers faltantes"
+                        aria-label="Ver pitchers faltantes"
                       >
                         <Info size={14} />
                       </button>
@@ -129,7 +143,7 @@ export const Header: React.FC<HeaderProps> = ({
                         <div className="absolute top-full mt-2 right-0 w-80 bg-slate-900 border border-slate-700 shadow-2xl rounded-lg p-4 z-50 animate-fade-in text-slate-300 text-xs">
                           <div className="flex justify-between items-center border-b border-slate-800 pb-2 mb-3">
                             <h4 className="font-bold text-slate-100 flex items-center gap-1.5"><Info size={14} className="text-blue-400"/> ¿Por qué faltan Props?</h4>
-                            <button onClick={() => setIsPropsInfoOpen(false)} className="text-slate-500 hover:text-white transition"><X size={14} /></button>
+                            <button onClick={() => setIsPropsInfoOpen(false)} className="text-slate-500 hover:text-white transition" aria-label="Cerrar"><X size={14} /></button>
                           </div>
                           <p className="mb-3 leading-relaxed">
                             A <strong className="text-white">{missingPitchers.length} lanzadores</strong> no se les pudo asignar líneas de ponches. Esto <strong>NO</strong> es un error de extracción, sino que sus líneas aún no han sido publicadas en el mercado (The Odds API / DataStreak).

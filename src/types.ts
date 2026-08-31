@@ -32,6 +32,9 @@ export interface PitcherStats {
   strikeoutPropOverOdds?: number | null; // e.g. -110
   strikeoutPropUnderOdds?: number | null; // e.g. -120
   strikeoutPropSource?: string | null;
+  // "captured" | "no_market" | "no_name_match" | "not_attempted" (Fase 2, punto 3
+  // del plan de mejora — ver server.ts::resolvePropCaptureStatus)
+  strikeoutPropCaptureStatus?: string | null;
   pitchHand?: string; // "L" or "R"
   pitcher_allowed_avg_vs_lhb?: number;
   pitcher_allowed_avg_vs_rhb?: number;
@@ -469,6 +472,15 @@ export interface MLBGame {
   advanced_offense?: AdvancedOffense;
   model_features?: ModelFeatures;
   game_result?: MLGameResult;
+  /**
+   * Fase 3, punto 2 del plan de mejora: timestamp del último intento de
+   * reverificación (backfill PIT) para este juego, usado por
+   * canReuseStoredGame/hasPitCoverage en server.ts para decidir si ya pasó
+   * el período de reverificación (REVERIFY_COOLDOWN_DAYS) y hay que volver
+   * a intentar en vez de reutilizar la copia guardada. Se agregó en la
+   * Fase 3 sin actualizar este tipo — Fase 4, punto 5, lo corrige acá.
+   */
+  lastReverifyAttempt?: string | null;
   linescore?: Linescore;
   liveBoxscore?: LiveBoxscore;
   playByPlay?: PlayByPlay;

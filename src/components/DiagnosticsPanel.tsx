@@ -34,9 +34,11 @@ export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({
             <AlertCircle className="text-baseball-red" size={20} />
             <span className="font-display font-medium text-lg">Consola de Verificación y Calidad de BBDD</span>
           </div>
-          <button 
+          <button
             onClick={onClose}
             className="p-1 rounded-full hover:bg-slate-800 transition text-slate-400 hover:text-white cursor-pointer"
+            title="Cerrar diagnósticos"
+            aria-label="Cerrar diagnósticos"
           >
             <X size={20} />
           </button>

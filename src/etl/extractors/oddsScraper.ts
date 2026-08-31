@@ -1,3 +1,12 @@
+/**
+ * ⚠️ ARCHIVADO / NO USADO EN PRODUCCIÓN (Fase 4, punto 3 del plan de mejora).
+ *
+ * Solo lo importa `src/workflow.ts` (también archivado). El manejo real de
+ * odds/props en producción vive en `server.ts` y `rotowireScraper.ts`.
+ *
+ * Se deja en su lugar porque esta sesión no puede mover/eliminar archivos
+ * en tu máquina — ver el mensaje de la Fase 4 para el comando manual.
+ */
 import axios from 'axios';
 
 // Usualmente se utiliza una API como The-Odds-API (requiere API KEY)

@@ -40,6 +40,7 @@ export class SavantCache {
   private catcherStats: Map<string, CatcherSavantData> = new Map();
   private isLoaded: boolean = false;
   private currentYear: number = 0;
+  private loadedAt: string | null = null;
 
   async load(year: number) {
     if (this.isLoaded && this.currentYear === year) return;
@@ -71,6 +72,7 @@ export class SavantCache {
 
       this.isLoaded = true;
       this.currentYear = year;
+      this.loadedAt = new Date().toISOString();
       console.log(`[Savant] Datos cargados exitosamente: ${this.pitcherStats.size} pitchers, ${this.batterStats.size} batters, ${this.catcherStats.size} catchers.`);
     } catch (error) {
       console.error("[Savant] Error cargando datos:", error);
@@ -276,6 +278,18 @@ export class SavantCache {
 
   getCatcher(playerId: string | number): CatcherSavantData | null {
     return this.catcherStats.get(String(playerId)) || null;
+  }
+
+  /**
+   * Fecha/hora (ISO) en que se descargó el snapshot de Baseball Savant actualmente en caché.
+   * NOTA point-in-time: este snapshot es "temporada completa hasta hoy", no está recortado
+   * a la fecha de cada juego. Úsalo para saber si las columnas derivadas de Savant
+   * (xERA, xwOBA, hardHit%, barrel%, arsenal%, framing) son confiables para una fila histórica:
+   * si la fecha del juego es anterior a esta fecha, esos valores pueden incluir información
+   * posterior al juego (ver auditoría del pipeline, sección 3).
+   */
+  getSnapshotDate(): string | null {
+    return this.loadedAt;
   }
 }
 

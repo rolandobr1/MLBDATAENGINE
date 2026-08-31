@@ -1,3 +1,14 @@
+/**
+ * ⚠️ ARCHIVADO / NO USADO EN PRODUCCIÓN (Fase 4, punto 3 del plan de mejora).
+ *
+ * Solo lo importa `src/workflow.ts` (también archivado). El export real de
+ * CSV en producción usa `generateMLDatasetCSV`/`generateBattersCSV` en
+ * `src/utils.ts`, no esta función. Nota: NO confundir con
+ * `vortexMetrics.ts` (misma carpeta `transformers/`), que sí está vivo.
+ *
+ * Se deja en su lugar porque esta sesión no puede mover/eliminar archivos
+ * en tu máquina — ver el mensaje de la Fase 4 para el comando manual.
+ */
 export const flattenGameForML = (gameDoc: any): any[] => {
   // Retorna un array ordenado que coincide con las columnas en Google Sheets
   // Columnas: date, game_id, home_team, away_team, home_pitcher, away_pitcher, home_pitcher_xERA, away_pitcher_xERA, open_home_ml, open_total

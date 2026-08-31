@@ -1,3 +1,14 @@
+/**
+ * ⚠️ ARCHIVADO / NO USADO EN PRODUCCIÓN (Fase 4, punto 3 del plan de mejora).
+ *
+ * Solo lo importa `src/workflow.ts` (también archivado). Nota: NO confundir
+ * con `src/etl/transformers/vortexMetrics.ts`, que sí está vivo (lo importan
+ * `server.ts` y `src/utils.ts`) — la carpeta `transformers/` tiene archivos
+ * vivos y muertos mezclados, no se puede archivar la carpeta entera.
+ *
+ * Se deja en su lugar porque esta sesión no puede mover/eliminar archivos
+ * en tu máquina — ver el mensaje de la Fase 4 para el comando manual.
+ */
 import { z, ZodError } from 'zod';
 
 export const pitcherSchema = z.object({
