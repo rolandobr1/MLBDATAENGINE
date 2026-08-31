@@ -1,0 +1,380 @@
+{
+  "created_at": "2026-08-27T21:02:08.973Z",
+  "range": [
+    "2026-03-01",
+    "2026-08-26"
+  ],
+  "identity": {
+    "targets": 265,
+    "rule": "Official MATCHED rows with non-final-boxscore pregame ID only",
+    "home": 260,
+    "away": 5
+  },
+  "competition": {
+    "authoritative": false,
+    "gameType_available": false,
+    "experimental_filter": "MLB teams plus date >= 2026-03-25; inferred only"
+  },
+  "strict": {
+    "available": false,
+    "reason": "No reliable result-availability/game_end timestamp; record_timestamp is capture/backfill"
+  },
+  "coverage": {
+    "dimension": "overall",
+    "key": "ALL",
+    "pitcher_games_total": 265,
+    "pitchers_unique": 156,
+    "games_unique": 260,
+    "last3_starts_complete": 236,
+    "last5_starts_complete": 227,
+    "last3_appearances_complete": 251,
+    "last5_appearances_complete": 246,
+    "last3_starts_pct": 89.05660377358491,
+    "last5_starts_pct": 85.66037735849056,
+    "last3_appearances_pct": 94.71698113207547,
+    "last5_appearances_pct": 92.83018867924528
+  },
+  "comparison_metrics": {
+    "DATE_ONLY": {
+      "last3Ks1": {
+        "comparables": 254,
+        "exact_match_pct": 91.33858267716535,
+        "mae": 0.2559055118110236,
+        "median_absolute_error": 0,
+        "max_error": 8,
+        "correlation": 0.9185677296490062,
+        "material_discrepancies": 22
+      },
+      "last3Ks2": {
+        "comparables": 244,
+        "exact_match_pct": 69.67213114754098,
+        "mae": 0.7172131147540983,
+        "median_absolute_error": 0,
+        "max_error": 8,
+        "correlation": 0.781051160784877,
+        "material_discrepancies": 74
+      },
+      "last3Ks3": {
+        "comparables": 233,
+        "exact_match_pct": 59.227467811158796,
+        "mae": 1.0987124463519313,
+        "median_absolute_error": 0,
+        "max_error": 8,
+        "correlation": 0.6647213655487163,
+        "material_discrepancies": 95
+      },
+      "last3Ip1": {
+        "comparables": 254,
+        "exact_match_pct": 61.811023622047244,
+        "mae": 0.12309711286089237,
+        "median_absolute_error": 0,
+        "max_error": 3.3,
+        "correlation": 0.9551420109100494,
+        "material_discrepancies": 18
+      },
+      "last3Ip2": {
+        "comparables": 244,
+        "exact_match_pct": 48.77049180327869,
+        "mae": 0.34549180327868856,
+        "median_absolute_error": 0.033333333333333215,
+        "max_error": 4.7,
+        "correlation": 0.8202908067621064,
+        "material_discrepancies": 41
+      },
+      "last3Ip3": {
+        "comparables": 233,
+        "exact_match_pct": 46.78111587982833,
+        "mae": 0.4882689556509297,
+        "median_absolute_error": 0.033333333333333215,
+        "max_error": 4,
+        "correlation": 0.7635339738258781,
+        "material_discrepancies": 60
+      },
+      "last3Bf1": {
+        "comparables": 254,
+        "exact_match_pct": 88.97637795275591,
+        "mae": 0.3700787401574803,
+        "median_absolute_error": 0,
+        "max_error": 9,
+        "correlation": 0.9594510775167114,
+        "material_discrepancies": 28
+      },
+      "last3Bf2": {
+        "comparables": 244,
+        "exact_match_pct": 67.62295081967213,
+        "mae": 1.1270491803278688,
+        "median_absolute_error": 0,
+        "max_error": 15,
+        "correlation": 0.8341793098182615,
+        "material_discrepancies": 79
+      },
+      "last3Bf3": {
+        "comparables": 233,
+        "exact_match_pct": 54.93562231759657,
+        "mae": 1.5407725321888412,
+        "median_absolute_error": 0,
+        "max_error": 13,
+        "correlation": 0.7750216129041632,
+        "material_discrepancies": 105
+      },
+      "last5KsAvg": {
+        "comparables": 254,
+        "exact_match_pct": 44.488188976377955,
+        "mae": 0.35101049868766393,
+        "median_absolute_error": 0.20000000000000018,
+        "max_error": 2.2,
+        "correlation": 0.9311409194362292,
+        "material_discrepancies": 31
+      },
+      "last5KsStd": {
+        "comparables": 254,
+        "exact_match_pct": 10.62992125984252,
+        "mae": 0.22169655324413698,
+        "median_absolute_error": 0.05046505340852536,
+        "max_error": 1.8048326194419548,
+        "correlation": 0.8708282025302911,
+        "material_discrepancies": 15
+      },
+      "last5IpAvg": {
+        "comparables": 254,
+        "exact_match_pct": 15.354330708661417,
+        "mae": 0.19599737532808403,
+        "median_absolute_error": 0.04999999999999982,
+        "max_error": 1.833333333333333,
+        "correlation": 0.9433748115770189,
+        "material_discrepancies": 4
+      },
+      "last5BfAvg": {
+        "comparables": 254,
+        "exact_match_pct": 41.338582677165356,
+        "mae": 0.5810367454068242,
+        "median_absolute_error": 0.1999999999999993,
+        "max_error": 5.5,
+        "correlation": 0.95504742905877,
+        "material_discrepancies": 60
+      },
+      "last5PitchCountAvg": {
+        "comparables": 254,
+        "exact_match_pct": 12.598425196850394,
+        "mae": 1.9810367454068258,
+        "median_absolute_error": 0.5999999999999943,
+        "max_error": 21.200000000000003,
+        "correlation": 0.9673951331280286,
+        "material_discrepancies": 121
+      },
+      "pitchesLast3Starts": {
+        "comparables": 257,
+        "exact_match_pct": 44.3579766536965,
+        "mae": 14.416342412451362,
+        "median_absolute_error": 3,
+        "max_error": 300,
+        "correlation": 0.7768081257874377,
+        "material_discrepancies": 143
+      },
+      "daysSinceLastStart": {
+        "comparables": 257,
+        "exact_match_pct": 82.1011673151751,
+        "mae": 2.4280155642023344,
+        "median_absolute_error": 0,
+        "max_error": 74,
+        "correlation": 0.1940456685555821,
+        "material_discrepancies": 46
+      }
+    },
+    "STRICT": {
+      "last3Ks1": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      },
+      "last3Ks2": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      },
+      "last3Ks3": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      },
+      "last3Ip1": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      },
+      "last3Ip2": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      },
+      "last3Ip3": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      },
+      "last3Bf1": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      },
+      "last3Bf2": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      },
+      "last3Bf3": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      },
+      "last5KsAvg": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      },
+      "last5KsStd": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      },
+      "last5IpAvg": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      },
+      "last5BfAvg": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      },
+      "last5PitchCountAvg": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      },
+      "pitchesLast3Starts": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      },
+      "daysSinceLastStart": {
+        "comparables": 0,
+        "exact_match_pct": null,
+        "mae": null,
+        "median_absolute_error": null,
+        "max_error": null,
+        "correlation": null,
+        "material_discrepancies": 0
+      }
+    }
+  },
+  "last3_definition_metrics": {
+    "LAST3_STARTS": {
+      "comparables": 2193,
+      "exact_match_pct": 65.84587323301413,
+      "mae": 0.6627146982824138,
+      "median_absolute_error": 0,
+      "max_error": 15,
+      "correlation": 0.9812280406863186,
+      "material_discrepancies": 522
+    },
+    "LAST3_APPEARANCES": {
+      "comparables": 2244,
+      "exact_match_pct": 69.5187165775401,
+      "mae": 0.647519310754605,
+      "median_absolute_error": 0,
+      "max_error": 21,
+      "correlation": 0.9756255795891204,
+      "material_discrepancies": 452
+    }
+  },
+  "leakage": {
+    "history_date_before_target": true,
+    "target_game_excluded": true,
+    "future_games_excluded": true,
+    "target_actual_k_used": false,
+    "target_boxscore_used": false,
+    "assertions_passed": true
+  },
+  "conclusion": {
+    "replace_now": false,
+    "starts_vs_appearances": "Appearances reproduces ligeramente mejor los snapshots por exactitud y MAE; starts conserva correlación algo mayor y es la definición semántica adecuada para capacidad de abridor. Deben permanecer como familias distintas.",
+    "lost_information": [
+      "authoritative gameType",
+      "reliable result availability timestamp",
+      "raw MLB gameLog gamesStarted flag",
+      "prior-season history before local range"
+    ],
+    "removable_after_prerequisites": [
+      "stored last3 K/IP/BF",
+      "stored last5 result aggregates",
+      "stored fatigue rollups"
+    ],
+    "retain": [
+      "pregame target pitcherId evidence and timestamp",
+      "raw historical results and lineage",
+      "competition/gameType",
+      "source availability timestamp"
+    ]
+  }
+}

@@ -2867,6 +2867,7 @@ async function getStarterBoxscoreStats(gamePk) {
 import fs3 from "fs";
 import path3 from "path";
 var SNAPSHOT_PATH = path3.join(process.cwd(), "mlb_pregame_snapshots.json");
+var HISTORICAL_SNAPSHOT_PATH = path3.join(process.cwd(), "mlb_pregame_training_snapshots.json");
 function readStore() {
   try {
     if (!fs3.existsSync(SNAPSHOT_PATH)) return { version: 1, games: {} };
@@ -2874,6 +2875,16 @@ function readStore() {
     return { version: 1, games: parsed?.games || {} };
   } catch (error) {
     console.error("Error reading pregame snapshots:", error);
+    return { version: 1, games: {} };
+  }
+}
+function readHistoricalStore() {
+  try {
+    if (!fs3.existsSync(HISTORICAL_SNAPSHOT_PATH)) return { version: 1, games: {} };
+    const parsed = JSON.parse(fs3.readFileSync(HISTORICAL_SNAPSHOT_PATH, "utf-8"));
+    return { version: 1, games: parsed?.games || {} };
+  } catch (error) {
+    console.error("Error reading historical pregame snapshots:", error);
     return { version: 1, games: {} };
   }
 }
@@ -2911,7 +2922,7 @@ function capturePregameSnapshot(game) {
   writeStore(store);
 }
 function getPregameSnapshotsForGames(games) {
-  const snapshots = readStore().games;
+  const snapshots = { ...readStore().games, ...readHistoricalStore().games };
   const result = /* @__PURE__ */ new Map();
   for (const game of games) {
     const gameId2 = String(game?.id || game?.metadata?.id || "");
@@ -2948,16 +2959,18 @@ function validPitcher(pitcher) {
 function sideOpponent(side) {
   return side === "home" ? "away" : "home";
 }
-function actualPitcherTarget(current, side) {
+function actualPitcherTarget(current, side, expectedPitcherId) {
   const box = current?.boxscore_stats?.[side];
   const pitching = current?.advanced_pitching?.[side];
+  const finalPitcherId = pitcherId(current?.pitchers?.[side]) ?? pitcherId({ id: box?.playerId });
+  const idMatches = finalPitcherId === expectedPitcherId;
   return {
-    actual_k: isFinal(current) ? box?.strikeOuts ?? pitching?.actualStrikeouts ?? null : null,
-    actual_ip: isFinal(current) ? box?.inningsPitched ?? null : null,
-    actual_bf: isFinal(current) ? box?.battersFaced ?? null : null,
-    actual_pitches: isFinal(current) ? box?.numberOfPitches ?? null : null,
-    actual_er: isFinal(current) ? box?.earnedRuns ?? null : null,
-    final_game_status: isFinal(current) ? current?.game_result?.gameStatus ?? null : null
+    actual_k: isFinal(current) && idMatches ? box?.strikeOuts ?? pitching?.actualStrikeouts ?? null : null,
+    actual_ip: isFinal(current) && idMatches ? box?.inningsPitched ?? null : null,
+    actual_bf: isFinal(current) && idMatches ? box?.battersFaced ?? null : null,
+    actual_pitches: isFinal(current) && idMatches ? box?.numberOfPitches ?? null : null,
+    actual_er: isFinal(current) && idMatches ? box?.earnedRuns ?? null : null,
+    final_game_status: isFinal(current) && idMatches ? current?.game_result?.gameStatus ?? null : null
   };
 }
 function snapshotPairs(games) {
@@ -3078,7 +3091,7 @@ function buildPitcherGameRows(games) {
         park_factor_k: pregame.park_factors?.index_so ?? null,
         weather_temp: pregame.weather?.temp ?? null,
         weather_wind_speed: pregame.weather?.windSpeed ?? null,
-        ...actualPitcherTarget(current, side)
+        ...actualPitcherTarget(current, side, id)
       });
     }
   }
@@ -3477,6 +3490,17 @@ function buildKlabTrainingDataset(allGames, rawStartDate, rawEndDate) {
   const candidatePitchers = new Set(sourceRows.map((row) => String(row.pitcher_id)));
   const uniqueGames = new Set(rangeGames.map((game) => String(game?.id || game?.metadata?.id || "")).filter(Boolean));
   const outputFilename = `KLAB_PITCHER_TRAINING_DATASET_${startDate}_${endDate}.csv`;
+  const historicalGames = [...snapshots.values()].filter((snapshot) => snapshot?.audit?.classification === "A");
+  const gamesWithRows = new Set(sourceRows.map((row) => String(row.game_id)));
+  const gamesWithActualK = new Set(rows.map((row) => String(row.game_id)));
+  const historicalFunnel = historicalGames.length ? {
+    manifestGames: historicalGames.length,
+    snapshotsRecovered: historicalGames.length,
+    validSnapshots: historicalGames.length,
+    gamesWithFinalMatch: gamesWithRows.size,
+    gamesWithActualK: gamesWithActualK.size,
+    finalPitcherGameObservations: rows.length
+  } : null;
   return {
     rows,
     csv: toCsv2(rows),
@@ -3501,7 +3525,8 @@ function buildKlabTrainingDataset(allGames, rawStartDate, rawEndDate) {
       featureColumns: [...KLAB_FEATURE_COLUMNS, "side"],
       administrativeColumns: [...KLAB_ADMIN_COLUMNS],
       benchmarkColumns: [...KLAB_BENCHMARK_COLUMNS],
-      targetColumns: [...KLAB_TARGET_COLUMNS]
+      targetColumns: [...KLAB_TARGET_COLUMNS],
+      historicalFunnel
     }
   };
 }

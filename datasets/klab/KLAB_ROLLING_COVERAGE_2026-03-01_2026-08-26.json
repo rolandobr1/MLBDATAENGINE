@@ -1,0 +1,81 @@
+{
+  "structural_candidate_pitcher_games": 4159,
+  "games": 2079,
+  "pitchers": 445,
+  "home": 2080,
+  "away": 2079,
+  "mean_depth_per_pitcher": 9.35,
+  "history_depth": {
+    "0": 3624,
+    "1": 357,
+    "2": 125,
+    "3_plus": 53
+  },
+  "last3_complete": 53,
+  "last5_complete": 1,
+  "last10_complete": 0,
+  "last3_pct": 1.27,
+  "last5_pct": 0.02,
+  "last10_pct": 0.0,
+  "date_order_only": {
+    "last3_complete": 3101,
+    "last5_complete": 2614,
+    "last10_complete": 1655,
+    "last3_pct": 74.56,
+    "last5_pct": 62.85,
+    "last10_pct": 39.79,
+    "evidence_level": "Final status + earlier calendar date; no reliable game_end timestamp"
+  },
+  "by_month": {
+    "2026-03": {
+      "pitcher_games": 856,
+      "home": 428,
+      "away": 428,
+      "last3": 0,
+      "last5": 0,
+      "last10": 0
+    },
+    "2026-04": {
+      "pitcher_games": 605,
+      "home": 303,
+      "away": 302,
+      "last3": 0,
+      "last5": 0,
+      "last10": 0
+    },
+    "2026-05": {
+      "pitcher_games": 700,
+      "home": 350,
+      "away": 350,
+      "last3": 0,
+      "last5": 0,
+      "last10": 0
+    },
+    "2026-06": {
+      "pitcher_games": 642,
+      "home": 321,
+      "away": 321,
+      "last3": 0,
+      "last5": 0,
+      "last10": 0
+    },
+    "2026-07": {
+      "pitcher_games": 694,
+      "home": 347,
+      "away": 347,
+      "last3": 17,
+      "last5": 0,
+      "last10": 0
+    },
+    "2026-08": {
+      "pitcher_games": 662,
+      "home": 331,
+      "away": 331,
+      "last3": 36,
+      "last5": 1,
+      "last10": 0
+    }
+  },
+  "defensible_training_rows_without_retro_identity": 265,
+  "methodological_warning": "Las filas usan playerId del boxscore final del target para definir la identidad objetivo; son cobertura estructural experimental, no observaciones pregame defendibles automáticamente. El timestamp local es de captura/backfill, no game_end."
+}

@@ -1,0 +1,1030 @@
+{
+  "version": 1,
+  "created_at": "2026-08-27T15:39:37.707873-04:00",
+  "official_dataset_modified": false,
+  "model_trained": false,
+  "name_matching_used": false,
+  "source_inventory": {
+    "range": [
+      "2026-03-01",
+      "2026-08-26"
+    ],
+    "dates": 172,
+    "games": 2261,
+    "final_games": 2182,
+    "game_timestamps": 2261,
+    "final_pitcher_sides": 4364,
+    "starter_rows_with_id": 4160,
+    "complete_starter_rows": 4160,
+    "stat_coverage": {
+      "k": 4160,
+      "ip": 4160,
+      "bf": 4160,
+      "pitches": 4160,
+      "bb": 4160,
+      "h": 4160,
+      "r": 4160,
+      "er": 4160
+    },
+    "gamesStarted_available": 0,
+    "live_boxscore_pitcher_lines": 20113,
+    "live_boxscore_pitcher_lines_with_id": 19685,
+    "available_fields": [
+      "game_id",
+      "game_date",
+      "capture_timestamp",
+      "team",
+      "side",
+      "starter playerId",
+      "K",
+      "IP/outs",
+      "BF",
+      "pitch count",
+      "BB",
+      "H",
+      "R",
+      "ER"
+    ],
+    "identified_complete_appearance_rows": 19239,
+    "appearance_pitchers": 1600,
+    "unavailable_or_unreliable": [
+      "game_end timestamp",
+      "gamesStarted flag",
+      "pregame identity for every target"
+    ]
+  },
+  "scenario_definitions": {
+    "A_STRICT": "date anterior + final + capture timestamp absent or anterior al target; capture timestamp is not asserted as game_end",
+    "B_DATE": "final + history_date < target_date; no game_end claim"
+  },
+  "window_support": {
+    "START_WINDOWS_1_3_5_10": "Supported from boxscore_stats starter IDs",
+    "APPEARANCE_WINDOWS_3_5": "Supported for 19,685 identified liveBoxscore lines; do not mix with starts"
+  },
+  "metrics_reconstructible": [
+    "K",
+    "IP/outs",
+    "BF",
+    "pitches",
+    "BB",
+    "H",
+    "ER",
+    "R",
+    "days",
+    "counts",
+    "sum",
+    "mean",
+    "population stddev",
+    "simple slope"
+  ],
+  "comparison": {
+    "A_STRICT": {
+      "last3Ks1": {
+        "comparable": 530,
+        "reconstructed": 535,
+        "exact_matches": 110,
+        "exact_match_pct": 20.75,
+        "mean_absolute_difference": 2.3132,
+        "mean_relative_difference": 0.6104,
+        "max_absolute_difference": 11.0,
+        "correlation": 0.2055,
+        "material_cases": 420
+      },
+      "last3Ks2": {
+        "comparable": 178,
+        "reconstructed": 178,
+        "exact_matches": 24,
+        "exact_match_pct": 13.48,
+        "mean_absolute_difference": 2.3483,
+        "mean_relative_difference": 0.5774,
+        "max_absolute_difference": 8.0,
+        "correlation": 0.2432,
+        "material_cases": 154
+      },
+      "last3Ks3": {
+        "comparable": 53,
+        "reconstructed": 53,
+        "exact_matches": 6,
+        "exact_match_pct": 11.32,
+        "mean_absolute_difference": 2.3396,
+        "mean_relative_difference": 0.6053,
+        "max_absolute_difference": 9.0,
+        "correlation": 0.1349,
+        "material_cases": 47
+      },
+      "last5KsAvg": {
+        "comparable": 530,
+        "reconstructed": 535,
+        "exact_matches": 18,
+        "exact_match_pct": 3.4,
+        "mean_absolute_difference": 1.7301,
+        "mean_relative_difference": 0.3718,
+        "max_absolute_difference": 7.8,
+        "correlation": 0.3702,
+        "material_cases": 325
+      },
+      "last5KsStd": {
+        "comparable": 530,
+        "reconstructed": 535,
+        "exact_matches": 4,
+        "exact_match_pct": 0.75,
+        "mean_absolute_difference": 1.5524,
+        "mean_relative_difference": 0.8347,
+        "max_absolute_difference": 4.22,
+        "correlation": 0.1283,
+        "material_cases": 393
+      },
+      "last5IpAvg": {
+        "comparable": 530,
+        "reconstructed": 535,
+        "exact_matches": 31,
+        "exact_match_pct": 5.85,
+        "mean_absolute_difference": 0.8091,
+        "mean_relative_difference": 0.1538,
+        "max_absolute_difference": 4.8,
+        "correlation": 0.4542,
+        "material_cases": 167
+      },
+      "last5BfAvg": {
+        "comparable": 530,
+        "reconstructed": 535,
+        "exact_matches": 17,
+        "exact_match_pct": 3.21,
+        "mean_absolute_difference": 2.49,
+        "mean_relative_difference": 0.1137,
+        "max_absolute_difference": 14.399999999999999,
+        "correlation": 0.5948,
+        "material_cases": 155
+      },
+      "last5PitchCountAvg": {
+        "comparable": 530,
+        "reconstructed": 535,
+        "exact_matches": 26,
+        "exact_match_pct": 4.91,
+        "mean_absolute_difference": 8.4566,
+        "mean_relative_difference": 0.1016,
+        "max_absolute_difference": 59.0,
+        "correlation": 0.5819,
+        "material_cases": 166
+      },
+      "pitchesLast3Starts": {
+        "comparable": 535,
+        "reconstructed": 535,
+        "exact_matches": 1,
+        "exact_match_pct": 0.19,
+        "mean_absolute_difference": 138.3701,
+        "mean_relative_difference": 0.5294,
+        "max_absolute_difference": 268.0,
+        "correlation": 0.2732,
+        "material_cases": 500
+      }
+    },
+    "B_DATE": {
+      "last3Ks1": {
+        "comparable": 3144,
+        "reconstructed": 3715,
+        "exact_matches": 2758,
+        "exact_match_pct": 87.72,
+        "mean_absolute_difference": 0.3321,
+        "mean_relative_difference": 0.1016,
+        "max_absolute_difference": 8.0,
+        "correlation": 0.8969,
+        "material_cases": 386
+      },
+      "last3Ks2": {
+        "comparable": 2859,
+        "reconstructed": 3387,
+        "exact_matches": 2213,
+        "exact_match_pct": 77.4,
+        "mean_absolute_difference": 0.6334,
+        "mean_relative_difference": 0.185,
+        "max_absolute_difference": 11.0,
+        "correlation": 0.7876,
+        "material_cases": 646
+      },
+      "last3Ks3": {
+        "comparable": 2612,
+        "reconstructed": 3102,
+        "exact_matches": 1772,
+        "exact_match_pct": 67.84,
+        "mean_absolute_difference": 0.8748,
+        "mean_relative_difference": 0.2323,
+        "max_absolute_difference": 11.0,
+        "correlation": 0.7175,
+        "material_cases": 840
+      },
+      "last5KsAvg": {
+        "comparable": 3144,
+        "reconstructed": 3715,
+        "exact_matches": 1266,
+        "exact_match_pct": 40.27,
+        "mean_absolute_difference": 0.4579,
+        "mean_relative_difference": 0.1121,
+        "max_absolute_difference": 6.5,
+        "correlation": 0.8915,
+        "material_cases": 539
+      },
+      "last5KsStd": {
+        "comparable": 3144,
+        "reconstructed": 3715,
+        "exact_matches": 1289,
+        "exact_match_pct": 41.0,
+        "mean_absolute_difference": 0.3315,
+        "mean_relative_difference": 0.2086,
+        "max_absolute_difference": 3.77,
+        "correlation": 0.7192,
+        "material_cases": 337
+      },
+      "last5IpAvg": {
+        "comparable": 3144,
+        "reconstructed": 3715,
+        "exact_matches": 1353,
+        "exact_match_pct": 43.03,
+        "mean_absolute_difference": 0.2887,
+        "mean_relative_difference": 0.0632,
+        "max_absolute_difference": 4.2,
+        "correlation": 0.8869,
+        "material_cases": 236
+      },
+      "last5BfAvg": {
+        "comparable": 3144,
+        "reconstructed": 3715,
+        "exact_matches": 1182,
+        "exact_match_pct": 37.6,
+        "mean_absolute_difference": 1.0382,
+        "mean_relative_difference": 0.055,
+        "max_absolute_difference": 15.600000000000001,
+        "correlation": 0.8951,
+        "material_cases": 340
+      },
+      "last5PitchCountAvg": {
+        "comparable": 3144,
+        "reconstructed": 3715,
+        "exact_matches": 1282,
+        "exact_match_pct": 40.78,
+        "mean_absolute_difference": 3.8938,
+        "mean_relative_difference": 0.0546,
+        "max_absolute_difference": 64.0,
+        "correlation": 0.8931,
+        "material_cases": 430
+      },
+      "pitchesLast3Starts": {
+        "comparable": 3715,
+        "reconstructed": 3715,
+        "exact_matches": 1611,
+        "exact_match_pct": 43.36,
+        "mean_absolute_difference": 32.1634,
+        "mean_relative_difference": 0.1442,
+        "max_absolute_difference": 300.0,
+        "correlation": 0.8437,
+        "material_cases": 1297
+      }
+    }
+  },
+  "coverage": {
+    "A_STRICT": {
+      "pitcher_games": 4160,
+      "games": 2079,
+      "pitchers": 445,
+      "home": 2080,
+      "away": 2080,
+      "last1_complete": 535,
+      "last3_complete": 53,
+      "last5_complete": 1,
+      "last10_complete": 0,
+      "last3_pct": 1.27,
+      "last5_pct": 0.02,
+      "last10_pct": 0.0,
+      "history_depth_distribution": {
+        "0": 3625,
+        "1": 357,
+        "2": 125,
+        "3": 50,
+        "4": 2,
+        "7": 1
+      },
+      "by_month": {
+        "2026-03": {
+          "pitcher_games": 856,
+          "home": 428,
+          "last1": 0,
+          "last3": 0,
+          "last5": 0,
+          "last10": 0,
+          "away": 428
+        },
+        "2026-04": {
+          "pitcher_games": 606,
+          "home": 303,
+          "last1": 0,
+          "last3": 0,
+          "last5": 0,
+          "last10": 0,
+          "away": 303
+        },
+        "2026-05": {
+          "pitcher_games": 700,
+          "away": 350,
+          "last1": 0,
+          "last3": 0,
+          "last5": 0,
+          "last10": 0,
+          "home": 350
+        },
+        "2026-06": {
+          "pitcher_games": 642,
+          "away": 321,
+          "last1": 0,
+          "last3": 0,
+          "last5": 0,
+          "last10": 0,
+          "home": 321
+        },
+        "2026-07": {
+          "pitcher_games": 694,
+          "away": 347,
+          "last1": 229,
+          "last3": 17,
+          "last5": 0,
+          "last10": 0,
+          "home": 347
+        },
+        "2026-08": {
+          "pitcher_games": 662,
+          "away": 331,
+          "last1": 306,
+          "last3": 36,
+          "last5": 1,
+          "last10": 0,
+          "home": 331
+        }
+      },
+      "by_team": {
+        "San Francisco Giants": {
+          "pitcher_games": 141,
+          "home": 73,
+          "away": 68
+        },
+        "Cincinnati Reds": {
+          "pitcher_games": 141,
+          "away": 74,
+          "home": 67
+        },
+        "Los Angeles Angels": {
+          "pitcher_games": 144,
+          "home": 70,
+          "away": 74
+        },
+        "Cleveland Guardians": {
+          "pitcher_games": 142,
+          "home": 67,
+          "away": 75
+        },
+        "San Diego Padres": {
+          "pitcher_games": 139,
+          "home": 73,
+          "away": 66
+        },
+        "Pittsburgh Pirates": {
+          "pitcher_games": 138,
+          "away": 72,
+          "home": 66
+        },
+        "Seattle Mariners": {
+          "pitcher_games": 138,
+          "home": 71,
+          "away": 67
+        },
+        "Philadelphia Phillies": {
+          "pitcher_games": 139,
+          "home": 73,
+          "away": 66
+        },
+        "Atlanta Braves": {
+          "pitcher_games": 140,
+          "home": 72,
+          "away": 68
+        },
+        "Dominican Republic": {
+          "pitcher_games": 2,
+          "home": 2
+        },
+        "Athletics": {
+          "pitcher_games": 140,
+          "home": 67,
+          "away": 73
+        },
+        "Baltimore Orioles": {
+          "pitcher_games": 130,
+          "home": 64,
+          "away": 66
+        },
+        "Texas Rangers": {
+          "pitcher_games": 138,
+          "home": 71,
+          "away": 67
+        },
+        "United States": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "National League All-Stars": {
+          "pitcher_games": 1,
+          "home": 1
+        },
+        "Washington Nationals": {
+          "pitcher_games": 138,
+          "away": 68,
+          "home": 70
+        },
+        "Toronto Blue Jays": {
+          "pitcher_games": 134,
+          "home": 65,
+          "away": 69
+        },
+        "Chicago Cubs": {
+          "pitcher_games": 137,
+          "away": 67,
+          "home": 70
+        },
+        "Colorado Rockies": {
+          "pitcher_games": 137,
+          "home": 69,
+          "away": 68
+        },
+        "Miami Marlins": {
+          "pitcher_games": 134,
+          "home": 71,
+          "away": 63
+        },
+        "Chicago White Sox": {
+          "pitcher_games": 135,
+          "away": 69,
+          "home": 66
+        },
+        "Kansas City Royals": {
+          "pitcher_games": 135,
+          "home": 63,
+          "away": 72
+        },
+        "Minnesota Twins": {
+          "pitcher_games": 139,
+          "away": 70,
+          "home": 69
+        },
+        "Arizona Diamondbacks": {
+          "pitcher_games": 136,
+          "away": 63,
+          "home": 73
+        },
+        "New York Mets": {
+          "pitcher_games": 133,
+          "home": 64,
+          "away": 69
+        },
+        "Los Angeles Dodgers": {
+          "pitcher_games": 134,
+          "away": 65,
+          "home": 69
+        },
+        "Detroit Tigers": {
+          "pitcher_games": 138,
+          "home": 72,
+          "away": 66
+        },
+        "St. Louis Cardinals": {
+          "pitcher_games": 135,
+          "away": 63,
+          "home": 72
+        },
+        "New York Yankees": {
+          "pitcher_games": 140,
+          "away": 73,
+          "home": 67
+        },
+        "Boston Red Sox": {
+          "pitcher_games": 135,
+          "home": 66,
+          "away": 69
+        },
+        "Tampa Bay Rays": {
+          "pitcher_games": 136,
+          "away": 68,
+          "home": 68
+        },
+        "Houston Astros": {
+          "pitcher_games": 140,
+          "home": 76,
+          "away": 64
+        },
+        "Venezuela": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Milwaukee Brewers": {
+          "pitcher_games": 136,
+          "home": 70,
+          "away": 66
+        },
+        "Sugar Land Space Cowboys": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Colombia": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Kingdom of the Netherlands": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Panama": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Canada": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Israel": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Nicaragua": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Brazil": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Cuba": {
+          "pitcher_games": 2,
+          "away": 1,
+          "home": 1
+        },
+        "Italy": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Great Britain": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Mexico": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Puerto Rico": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "American League All-Stars": {
+          "pitcher_games": 1,
+          "away": 1
+        },
+        "Sacramento River Cats": {
+          "pitcher_games": 1,
+          "home": 1
+        },
+        "Springfield Cardinals": {
+          "pitcher_games": 1,
+          "home": 1
+        },
+        "Sultanes de Monterrey": {
+          "pitcher_games": 2,
+          "away": 2
+        }
+      },
+      "pitcher_depth": {
+        "min": 1,
+        "median": 5,
+        "mean": 9.35,
+        "max": 30
+      }
+    },
+    "B_DATE": {
+      "pitcher_games": 4160,
+      "games": 2079,
+      "pitchers": 445,
+      "home": 2080,
+      "away": 2080,
+      "last1_complete": 3715,
+      "last3_complete": 3102,
+      "last5_complete": 2615,
+      "last10_complete": 1656,
+      "last3_pct": 74.57,
+      "last5_pct": 62.86,
+      "last10_pct": 39.81,
+      "history_depth_distribution": {
+        "0": 445,
+        "1": 328,
+        "2": 285,
+        "3": 256,
+        "4": 231,
+        "5": 208,
+        "6": 197,
+        "7": 191,
+        "8": 183,
+        "9": 180,
+        "10": 1656
+      },
+      "by_month": {
+        "2026-03": {
+          "pitcher_games": 856,
+          "home": 428,
+          "last1": 522,
+          "last3": 162,
+          "last5": 7,
+          "last10": 0,
+          "away": 428
+        },
+        "2026-04": {
+          "pitcher_games": 606,
+          "home": 303,
+          "last1": 581,
+          "last3": 529,
+          "last5": 381,
+          "last10": 3,
+          "away": 303
+        },
+        "2026-05": {
+          "pitcher_games": 700,
+          "away": 350,
+          "last1": 663,
+          "last3": 591,
+          "last5": 533,
+          "last10": 244,
+          "home": 350
+        },
+        "2026-06": {
+          "pitcher_games": 642,
+          "away": 321,
+          "last1": 625,
+          "last3": 572,
+          "last5": 522,
+          "last10": 399,
+          "home": 321
+        },
+        "2026-07": {
+          "pitcher_games": 694,
+          "away": 347,
+          "last1": 674,
+          "last3": 632,
+          "last5": 591,
+          "last10": 489,
+          "home": 347
+        },
+        "2026-08": {
+          "pitcher_games": 662,
+          "away": 331,
+          "last1": 650,
+          "last3": 616,
+          "last5": 581,
+          "last10": 521,
+          "home": 331
+        }
+      },
+      "by_team": {
+        "San Francisco Giants": {
+          "pitcher_games": 141,
+          "home": 73,
+          "away": 68
+        },
+        "Cincinnati Reds": {
+          "pitcher_games": 141,
+          "away": 74,
+          "home": 67
+        },
+        "Los Angeles Angels": {
+          "pitcher_games": 144,
+          "home": 70,
+          "away": 74
+        },
+        "Cleveland Guardians": {
+          "pitcher_games": 142,
+          "home": 67,
+          "away": 75
+        },
+        "San Diego Padres": {
+          "pitcher_games": 139,
+          "home": 73,
+          "away": 66
+        },
+        "Pittsburgh Pirates": {
+          "pitcher_games": 138,
+          "away": 72,
+          "home": 66
+        },
+        "Seattle Mariners": {
+          "pitcher_games": 138,
+          "home": 71,
+          "away": 67
+        },
+        "Philadelphia Phillies": {
+          "pitcher_games": 139,
+          "home": 73,
+          "away": 66
+        },
+        "Atlanta Braves": {
+          "pitcher_games": 140,
+          "home": 72,
+          "away": 68
+        },
+        "Dominican Republic": {
+          "pitcher_games": 2,
+          "home": 2
+        },
+        "Athletics": {
+          "pitcher_games": 140,
+          "home": 67,
+          "away": 73
+        },
+        "Baltimore Orioles": {
+          "pitcher_games": 130,
+          "home": 64,
+          "away": 66
+        },
+        "Texas Rangers": {
+          "pitcher_games": 138,
+          "home": 71,
+          "away": 67
+        },
+        "United States": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "National League All-Stars": {
+          "pitcher_games": 1,
+          "home": 1
+        },
+        "Washington Nationals": {
+          "pitcher_games": 138,
+          "away": 68,
+          "home": 70
+        },
+        "Toronto Blue Jays": {
+          "pitcher_games": 134,
+          "home": 65,
+          "away": 69
+        },
+        "Chicago Cubs": {
+          "pitcher_games": 137,
+          "away": 67,
+          "home": 70
+        },
+        "Colorado Rockies": {
+          "pitcher_games": 137,
+          "home": 69,
+          "away": 68
+        },
+        "Miami Marlins": {
+          "pitcher_games": 134,
+          "home": 71,
+          "away": 63
+        },
+        "Chicago White Sox": {
+          "pitcher_games": 135,
+          "away": 69,
+          "home": 66
+        },
+        "Kansas City Royals": {
+          "pitcher_games": 135,
+          "home": 63,
+          "away": 72
+        },
+        "Minnesota Twins": {
+          "pitcher_games": 139,
+          "away": 70,
+          "home": 69
+        },
+        "Arizona Diamondbacks": {
+          "pitcher_games": 136,
+          "away": 63,
+          "home": 73
+        },
+        "New York Mets": {
+          "pitcher_games": 133,
+          "home": 64,
+          "away": 69
+        },
+        "Los Angeles Dodgers": {
+          "pitcher_games": 134,
+          "away": 65,
+          "home": 69
+        },
+        "Detroit Tigers": {
+          "pitcher_games": 138,
+          "home": 72,
+          "away": 66
+        },
+        "St. Louis Cardinals": {
+          "pitcher_games": 135,
+          "away": 63,
+          "home": 72
+        },
+        "New York Yankees": {
+          "pitcher_games": 140,
+          "away": 73,
+          "home": 67
+        },
+        "Boston Red Sox": {
+          "pitcher_games": 135,
+          "home": 66,
+          "away": 69
+        },
+        "Tampa Bay Rays": {
+          "pitcher_games": 136,
+          "away": 68,
+          "home": 68
+        },
+        "Houston Astros": {
+          "pitcher_games": 140,
+          "home": 76,
+          "away": 64
+        },
+        "Venezuela": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Milwaukee Brewers": {
+          "pitcher_games": 136,
+          "home": 70,
+          "away": 66
+        },
+        "Sugar Land Space Cowboys": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Colombia": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Kingdom of the Netherlands": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Panama": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Canada": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Israel": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Nicaragua": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Brazil": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Cuba": {
+          "pitcher_games": 2,
+          "away": 1,
+          "home": 1
+        },
+        "Italy": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Great Britain": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Mexico": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "Puerto Rico": {
+          "pitcher_games": 2,
+          "away": 2
+        },
+        "American League All-Stars": {
+          "pitcher_games": 1,
+          "away": 1
+        },
+        "Sacramento River Cats": {
+          "pitcher_games": 1,
+          "home": 1
+        },
+        "Springfield Cardinals": {
+          "pitcher_games": 1,
+          "home": 1
+        },
+        "Sultanes de Monterrey": {
+          "pitcher_games": 2,
+          "away": 2
+        }
+      },
+      "pitcher_depth": {
+        "min": 1,
+        "median": 5,
+        "mean": 9.35,
+        "max": 30
+      }
+    }
+  },
+  "appearance_coverage": {
+    "A_STRICT": {
+      "target_starter_rows": 4160,
+      "identified_final_appearance_rows": 19239,
+      "appearance_pitchers": 1600,
+      "last3_appearances_complete": 153,
+      "last5_appearances_complete": 7,
+      "last3_pct": 3.68,
+      "last5_pct": 0.17,
+      "note": "Includes starts and relief appearances; identity uses liveBoxscore.id only, never name."
+    },
+    "B_DATE": {
+      "target_starter_rows": 4160,
+      "identified_final_appearance_rows": 19239,
+      "appearance_pitchers": 1600,
+      "last3_appearances_complete": 3394,
+      "last5_appearances_complete": 2961,
+      "last3_pct": 81.59,
+      "last5_pct": 71.18,
+      "note": "Includes starts and relief appearances; identity uses liveBoxscore.id only, never name."
+    }
+  },
+  "leakage_audit": {
+    "target_game_in_history": 0,
+    "future_game_in_history": 0,
+    "target_stats_used": 0,
+    "accepted_links": 36290,
+    "rejected_strict_timestamp": 34746,
+    "assertions_passed": true,
+    "formal_rule": "feature(target)=f({history | history.date < target.date AND history.game_id != target.game_id AND history.pitcherId=target.pitcherId}); target outcome fields never enter f"
+  },
+  "identity": {
+    "pregame_verifiable_rows_current": 265,
+    "final_identity_rows_structural": 4160,
+    "history_rows_by_id": 4160,
+    "can_reconstruct_without_target_pregame_identity": "Only retrospective experiments; not defensible training rows"
+  },
+  "feature_groups": {
+    "GROUP_1_HIGH_CONFIDENCE": [
+      "last3Ks1/2/3",
+      "last3Ip1/2/3",
+      "last3Bf1/2/3",
+      "last5KsAvg",
+      "last5KsStd",
+      "last5IpAvg",
+      "last5BfAvg",
+      "last5PitchCountAvg",
+      "pitchesLast3Starts",
+      "days since last appearance",
+      "rolling BB/H/R/ER",
+      "simple slope over prior starts",
+      "last3/5 all appearances by liveBoxscore.id"
+    ],
+    "GROUP_2_CONDITIONAL": [
+      "last1/3/5/10 starts: requires pregame target pitcherId and temporal policy",
+      "separation starter/relevo inferred by order and starter boxscore ID; gamesStarted absent",
+      "season-to-date K%,BB%,FIP",
+      "scenario B date-only because timestamp is capture/backfill"
+    ],
+    "GROUP_3_NOT_RECONSTRUCTIBLE": [
+      "pregame lineup",
+      "pregame weather",
+      "exact historical park factor",
+      "xERA",
+      "xFIP",
+      "SIERA",
+      "SwStr%",
+      "CSW%",
+      "pitch-level metrics"
+    ]
+  },
+  "alternative_dataset_proposal": {
+    "grain": "one row per target_game_id + pregame_pitcher_id + side",
+    "required_identity": "independent pregame evidence with timestamp < target_start",
+    "features": "rolling results computed only from final prior games sharing pitcherId; keep raw last1/3 plus aggregates last3/5/10",
+    "target": "actual_k joined only after feature freeze",
+    "temporal_contract": "features freeze before target start; history game IDs stored as lineage; target game excluded",
+    "expected_scale": {
+      "structural_final_identity_rows": 4160,
+      "balanced_home_away": "2080/2080",
+      "defensible_now": 265,
+      "upper_bound_if_all_target_pregame_identities_recovered": 4160
+    },
+    "warning": "The upper bound cannot be claimed until target identity is known pregame; final boxscore identity is not a substitute."
+  },
+  "decision": {
+    "can_expand_now": "Not beyond 265 defendible rows without additional pregame identity",
+    "approximate_upper_bound": 4160,
+    "home_away_effect": "Structural source is balanced; verified pregame subset is not",
+    "remaining_risks": [
+      "retrospective target identity",
+      "capture timestamp is not game_end",
+      "starter-only ID coverage",
+      "differences from MLB gameLog windows/backfills",
+      "season boundary and missing prior-year history"
+    ]
+  }
+}

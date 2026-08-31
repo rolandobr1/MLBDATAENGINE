@@ -1,0 +1,248 @@
+{
+  "version": 1,
+  "created_at": "2026-08-27T15:56:53.960854-04:00",
+  "scope": "read-only discrepancy audit",
+  "total_starter_targets": 4160,
+  "material_discrepancies": 386,
+  "identity_rule": "pitcherId only; names descriptive only",
+  "code_definition": {
+    "rolling_last3_last5": {
+      "source": "MLB StatsAPI people/{pitcherId}/stats?stats=gameLog&season={season}&group=pitching",
+      "date_filter": "new Date(log.date) < targetDate",
+      "order": "date descending",
+      "start_filter": "gamesStarted > 0; if gamesStarted unparsable, innings >= 3.0; if no starts, fallback to all appearances",
+      "window": "first 5 selected records; last3 is first 3 of that window",
+      "rounding": "KS mean 2 decimals; population std 2; IP mean 1; BF mean 1 then null if >40; pitches mean 0 then null if >130",
+      "zeros": "K/IP retained as zero; BF and pitch arrays filter nonpositive values; last3Bf uses value || null",
+      "competition_filter": "none explicit",
+      "season": "single season argument; no prior-season fallback"
+    },
+    "fatigue": {
+      "source": "same MLB StatsAPI gameLog",
+      "date_filter": "strictly earlier date",
+      "order": "date descending",
+      "start_filter": "none despite field names",
+      "pitchesLast3Starts": "sum first 3 appearances",
+      "daysSinceLastStart": "days to first prior appearance; if >30, returned as 5; isInjuryReturn true",
+      "fallback": "5 days, 0 pitches"
+    }
+  },
+  "temporal_definitions": {
+    "STRICT": "history_date < target_date AND record_timestamp exists and is before target scheduled_start; record_timestamp is not called game_end",
+    "DATE_ONLY": "history_date < target_date only; not temporally verified"
+  },
+  "last3_comparison": {
+    "DATE_ONLY": {
+      "LAST3_STARTS": {
+        "comparable": 8615,
+        "coverage_rows": 3102,
+        "exact": 6738,
+        "exact_pct": 78.21,
+        "mae": 0.5977,
+        "correlation": 0.807,
+        "discrepancies": 1877
+      },
+      "LAST3_APPEARANCES": {
+        "comparable": 8872,
+        "coverage_rows": 3394,
+        "exact": 6828,
+        "exact_pct": 76.96,
+        "mae": 0.6119,
+        "correlation": 0.8139,
+        "discrepancies": 2044
+      }
+    },
+    "STRICT": {
+      "LAST3_STARTS": {
+        "comparable": 761,
+        "coverage_rows": 53,
+        "exact": 140,
+        "exact_pct": 18.4,
+        "mae": 2.3233,
+        "correlation": 0.2217,
+        "discrepancies": 621
+      },
+      "LAST3_APPEARANCES": {
+        "comparable": 1223,
+        "coverage_rows": 153,
+        "exact": 227,
+        "exact_pct": 18.56,
+        "mae": 2.354,
+        "correlation": 0.3451,
+        "discrepancies": 996
+      }
+    }
+  },
+  "cause_summary": [
+    {
+      "cause": "A_LOCAL_HISTORY_COVERAGE_GAP",
+      "cases": 0,
+      "pct_of_386": 0.0,
+      "status": "CLASSIFIED_FROM_LOCAL_EVIDENCE"
+    },
+    {
+      "cause": "B_START_VS_RELIEF_APPEARANCE",
+      "cases": 99,
+      "pct_of_386": 25.65,
+      "status": "CLASSIFIED_FROM_LOCAL_EVIDENCE"
+    },
+    {
+      "cause": "C_GAMESSTARTED_CRITERION",
+      "cases": 0,
+      "pct_of_386": 0.0,
+      "status": "UNVERIFIABLE_FROM_LOCAL_SOURCE"
+    },
+    {
+      "cause": "D_GAMELOG_VS_BOXSCORE",
+      "cases": 0,
+      "pct_of_386": 0.0,
+      "status": "UNVERIFIABLE_FROM_LOCAL_SOURCE"
+    },
+    {
+      "cause": "E_BACKFILL_OR_LATE_RECORD_TIMESTAMP",
+      "cases": 382,
+      "pct_of_386": 98.96,
+      "status": "CLASSIFIED_FROM_LOCAL_EVIDENCE"
+    },
+    {
+      "cause": "F_NON_MLB_GAME",
+      "cases": 43,
+      "pct_of_386": 11.14,
+      "status": "CLASSIFIED_FROM_LOCAL_EVIDENCE"
+    },
+    {
+      "cause": "G_DIFFERENT_TEMPORAL_ORDER",
+      "cases": 136,
+      "pct_of_386": 35.23,
+      "status": "CLASSIFIED_FROM_LOCAL_EVIDENCE"
+    },
+    {
+      "cause": "H_DUPLICATE_RECORD",
+      "cases": 1,
+      "pct_of_386": 0.26,
+      "status": "CLASSIFIED_FROM_LOCAL_EVIDENCE"
+    },
+    {
+      "cause": "I_DIFFERENT_HISTORICAL_GAME_ID",
+      "cases": 256,
+      "pct_of_386": 66.32,
+      "status": "CLASSIFIED_FROM_LOCAL_EVIDENCE"
+    },
+    {
+      "cause": "J_LAST_APPEARANCE_DEFINITION",
+      "cases": 120,
+      "pct_of_386": 31.09,
+      "status": "CLASSIFIED_FROM_LOCAL_EVIDENCE"
+    },
+    {
+      "cause": "K_LAST_START_DEFINITION",
+      "cases": 99,
+      "pct_of_386": 25.65,
+      "status": "CLASSIFIED_FROM_LOCAL_EVIDENCE"
+    },
+    {
+      "cause": "L_SEASON_BOUNDARY",
+      "cases": 0,
+      "pct_of_386": 0.0,
+      "status": "CLASSIFIED_FROM_LOCAL_EVIDENCE"
+    },
+    {
+      "cause": "M_UNEXPLAINED",
+      "cases": 130,
+      "pct_of_386": 33.68,
+      "status": "CLASSIFIED_FROM_LOCAL_EVIDENCE"
+    }
+  ],
+  "competition_audit": {
+    "classification_note": "Source has no gameType. MLB regular/spring labels are inferred from team membership and 2026-03-25 boundary; WBC/national, All-Star and other teams use team labels.",
+    "starter_rows": {
+      "MLB_REGULAR_SEASON_INFERRED": 3454,
+      "MLB_SPRING_TRAINING_INFERRED": 632,
+      "WBC_OR_NATIONAL_TEAMS": 60,
+      "ALL_STAR": 2,
+      "OTHER_MIXED_EVENT": 12
+    }
+  },
+  "feature_reconstructibility": [
+    {
+      "feature": "last3Ks1/2/3",
+      "rating": "APPROXIMATE",
+      "reason": "Exact if local final boxscore sequence equals MLB gameLog starts; observed discrepancies prevent equivalence claim."
+    },
+    {
+      "feature": "last3Ip1/2/3",
+      "rating": "APPROXIMATE",
+      "reason": "Outs/IP are available, but gameLog start filtering and source/backfill differences remain."
+    },
+    {
+      "feature": "last3Bf1/2/3",
+      "rating": "APPROXIMATE",
+      "reason": "BF available; current code converts zero to null and filters starts using gamesStarted/fallback."
+    },
+    {
+      "feature": "last5KsAvg",
+      "rating": "APPROXIMATE",
+      "reason": "Recomputable with current population/window formula if identical five-game membership is recovered."
+    },
+    {
+      "feature": "last5KsStd",
+      "rating": "APPROXIMATE",
+      "reason": "Population standard deviation is known; exactness depends on identical gameLog window."
+    },
+    {
+      "feature": "last5IpAvg",
+      "rating": "APPROXIMATE",
+      "reason": "Known rounding to one decimal after MLB innings-to-outs conversion."
+    },
+    {
+      "feature": "last5BfAvg",
+      "rating": "WITH_INFORMATION_LOSS",
+      "reason": "Positive BF filtering, one-decimal rounding and >40 sanity nulling are known."
+    },
+    {
+      "feature": "last5PitchCountAvg",
+      "rating": "WITH_INFORMATION_LOSS",
+      "reason": "Positive pitch filtering, integer rounding and >130 sanity nulling are known."
+    },
+    {
+      "feature": "pitchesLast3Starts",
+      "rating": "APPROXIMATE_MISNAMED",
+      "reason": "Current fatigue code sums last three appearances, not gamesStarted-filtered starts."
+    },
+    {
+      "feature": "daysSinceLastAppearance",
+      "rating": "RECONSTRUCTIBLE_DATE_ONLY",
+      "reason": "Current field is named daysSinceLastStart but uses most recent appearance; values >30 are replaced by 5."
+    }
+  ],
+  "leakage": {
+    "target_game_used": 0,
+    "future_game_used": 0,
+    "target_stats_used": 0,
+    "validated_history_links": 79936,
+    "assertions_passed": true,
+    "limitation": "Target pitcher identity is retrospective final-boxscore identity and must not be used as pregame evidence."
+  },
+  "architecture_assessment": {
+    "dynamic_by_pitcherId": "RECOMMENDED_FOR_FUTURE_DESIGN_AFTER_PREREQUISITES",
+    "benefits": [
+      "single raw-history source of truth",
+      "reproducible lineage by historical game_id",
+      "less dependence on stored rolling snapshots",
+      "explicit leakage assertions",
+      "supports broader history"
+    ],
+    "prerequisites": [
+      "pregame target pitcherId",
+      "authoritative gameType",
+      "reliable finalization/availability timestamp",
+      "season-boundary policy",
+      "compatibility contract matching daily generator"
+    ],
+    "implemented": false
+  },
+  "unexplained_cases": 130,
+  "official_dataset_modified": false,
+  "features_modified": false,
+  "model_trained": false
+}

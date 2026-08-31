@@ -1,0 +1,231 @@
+{
+  "created_at": "2026-08-28T13:51:55.375Z",
+  "decision": "KEEP_CURRENT",
+  "algorithm": {
+    "name": "ridge_linear_regression",
+    "alpha": 1,
+    "standardization": "training mean/std",
+    "same_algorithm_all_models": true,
+    "hyperparameter_tuning": false
+  },
+  "universe": {
+    "rows": 265,
+    "pitchers": 156,
+    "games": 260,
+    "home": 260,
+    "away": 5
+  },
+  "partitions": {
+    "train": [
+      "2026-04-01",
+      "2026-07-31"
+    ],
+    "validation": [
+      "2026-08-01",
+      "2026-08-26"
+    ],
+    "common_total": 110,
+    "common_train": 98,
+    "common_validation": 12
+  },
+  "coverage": [
+    {
+      "row_type": "MODEL_SUMMARY",
+      "model": "baseline",
+      "game_id": "",
+      "pitcher_id": "",
+      "game_date": "",
+      "side": "",
+      "eligible_baseline": "",
+      "eligible_dynamic_starts": "",
+      "eligible_dynamic_appearances": "",
+      "eligible_hybrid": "",
+      "eligible_all": "",
+      "required_features": 26,
+      "eligible_total": 115,
+      "coverage_pct": 43.39622641509434,
+      "eligible_train": 103,
+      "eligible_validation": 12,
+      "common_primary_total": 110,
+      "common_primary_train": 98,
+      "common_primary_validation": 12
+    },
+    {
+      "row_type": "MODEL_SUMMARY",
+      "model": "dynamic_starts",
+      "game_id": "",
+      "pitcher_id": "",
+      "game_date": "",
+      "side": "",
+      "eligible_baseline": "",
+      "eligible_dynamic_starts": "",
+      "eligible_dynamic_appearances": "",
+      "eligible_hybrid": "",
+      "eligible_all": "",
+      "required_features": 36,
+      "eligible_total": 110,
+      "coverage_pct": 41.509433962264154,
+      "eligible_train": 98,
+      "eligible_validation": 12,
+      "common_primary_total": 110,
+      "common_primary_train": 98,
+      "common_primary_validation": 12
+    },
+    {
+      "row_type": "MODEL_SUMMARY",
+      "model": "dynamic_appearances",
+      "game_id": "",
+      "pitcher_id": "",
+      "game_date": "",
+      "side": "",
+      "eligible_baseline": "",
+      "eligible_dynamic_starts": "",
+      "eligible_dynamic_appearances": "",
+      "eligible_hybrid": "",
+      "eligible_all": "",
+      "required_features": 33,
+      "eligible_total": 113,
+      "coverage_pct": 42.64150943396226,
+      "eligible_train": 101,
+      "eligible_validation": 12,
+      "common_primary_total": 110,
+      "common_primary_train": 98,
+      "common_primary_validation": 12
+    },
+    {
+      "row_type": "MODEL_SUMMARY",
+      "model": "hybrid",
+      "game_id": "",
+      "pitcher_id": "",
+      "game_date": "",
+      "side": "",
+      "eligible_baseline": "",
+      "eligible_dynamic_starts": "",
+      "eligible_dynamic_appearances": "",
+      "eligible_hybrid": "",
+      "eligible_all": "",
+      "required_features": 50,
+      "eligible_total": 110,
+      "coverage_pct": 41.509433962264154,
+      "eligible_train": 98,
+      "eligible_validation": 12,
+      "common_primary_total": 110,
+      "common_primary_train": 98,
+      "common_primary_validation": 12
+    }
+  ],
+  "metrics": {
+    "baseline": {
+      "model": "baseline",
+      "segment_type": "SIDE",
+      "segment": "ALL",
+      "n_train": 98,
+      "n_validation": 12,
+      "mae": 1.9710587047720203,
+      "rmse": 2.390751296115144,
+      "r2": 0.2227954547477068,
+      "correlation": 0.5323283145570125,
+      "mean_error": -0.6660799320192947,
+      "delta_mae_vs_baseline": 0,
+      "delta_rmse_vs_baseline": 0,
+      "delta_r2_vs_baseline": 0,
+      "delta_correlation_vs_baseline": 0
+    },
+    "dynamic_starts": {
+      "model": "dynamic_starts",
+      "segment_type": "SIDE",
+      "segment": "ALL",
+      "n_train": 98,
+      "n_validation": 12,
+      "mae": 2.3652951643202846,
+      "rmse": 3.103228384593305,
+      "r2": -0.30946534712007767,
+      "correlation": 0.16044100305383074,
+      "mean_error": -0.7390933169516197,
+      "delta_mae_vs_baseline": 0.39423645954826436,
+      "delta_rmse_vs_baseline": 0.712477088478161,
+      "delta_r2_vs_baseline": -0.5322608018677845,
+      "delta_correlation_vs_baseline": -0.3718873115031817
+    },
+    "dynamic_appearances": {
+      "model": "dynamic_appearances",
+      "segment_type": "SIDE",
+      "segment": "ALL",
+      "n_train": 98,
+      "n_validation": 12,
+      "mae": 2.121110020930049,
+      "rmse": 2.532555167096783,
+      "r2": 0.12786370433242644,
+      "correlation": 0.44702649788554816,
+      "mean_error": -0.4496352855654151,
+      "delta_mae_vs_baseline": 0.1500513161580288,
+      "delta_rmse_vs_baseline": 0.14180387098163916,
+      "delta_r2_vs_baseline": -0.09493175041528035,
+      "delta_correlation_vs_baseline": -0.0853018166714643
+    },
+    "hybrid": {
+      "model": "hybrid",
+      "segment_type": "SIDE",
+      "segment": "ALL",
+      "n_train": 98,
+      "n_validation": 12,
+      "mae": 2.172728557676337,
+      "rmse": 2.86859446418676,
+      "r2": -0.11893496203461851,
+      "correlation": 0.3005246126833734,
+      "mean_error": -0.5427060477161159,
+      "delta_mae_vs_baseline": 0.2016698529043166,
+      "delta_rmse_vs_baseline": 0.4778431680716162,
+      "delta_r2_vs_baseline": -0.3417304167823253,
+      "delta_correlation_vs_baseline": -0.23180370187363908
+    }
+  },
+  "paired": {
+    "dynamic_starts": 6,
+    "dynamic_starts_losses": 6,
+    "dynamic_starts_ties": 0,
+    "dynamic_appearances": 6,
+    "dynamic_appearances_losses": 6,
+    "dynamic_appearances_ties": 0,
+    "hybrid": 7,
+    "hybrid_losses": 5,
+    "hybrid_ties": 0
+  },
+  "pitcher_consistency": {
+    "dynamic_starts": {
+      "pitchers_with_2_plus_validation": 0,
+      "pitchers_improved_mean_absolute_error": 0
+    },
+    "dynamic_appearances": {
+      "pitchers_with_2_plus_validation": 0,
+      "pitchers_improved_mean_absolute_error": 0
+    },
+    "hybrid": {
+      "pitchers_with_2_plus_validation": 0,
+      "pitchers_improved_mean_absolute_error": 0
+    }
+  },
+  "best_dynamic_by_mae": "dynamic_appearances",
+  "leakage": {
+    "history_date_before_target": true,
+    "target_game_excluded": true,
+    "future_games_excluded": true,
+    "target_actual_k_not_feature": true,
+    "target_boxscore_not_feature": true,
+    "identity_pitcher_id_only": true,
+    "duplicate_targets": 0,
+    "assertions_passed": true
+  },
+  "warnings": [
+    "Validation and especially AWAY are small; results do not support strong production conclusions.",
+    "Temporal evidence for reconstructed history is DATE_ONLY.",
+    "No imputation was performed."
+  ],
+  "production_changes": false,
+  "probabilities_calculated": false,
+  "sha256": {
+    "before": "D959F11980A0C0D2A8310600C4A2FF7B506C2F0C26787EB426959E9A4AC442E0",
+    "after": "D959F11980A0C0D2A8310600C4A2FF7B506C2F0C26787EB426959E9A4AC442E0",
+    "unchanged": true
+  }
+}

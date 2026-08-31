@@ -1,0 +1,366 @@
+{
+  "features": [
+    {
+      "feature": "pitcher_last5_ks_avg",
+      "file": "server.ts:3352-3407",
+      "function": "fetchPitcherLast5Profile",
+      "formula": "mean(strikeOuts) de hasta 5 aperturas previas; 2 decimales",
+      "sources": [
+        "MLB gameLog pitching"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sí",
+      "minimum_data": "pitcher_id,date,game_id,K,starter",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Bajo si identidad target es pregame",
+      "classification": "B"
+    },
+    {
+      "feature": "pitcher_last5_ip_avg",
+      "file": "server.ts:3352-3407",
+      "function": "fetchPitcherLast5Profile",
+      "formula": "mean(outs/3 redondeado a 1 decimal) hasta 5 aperturas previas",
+      "sources": [
+        "MLB gameLog"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sí",
+      "minimum_data": "pitcher_id,date,game_id,IP",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Bajo con corte temporal",
+      "classification": "B"
+    },
+    {
+      "feature": "pitcher_last5_bf_avg",
+      "file": "server.ts:3352-3407",
+      "function": "fetchPitcherLast5Profile",
+      "formula": "mean(BF positivos) hasta 5 aperturas; sane cap <=40",
+      "sources": [
+        "MLB gameLog"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sí",
+      "minimum_data": "pitcher_id,date,game_id,BF",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Bajo con corte temporal",
+      "classification": "B"
+    },
+    {
+      "feature": "pitcher_last5_pitch_count_avg",
+      "file": "server.ts:3352-3407",
+      "function": "fetchPitcherLast5Profile",
+      "formula": "mean(numberOfPitches positivos) hasta 5 aperturas, redondeado; cap <=130",
+      "sources": [
+        "MLB gameLog"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sí",
+      "minimum_data": "pitcher_id,date,game_id,pitches",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Bajo con corte temporal",
+      "classification": "B"
+    },
+    {
+      "feature": "pitches_last_start",
+      "file": "server.ts:3739-3779",
+      "function": "fetchStarterFatigue",
+      "formula": "pitcheos de la aparición previa más reciente",
+      "sources": [
+        "MLB gameLog"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sí",
+      "minimum_data": "pitcher_id,date,pitches",
+      "needs_pitcher_id": true,
+      "needs_game_id": false,
+      "needs_date": true,
+      "leakage_risk": "Bajo con corte temporal",
+      "classification": "B"
+    },
+    {
+      "feature": "pitches_last_3_starts",
+      "file": "server.ts:3739-3779",
+      "function": "fetchStarterFatigue",
+      "formula": "suma de pitcheos de hasta 3 apariciones previas",
+      "sources": [
+        "MLB gameLog"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sí",
+      "minimum_data": "pitcher_id,date,pitches",
+      "needs_pitcher_id": true,
+      "needs_game_id": false,
+      "needs_date": true,
+      "leakage_risk": "Bajo con corte temporal",
+      "classification": "B"
+    },
+    {
+      "feature": "days_since_last_start",
+      "file": "server.ts:3739-3779",
+      "function": "fetchStarterFatigue",
+      "formula": "floor(abs(targetDate-lastLogDate)/día); si >30 reemplaza por 5",
+      "sources": [
+        "MLB gameLog"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sí, salvo semántica del fallback >30",
+      "minimum_data": "pitcher_id,target_date,last_date",
+      "needs_pitcher_id": true,
+      "needs_game_id": false,
+      "needs_date": true,
+      "leakage_risk": "Bajo; fallback mezcla lesión y descanso",
+      "classification": "B"
+    },
+    {
+      "feature": "pitcher_k_pct / pitcher_so_rate / pitcher_bb_pct / pitcher_fip",
+      "file": "server.ts:3300-3345 y fuentes season",
+      "function": "fetchPitcherLast7 / season stats",
+      "formula": "agregados K/BF, BB/BF y FIP; la ventana/fuente depende del merge",
+      "sources": [
+        "MLB season/gameLog"
+      ],
+      "future_dependency": "Requiere confirmar freeze temporal",
+      "stored_dependency": true,
+      "reconstructible": "Parcial desde boxscores",
+      "minimum_data": "K,BB,BF,HR,HBP,IP previos",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Medio si se usa agregado actualizado postgame",
+      "classification": "C"
+    },
+    {
+      "feature": "pitcher_swstr_pct / pitcher_csw_pct / pitcher_xfip / pitcher_siera / pitcher_xera",
+      "file": "server.ts + pybaseballApi.ts",
+      "function": "advanced/statcast extractors",
+      "formula": "métricas avanzadas externas, no derivables del boxscore básico",
+      "sources": [
+        "Statcast/PyBaseball"
+      ],
+      "future_dependency": "Depende del corte de consulta",
+      "stored_dependency": true,
+      "reconstructible": "No con boxscore local básico",
+      "minimum_data": "pitch-level/Statcast",
+      "needs_pitcher_id": true,
+      "needs_game_id": false,
+      "needs_date": true,
+      "leakage_risk": "Medio por fecha de actualización",
+      "classification": "D"
+    },
+    {
+      "feature": "projected_pitches",
+      "file": "server.ts:1711-1760",
+      "function": "calculateProjectedPitchCount",
+      "formula": "0.55*last5PitchAvg + 0.25*(pitchesLast3/3) + 0.20*roleCluster + ajustes descanso/carga/rol y clamp",
+      "sources": [
+        "rolling pitcher",
+        "fatigue",
+        "role BF"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Parcial/exacta si todos los inputs están disponibles",
+      "minimum_data": "last5 pitches,last3 pitches,BF,rest",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Medio por inputs faltantes/defaults",
+      "classification": "C"
+    },
+    {
+      "feature": "projected_innings",
+      "file": "server.ts:calculateVortexProjectedKs",
+      "function": "calculateVortexProjectedKs",
+      "formula": "derivada de expected BF, rol y projected pitches",
+      "sources": [
+        "rolling pitcher",
+        "role",
+        "matchup"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Parcial",
+      "minimum_data": "BF/pitches/rol",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Medio",
+      "classification": "C"
+    },
+    {
+      "feature": "opponent_lineup_k_pct",
+      "file": "server.ts + lineupMetrics.ts",
+      "function": "lineup aggregation",
+      "formula": "promedio ponderado/lineup proyectado según bateadores y mano",
+      "sources": [
+        "lineup pregame",
+        "splits"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "No desde boxscore de resultados solamente",
+      "minimum_data": "lineup pregame IDs y splits anteriores",
+      "needs_pitcher_id": false,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Alto si lineup final reemplaza lineup pregame",
+      "classification": "E"
+    },
+    {
+      "feature": "opponent_offense_ops / woba / xwoba",
+      "file": "server.ts:3649+ y snapshots",
+      "function": "fetchAdvancedOffense",
+      "formula": "estadísticas de equipo/Statcast de temporada",
+      "sources": [
+        "MLB season",
+        "Statcast"
+      ],
+      "future_dependency": "Debe congelarse a T",
+      "stored_dependency": true,
+      "reconstructible": "OPS/wOBA parcial; xwOBA no con boxscore básico",
+      "minimum_data": "resultados ofensivos acumulados previos",
+      "needs_pitcher_id": false,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Medio-alto si el agregado es postgame",
+      "classification": "C"
+    },
+    {
+      "feature": "park_factor_k",
+      "file": "parkFactorsScraper.ts",
+      "function": "park factor scraper",
+      "formula": "factor rolling externo por parque",
+      "sources": [
+        "Baseball Savant"
+      ],
+      "future_dependency": "Depende del freeze",
+      "stored_dependency": true,
+      "reconstructible": "No desde boxscores locales actuales con fórmula exacta",
+      "minimum_data": "histórico multianual por parque",
+      "needs_pitcher_id": false,
+      "needs_game_id": false,
+      "needs_date": true,
+      "leakage_risk": "Medio",
+      "classification": "D"
+    },
+    {
+      "feature": "weather_temp / weather_wind_speed",
+      "file": "weather extractor/snapshot",
+      "function": "weather fetch",
+      "formula": "observación/pronóstico del juego",
+      "sources": [
+        "weather pregame"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "No desde boxscore",
+      "minimum_data": "snapshot meteorológico pregame",
+      "needs_pitcher_id": false,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Bajo si snapshot pregame",
+      "classification": "D"
+    },
+    {
+      "feature": "projected_strikeouts (benchmark)",
+      "file": "server.ts:calculateVortexProjectedKs",
+      "function": "calculateVortexProjectedKs",
+      "formula": "expectedBF * blended expectedKpct * ajustes fatiga/rol/varianza",
+      "sources": [
+        "pitcher rolling",
+        "lineup",
+        "stuff",
+        "fatigue"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sólo si todos los inputs pregame se reconstruyen",
+      "minimum_data": "múltiples features anteriores",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Alto para auditoría circular; benchmark, no feature V1",
+      "classification": "E"
+    }
+  ],
+  "sources": [
+    {
+      "source": "mlb_database.json",
+      "date_range": [
+        "2026-03-01",
+        "2026-08-27"
+      ],
+      "games": 2268,
+      "final_games": 2182,
+      "identifiable_pitcher_rows": 4159,
+      "statistics": [
+        "playerId",
+        "K",
+        "IP",
+        "BF",
+        "pitches",
+        "BB",
+        "hits",
+        "runs",
+        "team",
+        "opponent",
+        "side"
+      ],
+      "coverage": "Principal; 4,160 pitcher-juego completos dentro del rango"
+    },
+    {
+      "source": "datasets/klab/KLAB_PITCHER_TRAINING_DATASET_2026-03-01_2026-08-26.csv",
+      "date_range": [
+        "2026-06-23",
+        "2026-08-26"
+      ],
+      "games": 260,
+      "identifiable_pitcher_rows": 265,
+      "statistics": [
+        "features V1",
+        "actual_k"
+      ],
+      "coverage": "Oficial; 260 HOME y 5 AWAY"
+    },
+    {
+      "source": "mlb_pregame_training_snapshots.json",
+      "date_range": [
+        "2026-03-01",
+        "2026-08-26"
+      ],
+      "games": 549,
+      "identifiable_pitcher_rows": 306,
+      "statistics": [
+        "features pregame",
+        "pitchers",
+        "metadata"
+      ],
+      "coverage": "Snapshots categoría A; identidad incompleta"
+    },
+    {
+      "source": "boxscore.json",
+      "date_range": "archivo puntual/no serie completa",
+      "games": null,
+      "identifiable_pitcher_rows": null,
+      "statistics": [
+        "boxscore raw"
+      ],
+      "coverage": "Auxiliar; no necesario frente a mlb_database.json"
+    }
+  ]
+}

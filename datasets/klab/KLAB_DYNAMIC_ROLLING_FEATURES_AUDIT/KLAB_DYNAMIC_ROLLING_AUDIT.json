@@ -1,0 +1,367 @@
+{
+  "created_at": "2026-08-28T13:30:58.383Z",
+  "decision": "READY_FOR_MODEL_COMPARISON",
+  "scope": "ISOLATED_EXPERIMENTAL_LAYER_ONLY",
+  "targets": 265,
+  "pitchers": 156,
+  "games": 260,
+  "home": 260,
+  "away": 5,
+  "feature_contract": {
+    "identity": "pitcherId only",
+    "starts": "structured boxscore starter playerId only",
+    "appearances": "valid liveBoxscore pitcher appearance",
+    "windows": [
+      3,
+      5
+    ],
+    "no_imputation": true
+  },
+  "coverage": {
+    "starts_0": 7,
+    "starts_1": 8,
+    "starts_2": 8,
+    "starts_3_plus": 242,
+    "appearances_0": 0,
+    "appearances_1": 4,
+    "appearances_2": 5,
+    "appearances_3_plus": 256,
+    "last5_starts_complete": 229,
+    "last5_appearances_complete": 250
+  },
+  "history_before_target_range": {
+    "local_min_date": "2026-03-01",
+    "dates_before_start": 0,
+    "confirmed_truncated_targets": 0,
+    "potentially_truncated_targets": 23,
+    "attribution_note": "Insufficient depth cannot be attributed conclusively to truncation versus pitcher debut/role."
+  },
+  "competition": {
+    "status": "UNKNOWN",
+    "authoritative_field_found": false,
+    "no_heuristic_filter": true
+  },
+  "temporal_evidence": {
+    "status": "DATE_ONLY",
+    "authoritative_game_end_found": false
+  },
+  "comparison_metrics": {
+    "last3StartsKs1": {
+      "comparables": 255,
+      "exact_match_pct": 90.98039215686275,
+      "mae": 0.2627450980392157,
+      "median_absolute_error": 0,
+      "max_error": 8,
+      "correlation": 0.9177807255851375,
+      "material_discrepancies": 23
+    },
+    "last3StartsKs2": {
+      "comparables": 246,
+      "exact_match_pct": 69.10569105691057,
+      "mae": 0.7235772357723578,
+      "median_absolute_error": 0,
+      "max_error": 8,
+      "correlation": 0.781930709736088,
+      "material_discrepancies": 76
+    },
+    "last3StartsKs3": {
+      "comparables": 236,
+      "exact_match_pct": 58.47457627118644,
+      "mae": 1.1016949152542372,
+      "median_absolute_error": 0,
+      "max_error": 8,
+      "correlation": 0.6697829956935671,
+      "material_discrepancies": 98
+    },
+    "last3StartsIp1": {
+      "comparables": 255,
+      "exact_match_pct": 61.568627450980394,
+      "mae": 0.1265359477124182,
+      "median_absolute_error": 0,
+      "max_error": 3.3,
+      "correlation": 0.9552671203700548,
+      "material_discrepancies": 19
+    },
+    "last3StartsIp2": {
+      "comparables": 246,
+      "exact_match_pct": 48.3739837398374,
+      "mae": 0.3508130081300808,
+      "median_absolute_error": 0.033333333333333215,
+      "max_error": 4.7,
+      "correlation": 0.8207373102126417,
+      "material_discrepancies": 43
+    },
+    "last3StartsIp3": {
+      "comparables": 236,
+      "exact_match_pct": 46.186440677966104,
+      "mae": 0.5032485875706212,
+      "median_absolute_error": 0.033333333333333215,
+      "max_error": 4,
+      "correlation": 0.7553704416683449,
+      "material_discrepancies": 62
+    },
+    "last3StartsBf1": {
+      "comparables": 255,
+      "exact_match_pct": 88.62745098039215,
+      "mae": 0.3803921568627451,
+      "median_absolute_error": 0,
+      "max_error": 9,
+      "correlation": 0.9601883630467866,
+      "material_discrepancies": 29
+    },
+    "last3StartsBf2": {
+      "comparables": 246,
+      "exact_match_pct": 67.47967479674797,
+      "mae": 1.1300813008130082,
+      "median_absolute_error": 0,
+      "max_error": 15,
+      "correlation": 0.8367669831970679,
+      "material_discrepancies": 80
+    },
+    "last3StartsBf3": {
+      "comparables": 236,
+      "exact_match_pct": 54.23728813559322,
+      "mae": 1.6101694915254237,
+      "median_absolute_error": 0,
+      "max_error": 15,
+      "correlation": 0.7582881178774937,
+      "material_discrepancies": 108
+    },
+    "last5StartsKsAvg": {
+      "comparables": 255,
+      "exact_match_pct": 42.745098039215684,
+      "mae": 0.35581699346405227,
+      "median_absolute_error": 0.20000000000000018,
+      "max_error": 2.2,
+      "correlation": 0.9341330064165652,
+      "material_discrepancies": 31
+    },
+    "last5StartsKsStd": {
+      "comparables": 255,
+      "exact_match_pct": 9.019607843137255,
+      "mae": 0.2369103060966815,
+      "median_absolute_error": 0.09999999999999987,
+      "max_error": 1.8048326194419548,
+      "correlation": 0.8583703044441133,
+      "material_discrepancies": 16
+    },
+    "last5StartsIpAvg": {
+      "comparables": 255,
+      "exact_match_pct": 14.901960784313726,
+      "mae": 0.20779956427015245,
+      "median_absolute_error": 0.06666666666666643,
+      "max_error": 1.9666666666666668,
+      "correlation": 0.9388025997683138,
+      "material_discrepancies": 4
+    },
+    "last5StartsBfAvg": {
+      "comparables": 255,
+      "exact_match_pct": 40,
+      "mae": 0.6190849673202616,
+      "median_absolute_error": 0.25,
+      "max_error": 6.199999999999999,
+      "correlation": 0.9548701794520311,
+      "material_discrepancies": 65
+    },
+    "last5StartsPitchCountAvg": {
+      "comparables": 255,
+      "exact_match_pct": 12.156862745098039,
+      "mae": 2.119150326797384,
+      "median_absolute_error": 0.7999999999999972,
+      "max_error": 23.5,
+      "correlation": 0.9641556490508018,
+      "material_discrepancies": 125
+    },
+    "pitchesLastStart": {
+      "comparables": 258,
+      "exact_match_pct": 82.17054263565892,
+      "mae": 3.387596899224806,
+      "median_absolute_error": 0,
+      "max_error": 101,
+      "correlation": 0.7971569365870569,
+      "material_discrepancies": 46
+    },
+    "pitchesLast3Starts": {
+      "comparables": 258,
+      "exact_match_pct": 43.798449612403104,
+      "mae": 14.135658914728682,
+      "median_absolute_error": 3,
+      "max_error": 300,
+      "correlation": 0.7842604327846062,
+      "material_discrepancies": 145
+    },
+    "daysSinceLastStart": {
+      "comparables": 258,
+      "exact_match_pct": 81.78294573643412,
+      "mae": 2.7751937984496124,
+      "median_absolute_error": 0,
+      "max_error": 92,
+      "correlation": 0.13221121636810967,
+      "material_discrepancies": 47
+    },
+    "last3AppearancesKs1": {
+      "comparables": 260,
+      "exact_match_pct": 91.92307692307692,
+      "mae": 0.2423076923076923,
+      "median_absolute_error": 0,
+      "max_error": 11,
+      "correlation": 0.9147487759217584,
+      "material_discrepancies": 21
+    },
+    "last3AppearancesKs2": {
+      "comparables": 250,
+      "exact_match_pct": 74.4,
+      "mae": 0.596,
+      "median_absolute_error": 0,
+      "max_error": 10,
+      "correlation": 0.819918018881346,
+      "material_discrepancies": 64
+    },
+    "last3AppearancesKs3": {
+      "comparables": 240,
+      "exact_match_pct": 63.75,
+      "mae": 0.9875,
+      "median_absolute_error": 0,
+      "max_error": 8,
+      "correlation": 0.7174985150802349,
+      "material_discrepancies": 87
+    },
+    "last3AppearancesIp1": {
+      "comparables": 260,
+      "exact_match_pct": 61.92307692307692,
+      "mae": 0.1674358974358973,
+      "median_absolute_error": 0,
+      "max_error": 5,
+      "correlation": 0.9080488173136013,
+      "material_discrepancies": 15
+    },
+    "last3AppearancesIp2": {
+      "comparables": 250,
+      "exact_match_pct": 50.8,
+      "mae": 0.37053333333333294,
+      "median_absolute_error": 0,
+      "max_error": 6,
+      "correlation": 0.7890964994822316,
+      "material_discrepancies": 39
+    },
+    "last3AppearancesIp3": {
+      "comparables": 240,
+      "exact_match_pct": 49.583333333333336,
+      "mae": 0.4619444444444442,
+      "median_absolute_error": 0.033333333333333215,
+      "max_error": 5,
+      "correlation": 0.7908161053315449,
+      "material_discrepancies": 57
+    },
+    "last3AppearancesBf1": {
+      "comparables": 260,
+      "exact_match_pct": 89.61538461538461,
+      "mae": 0.7,
+      "median_absolute_error": 0,
+      "max_error": 22,
+      "correlation": 0.8712665695246011,
+      "material_discrepancies": 27
+    },
+    "last3AppearancesBf2": {
+      "comparables": 250,
+      "exact_match_pct": 72.4,
+      "mae": 1.228,
+      "median_absolute_error": 0,
+      "max_error": 23,
+      "correlation": 0.7809717227839513,
+      "material_discrepancies": 69
+    },
+    "last3AppearancesBf3": {
+      "comparables": 240,
+      "exact_match_pct": 61.25,
+      "mae": 1.5208333333333333,
+      "median_absolute_error": 0,
+      "max_error": 18,
+      "correlation": 0.7836848361426202,
+      "material_discrepancies": 93
+    },
+    "last5AppearancesKsAvg": {
+      "comparables": 260,
+      "exact_match_pct": 40.38461538461539,
+      "mae": 0.4441666666666668,
+      "median_absolute_error": 0.20000000000000018,
+      "max_error": 4,
+      "correlation": 0.8996627270513755,
+      "material_discrepancies": 41
+    },
+    "last5AppearancesKsStd": {
+      "comparables": 260,
+      "exact_match_pct": 6.923076923076923,
+      "mae": 0.27467414362946485,
+      "median_absolute_error": 0.12557280900008416,
+      "max_error": 2.8284271247461903,
+      "correlation": 0.8142355691925797,
+      "material_discrepancies": 17
+    },
+    "last5AppearancesIpAvg": {
+      "comparables": 260,
+      "exact_match_pct": 13.846153846153847,
+      "mae": 0.2842307692307692,
+      "median_absolute_error": 0.13333333333333375,
+      "max_error": 2.4444444444444446,
+      "correlation": 0.9126064687262873,
+      "material_discrepancies": 15
+    },
+    "last5AppearancesBfAvg": {
+      "comparables": 260,
+      "exact_match_pct": 37.30769230769231,
+      "mae": 0.9772435897435899,
+      "median_absolute_error": 0.3999999999999986,
+      "max_error": 9.200000000000001,
+      "correlation": 0.9125431530053303,
+      "material_discrepancies": 80
+    },
+    "last5AppearancesPitchCountAvg": {
+      "comparables": 260,
+      "exact_match_pct": 10.76923076923077,
+      "mae": 3.6837179487179488,
+      "median_absolute_error": 1.4000000000000057,
+      "max_error": 37,
+      "correlation": 0.9109290071230612,
+      "material_discrepancies": 144
+    }
+  },
+  "family_comparison": {
+    "LAST3_STARTS": {
+      "comparables": 2211,
+      "exact_match_pct": 65.35504296698326,
+      "mae": 0.6772199608020488,
+      "correlation": 0.980443526748027
+    },
+    "LAST3_APPEARANCES": {
+      "comparables": 2250,
+      "exact_match_pct": 68.71111111111111,
+      "mae": 0.6889037037037025,
+      "correlation": 0.9719008734564819
+    }
+  },
+  "material_discrepancies": 1786,
+  "leakage": {
+    "history_date_before_target": true,
+    "target_game_excluded": true,
+    "future_games_excluded": true,
+    "target_actual_k_used": false,
+    "target_boxscore_used": false,
+    "identity_pitcherId_only": true,
+    "duplicate_target_keys": 0,
+    "assertions_passed": true
+  },
+  "limitations": [
+    "No authoritative gameType found locally; competition_status is UNKNOWN.",
+    "Only game date is authoritative; temporal_evidence is DATE_ONLY and does not prove intraday availability.",
+    "No local dates precede 2026-03-01; shallow history cannot be distinguished conclusively from debut or role change."
+  ],
+  "models_trained": false,
+  "probabilities_calculated": false,
+  "official_dataset_sha256": {
+    "before": "D959F11980A0C0D2A8310600C4A2FF7B506C2F0C26787EB426959E9A4AC442E0",
+    "after": "D959F11980A0C0D2A8310600C4A2FF7B506C2F0C26787EB426959E9A4AC442E0",
+    "expected": "D959F11980A0C0D2A8310600C4A2FF7B506C2F0C26787EB426959E9A4AC442E0",
+    "unchanged": true
+  }
+}

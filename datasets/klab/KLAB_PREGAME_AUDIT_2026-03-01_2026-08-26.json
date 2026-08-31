@@ -1,0 +1,117 @@
+{
+  "start_date": "2026-03-01",
+  "end_date": "2026-08-26",
+  "universe_games_at_freeze": 2243,
+  "funnel": {
+    "category_a_manifest": 598,
+    "snapshots_recovered": 598,
+    "snapshots_valid": 596,
+    "games_with_final_matching": 5,
+    "games_with_actual_k": 5,
+    "final_pitcher_game_observations": 10
+  },
+  "postponed_or_reprogrammed": [
+    {
+      "game_id": "824424",
+      "game_date": "2026-06-14",
+      "scheduled_time": "1:40 PM ET",
+      "snapshot_captured_at": "2026-06-14T17:04:46.577Z",
+      "snapshot_status": "Pre-Game",
+      "classification": "A",
+      "reason": "timestamp anterior al inicio + estado pregame explícito + sin evidencia live/postgame",
+      "source": "Firestore",
+      "final_date": "2026-06-14",
+      "final_time": "1:40 PM ET",
+      "final_status": "Postponed"
+    },
+    {
+      "game_id": "823357",
+      "game_date": "2026-07-10",
+      "scheduled_time": "6:40 PM ET",
+      "snapshot_captured_at": "2026-07-10T20:34:53.733Z",
+      "snapshot_status": "Pre-Game",
+      "classification": "A",
+      "reason": "timestamp anterior al inicio + estado pregame explícito + sin evidencia live/postgame",
+      "source": "Firestore",
+      "final_date": "2026-07-10",
+      "final_time": "6:40 PM ET",
+      "final_status": "Postponed"
+    }
+  ],
+  "dataset_report": {
+    "startDate": "2026-03-01",
+    "endDate": "2026-08-26",
+    "outputFilename": "KLAB_PITCHER_TRAINING_DATASET_2026-03-01_2026-08-26.csv",
+    "totalGames": 598,
+    "totalPitchers": 10,
+    "candidatePitchers": 28,
+    "candidateRows": 28,
+    "finalRows": 10,
+    "observationsWithActualK": 10,
+    "discardedWithoutActualK": 18,
+    "discardedInvalidActualK": 0,
+    "duplicateKeys": [],
+    "outOfRangeRows": 0,
+    "gamesWithoutPregameSnapshot": 1,
+    "rowsWithPregameSnapshot": 28,
+    "leakageColumns": [],
+    "anomalies": [],
+    "featureColumns": [
+      "pitcher_k_pct",
+      "pitcher_so_rate",
+      "pitcher_swstr_pct",
+      "pitcher_csw_pct",
+      "pitcher_bb_pct",
+      "pitcher_fip",
+      "pitcher_xfip",
+      "pitcher_siera",
+      "pitcher_xera",
+      "pitcher_last5_ks_avg",
+      "pitcher_last5_ip_avg",
+      "pitcher_last5_bf_avg",
+      "pitcher_last5_pitch_count_avg",
+      "projected_pitches",
+      "projected_innings",
+      "pitches_last_start",
+      "pitches_last_3_starts",
+      "days_since_last_start",
+      "opponent_lineup_k_pct",
+      "opponent_offense_ops",
+      "opponent_offense_woba",
+      "opponent_offense_xwoba",
+      "park_factor_k",
+      "weather_temp",
+      "weather_wind_speed",
+      "side"
+    ],
+    "administrativeColumns": [
+      "game_id",
+      "pitcher_id",
+      "pitcher_name",
+      "game_date",
+      "snapshot_captured_at",
+      "team",
+      "opponent",
+      "side"
+    ],
+    "benchmarkColumns": [
+      "projected_strikeouts"
+    ],
+    "targetColumns": [
+      "actual_k"
+    ],
+    "historicalFunnel": {
+      "manifestGames": 596,
+      "snapshotsRecovered": 596,
+      "validSnapshots": 596,
+      "gamesWithFinalMatch": 14,
+      "gamesWithActualK": 5,
+      "finalPitcherGameObservations": 10
+    }
+  },
+  "files": {
+    "manifest": "C:\\Users\\Rolando Valdez\\Desktop\\MLBDATAENGINE\\datasets\\klab\\KLAB_PREGAME_MANIFEST_2026-03-01_2026-08-26.json",
+    "snapshots": "C:\\Users\\Rolando Valdez\\Desktop\\MLBDATAENGINE\\mlb_pregame_training_snapshots.json",
+    "csv": "C:\\Users\\Rolando Valdez\\Desktop\\MLBDATAENGINE\\datasets\\ml\\KLAB_PITCHER_TRAINING_DATASET_2026-03-01_2026-08-26.csv"
+  }
+}

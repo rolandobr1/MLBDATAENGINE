@@ -5,13 +5,20 @@
   "scripts": {
     "dev": "esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=server.mjs && node server.mjs",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
-    "test": "tsx src/utils/lineupMetrics.test.ts && tsx src/datasets/klabTrainingDataset.test.ts",
+    "test": "tsx src/utils/lineupMetrics.test.ts && tsx src/datasets/klabTrainingDataset.test.ts && tsx src/datasets/firestorePregameIdAudit.test.ts && tsx src/datasets/klabDynamicHistoryAudit.test.ts && tsx src/datasets/klabDynamicRollingFeatures.test.ts && tsx src/datasets/klabDynamicRollingExperiment.test.ts && tsx src/datasets/klabDynamicRollingMigrationAudit.test.ts && tsx src/datasets/klabDynamicRollingModelComparison.test.ts",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "klab:recover-history": "tsx src/datasets/firestorePregameHistory.ts",
     "klab:history": "tsx src/datasets/klabHistoricalMatching.ts",
-    "klab:match-history": "tsx src/datasets/klabHistoricalMatching.ts"
+    "klab:match-history": "tsx src/datasets/klabHistoricalMatching.ts",
+    "klab:audit-firestore-ids": "tsx src/datasets/firestorePregameIdAudit.ts",
+    "klab:audit-dynamic-history": "tsx src/datasets/klabDynamicHistoryAudit.ts",
+    "klab:experiment-dynamic-rolling": "tsx src/datasets/klabDynamicRollingExperiment.ts",
+    "klab:audit-dynamic-rolling-migration": "tsx src/datasets/klabDynamicRollingMigrationAudit.ts",
+    "klab:audit-dynamic-rolling": "tsx src/datasets/klabDynamicRollingAudit.ts",
+    "klab:compare-dynamic-rolling": "tsx src/datasets/klabDynamicRollingAudit.ts",
+    "klab:compare-dynamic-rolling-models": "tsx src/datasets/klabDynamicRollingModelComparison.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

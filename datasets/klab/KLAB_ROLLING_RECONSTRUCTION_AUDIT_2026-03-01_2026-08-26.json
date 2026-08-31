@@ -1,0 +1,676 @@
+{
+  "version": 1,
+  "created_at": "2026-08-27T13:32:32.022325-04:00",
+  "read_only_sources": true,
+  "range": [
+    "2026-03-01",
+    "2026-08-26"
+  ],
+  "methodology": {
+    "identity": "IDs solamente; nunca nombre->ID",
+    "history_rule": "history.date < target.date; history.game_id != target.game_id; si record timestamp existe, record_timestamp < target_start",
+    "target_identity_warning": "playerId del boxscore final del target es retrospectivo",
+    "model_training": false,
+    "official_dataset_modified": false
+  },
+  "source_inventory": [
+    {
+      "source": "mlb_database.json",
+      "date_range": [
+        "2026-03-01",
+        "2026-08-27"
+      ],
+      "games": 2268,
+      "final_games": 2182,
+      "identifiable_pitcher_rows": 4159,
+      "statistics": [
+        "playerId",
+        "K",
+        "IP",
+        "BF",
+        "pitches",
+        "BB",
+        "hits",
+        "runs",
+        "team",
+        "opponent",
+        "side"
+      ],
+      "coverage": "Principal; 4,160 pitcher-juego completos dentro del rango"
+    },
+    {
+      "source": "datasets/klab/KLAB_PITCHER_TRAINING_DATASET_2026-03-01_2026-08-26.csv",
+      "date_range": [
+        "2026-06-23",
+        "2026-08-26"
+      ],
+      "games": 260,
+      "identifiable_pitcher_rows": 265,
+      "statistics": [
+        "features V1",
+        "actual_k"
+      ],
+      "coverage": "Oficial; 260 HOME y 5 AWAY"
+    },
+    {
+      "source": "mlb_pregame_training_snapshots.json",
+      "date_range": [
+        "2026-03-01",
+        "2026-08-26"
+      ],
+      "games": 549,
+      "identifiable_pitcher_rows": 306,
+      "statistics": [
+        "features pregame",
+        "pitchers",
+        "metadata"
+      ],
+      "coverage": "Snapshots categoría A; identidad incompleta"
+    },
+    {
+      "source": "boxscore.json",
+      "date_range": "archivo puntual/no serie completa",
+      "games": null,
+      "identifiable_pitcher_rows": null,
+      "statistics": [
+        "boxscore raw"
+      ],
+      "coverage": "Auxiliar; no necesario frente a mlb_database.json"
+    }
+  ],
+  "feature_inventory": [
+    {
+      "feature": "pitcher_last5_ks_avg",
+      "file": "server.ts:3352-3407",
+      "function": "fetchPitcherLast5Profile",
+      "formula": "mean(strikeOuts) de hasta 5 aperturas previas; 2 decimales",
+      "sources": [
+        "MLB gameLog pitching"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sí",
+      "minimum_data": "pitcher_id,date,game_id,K,starter",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Bajo si identidad target es pregame",
+      "classification": "B"
+    },
+    {
+      "feature": "pitcher_last5_ip_avg",
+      "file": "server.ts:3352-3407",
+      "function": "fetchPitcherLast5Profile",
+      "formula": "mean(outs/3 redondeado a 1 decimal) hasta 5 aperturas previas",
+      "sources": [
+        "MLB gameLog"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sí",
+      "minimum_data": "pitcher_id,date,game_id,IP",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Bajo con corte temporal",
+      "classification": "B"
+    },
+    {
+      "feature": "pitcher_last5_bf_avg",
+      "file": "server.ts:3352-3407",
+      "function": "fetchPitcherLast5Profile",
+      "formula": "mean(BF positivos) hasta 5 aperturas; sane cap <=40",
+      "sources": [
+        "MLB gameLog"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sí",
+      "minimum_data": "pitcher_id,date,game_id,BF",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Bajo con corte temporal",
+      "classification": "B"
+    },
+    {
+      "feature": "pitcher_last5_pitch_count_avg",
+      "file": "server.ts:3352-3407",
+      "function": "fetchPitcherLast5Profile",
+      "formula": "mean(numberOfPitches positivos) hasta 5 aperturas, redondeado; cap <=130",
+      "sources": [
+        "MLB gameLog"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sí",
+      "minimum_data": "pitcher_id,date,game_id,pitches",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Bajo con corte temporal",
+      "classification": "B"
+    },
+    {
+      "feature": "pitches_last_start",
+      "file": "server.ts:3739-3779",
+      "function": "fetchStarterFatigue",
+      "formula": "pitcheos de la aparición previa más reciente",
+      "sources": [
+        "MLB gameLog"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sí",
+      "minimum_data": "pitcher_id,date,pitches",
+      "needs_pitcher_id": true,
+      "needs_game_id": false,
+      "needs_date": true,
+      "leakage_risk": "Bajo con corte temporal",
+      "classification": "B"
+    },
+    {
+      "feature": "pitches_last_3_starts",
+      "file": "server.ts:3739-3779",
+      "function": "fetchStarterFatigue",
+      "formula": "suma de pitcheos de hasta 3 apariciones previas",
+      "sources": [
+        "MLB gameLog"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sí",
+      "minimum_data": "pitcher_id,date,pitches",
+      "needs_pitcher_id": true,
+      "needs_game_id": false,
+      "needs_date": true,
+      "leakage_risk": "Bajo con corte temporal",
+      "classification": "B"
+    },
+    {
+      "feature": "days_since_last_start",
+      "file": "server.ts:3739-3779",
+      "function": "fetchStarterFatigue",
+      "formula": "floor(abs(targetDate-lastLogDate)/día); si >30 reemplaza por 5",
+      "sources": [
+        "MLB gameLog"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sí, salvo semántica del fallback >30",
+      "minimum_data": "pitcher_id,target_date,last_date",
+      "needs_pitcher_id": true,
+      "needs_game_id": false,
+      "needs_date": true,
+      "leakage_risk": "Bajo; fallback mezcla lesión y descanso",
+      "classification": "B"
+    },
+    {
+      "feature": "pitcher_k_pct / pitcher_so_rate / pitcher_bb_pct / pitcher_fip",
+      "file": "server.ts:3300-3345 y fuentes season",
+      "function": "fetchPitcherLast7 / season stats",
+      "formula": "agregados K/BF, BB/BF y FIP; la ventana/fuente depende del merge",
+      "sources": [
+        "MLB season/gameLog"
+      ],
+      "future_dependency": "Requiere confirmar freeze temporal",
+      "stored_dependency": true,
+      "reconstructible": "Parcial desde boxscores",
+      "minimum_data": "K,BB,BF,HR,HBP,IP previos",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Medio si se usa agregado actualizado postgame",
+      "classification": "C"
+    },
+    {
+      "feature": "pitcher_swstr_pct / pitcher_csw_pct / pitcher_xfip / pitcher_siera / pitcher_xera",
+      "file": "server.ts + pybaseballApi.ts",
+      "function": "advanced/statcast extractors",
+      "formula": "métricas avanzadas externas, no derivables del boxscore básico",
+      "sources": [
+        "Statcast/PyBaseball"
+      ],
+      "future_dependency": "Depende del corte de consulta",
+      "stored_dependency": true,
+      "reconstructible": "No con boxscore local básico",
+      "minimum_data": "pitch-level/Statcast",
+      "needs_pitcher_id": true,
+      "needs_game_id": false,
+      "needs_date": true,
+      "leakage_risk": "Medio por fecha de actualización",
+      "classification": "D"
+    },
+    {
+      "feature": "projected_pitches",
+      "file": "server.ts:1711-1760",
+      "function": "calculateProjectedPitchCount",
+      "formula": "0.55*last5PitchAvg + 0.25*(pitchesLast3/3) + 0.20*roleCluster + ajustes descanso/carga/rol y clamp",
+      "sources": [
+        "rolling pitcher",
+        "fatigue",
+        "role BF"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Parcial/exacta si todos los inputs están disponibles",
+      "minimum_data": "last5 pitches,last3 pitches,BF,rest",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Medio por inputs faltantes/defaults",
+      "classification": "C"
+    },
+    {
+      "feature": "projected_innings",
+      "file": "server.ts:calculateVortexProjectedKs",
+      "function": "calculateVortexProjectedKs",
+      "formula": "derivada de expected BF, rol y projected pitches",
+      "sources": [
+        "rolling pitcher",
+        "role",
+        "matchup"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Parcial",
+      "minimum_data": "BF/pitches/rol",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Medio",
+      "classification": "C"
+    },
+    {
+      "feature": "opponent_lineup_k_pct",
+      "file": "server.ts + lineupMetrics.ts",
+      "function": "lineup aggregation",
+      "formula": "promedio ponderado/lineup proyectado según bateadores y mano",
+      "sources": [
+        "lineup pregame",
+        "splits"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "No desde boxscore de resultados solamente",
+      "minimum_data": "lineup pregame IDs y splits anteriores",
+      "needs_pitcher_id": false,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Alto si lineup final reemplaza lineup pregame",
+      "classification": "E"
+    },
+    {
+      "feature": "opponent_offense_ops / woba / xwoba",
+      "file": "server.ts:3649+ y snapshots",
+      "function": "fetchAdvancedOffense",
+      "formula": "estadísticas de equipo/Statcast de temporada",
+      "sources": [
+        "MLB season",
+        "Statcast"
+      ],
+      "future_dependency": "Debe congelarse a T",
+      "stored_dependency": true,
+      "reconstructible": "OPS/wOBA parcial; xwOBA no con boxscore básico",
+      "minimum_data": "resultados ofensivos acumulados previos",
+      "needs_pitcher_id": false,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Medio-alto si el agregado es postgame",
+      "classification": "C"
+    },
+    {
+      "feature": "park_factor_k",
+      "file": "parkFactorsScraper.ts",
+      "function": "park factor scraper",
+      "formula": "factor rolling externo por parque",
+      "sources": [
+        "Baseball Savant"
+      ],
+      "future_dependency": "Depende del freeze",
+      "stored_dependency": true,
+      "reconstructible": "No desde boxscores locales actuales con fórmula exacta",
+      "minimum_data": "histórico multianual por parque",
+      "needs_pitcher_id": false,
+      "needs_game_id": false,
+      "needs_date": true,
+      "leakage_risk": "Medio",
+      "classification": "D"
+    },
+    {
+      "feature": "weather_temp / weather_wind_speed",
+      "file": "weather extractor/snapshot",
+      "function": "weather fetch",
+      "formula": "observación/pronóstico del juego",
+      "sources": [
+        "weather pregame"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "No desde boxscore",
+      "minimum_data": "snapshot meteorológico pregame",
+      "needs_pitcher_id": false,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Bajo si snapshot pregame",
+      "classification": "D"
+    },
+    {
+      "feature": "projected_strikeouts (benchmark)",
+      "file": "server.ts:calculateVortexProjectedKs",
+      "function": "calculateVortexProjectedKs",
+      "formula": "expectedBF * blended expectedKpct * ajustes fatiga/rol/varianza",
+      "sources": [
+        "pitcher rolling",
+        "lineup",
+        "stuff",
+        "fatigue"
+      ],
+      "future_dependency": false,
+      "stored_dependency": true,
+      "reconstructible": "Sólo si todos los inputs pregame se reconstruyen",
+      "minimum_data": "múltiples features anteriores",
+      "needs_pitcher_id": true,
+      "needs_game_id": true,
+      "needs_date": true,
+      "leakage_risk": "Alto para auditoría circular; benchmark, no feature V1",
+      "classification": "E"
+    }
+  ],
+  "comparison": {
+    "last3_ks_1": {
+      "total_targets": 4159,
+      "reconstructed": 535,
+      "comparable": 530,
+      "exact_matches": 110,
+      "exact_match_pct": 20.75,
+      "mean_absolute_difference": 2.3132,
+      "max_absolute_difference": 11.0,
+      "correlation": 0.2055,
+      "reconstruction_pct": 12.86
+    },
+    "last3_ks_2": {
+      "total_targets": 4159,
+      "reconstructed": 178,
+      "comparable": 178,
+      "exact_matches": 24,
+      "exact_match_pct": 13.48,
+      "mean_absolute_difference": 2.3483,
+      "max_absolute_difference": 8.0,
+      "correlation": 0.2432,
+      "reconstruction_pct": 4.28
+    },
+    "last3_ks_3": {
+      "total_targets": 4159,
+      "reconstructed": 53,
+      "comparable": 53,
+      "exact_matches": 6,
+      "exact_match_pct": 11.32,
+      "mean_absolute_difference": 2.3396,
+      "max_absolute_difference": 9.0,
+      "correlation": 0.1349,
+      "reconstruction_pct": 1.27
+    },
+    "last3_ip_1": {
+      "total_targets": 4159,
+      "reconstructed": 535,
+      "comparable": 530,
+      "exact_matches": 104,
+      "exact_match_pct": 19.62,
+      "mean_absolute_difference": 1.1206,
+      "max_absolute_difference": 6.3,
+      "correlation": 0.3583,
+      "reconstruction_pct": 12.86
+    },
+    "last3_ip_2": {
+      "total_targets": 4159,
+      "reconstructed": 178,
+      "comparable": 178,
+      "exact_matches": 24,
+      "exact_match_pct": 13.48,
+      "mean_absolute_difference": 1.2702,
+      "max_absolute_difference": 5.0,
+      "correlation": 0.012,
+      "reconstruction_pct": 4.28
+    },
+    "last3_ip_3": {
+      "total_targets": 4159,
+      "reconstructed": 53,
+      "comparable": 53,
+      "exact_matches": 5,
+      "exact_match_pct": 9.43,
+      "mean_absolute_difference": 1.3755,
+      "max_absolute_difference": 5.0,
+      "correlation": 0.0596,
+      "reconstruction_pct": 1.27
+    },
+    "last3_bf_1": {
+      "total_targets": 4159,
+      "reconstructed": 535,
+      "comparable": 530,
+      "exact_matches": 81,
+      "exact_match_pct": 15.28,
+      "mean_absolute_difference": 3.3849,
+      "max_absolute_difference": 18.0,
+      "correlation": 0.463,
+      "reconstruction_pct": 12.86
+    },
+    "last3_bf_2": {
+      "total_targets": 4159,
+      "reconstructed": 178,
+      "comparable": 178,
+      "exact_matches": 17,
+      "exact_match_pct": 9.55,
+      "mean_absolute_difference": 3.5674,
+      "max_absolute_difference": 18.0,
+      "correlation": 0.0399,
+      "reconstruction_pct": 4.28
+    },
+    "last3_bf_3": {
+      "total_targets": 4159,
+      "reconstructed": 53,
+      "comparable": 53,
+      "exact_matches": 3,
+      "exact_match_pct": 5.66,
+      "mean_absolute_difference": 4.1509,
+      "max_absolute_difference": 15.0,
+      "correlation": 0.1699,
+      "reconstruction_pct": 1.27
+    },
+    "last5_ks_avg": {
+      "total_targets": 4159,
+      "reconstructed": 535,
+      "comparable": 530,
+      "exact_matches": 18,
+      "exact_match_pct": 3.4,
+      "mean_absolute_difference": 1.7301,
+      "max_absolute_difference": 7.8,
+      "correlation": 0.3702,
+      "reconstruction_pct": 12.86
+    },
+    "last5_ks_std": {
+      "total_targets": 4159,
+      "reconstructed": 535,
+      "comparable": 530,
+      "exact_matches": 4,
+      "exact_match_pct": 0.75,
+      "mean_absolute_difference": 1.5524,
+      "max_absolute_difference": 4.22,
+      "correlation": 0.1283,
+      "reconstruction_pct": 12.86
+    },
+    "last5_ip_avg": {
+      "total_targets": 4159,
+      "reconstructed": 535,
+      "comparable": 530,
+      "exact_matches": 31,
+      "exact_match_pct": 5.85,
+      "mean_absolute_difference": 0.8091,
+      "max_absolute_difference": 4.8,
+      "correlation": 0.4542,
+      "reconstruction_pct": 12.86
+    },
+    "last5_bf_avg": {
+      "total_targets": 4159,
+      "reconstructed": 535,
+      "comparable": 530,
+      "exact_matches": 17,
+      "exact_match_pct": 3.21,
+      "mean_absolute_difference": 2.49,
+      "max_absolute_difference": 14.4,
+      "correlation": 0.5948,
+      "reconstruction_pct": 12.86
+    },
+    "last5_pitch_count_avg": {
+      "total_targets": 4159,
+      "reconstructed": 535,
+      "comparable": 530,
+      "exact_matches": 26,
+      "exact_match_pct": 4.91,
+      "mean_absolute_difference": 8.4566,
+      "max_absolute_difference": 59.0,
+      "correlation": 0.5819,
+      "reconstruction_pct": 12.86
+    },
+    "pitches_last_start": {
+      "total_targets": 4159,
+      "reconstructed": 535,
+      "comparable": 535,
+      "exact_matches": 40,
+      "exact_match_pct": 7.48,
+      "mean_absolute_difference": 12.0953,
+      "max_absolute_difference": 99.0,
+      "correlation": 0.3692,
+      "reconstruction_pct": 12.86
+    },
+    "pitches_last_3_starts": {
+      "total_targets": 4159,
+      "reconstructed": 535,
+      "comparable": 535,
+      "exact_matches": 1,
+      "exact_match_pct": 0.19,
+      "mean_absolute_difference": 138.3701,
+      "max_absolute_difference": 268.0,
+      "correlation": 0.2732,
+      "reconstruction_pct": 12.86
+    },
+    "days_since_last_start": {
+      "total_targets": 4159,
+      "reconstructed": 535,
+      "comparable": 535,
+      "exact_matches": 22,
+      "exact_match_pct": 4.11,
+      "mean_absolute_difference": 61.6187,
+      "max_absolute_difference": 162.0,
+      "correlation": -0.027,
+      "reconstruction_pct": 12.86
+    }
+  },
+  "coverage": {
+    "structural_candidate_pitcher_games": 4159,
+    "games": 2079,
+    "pitchers": 445,
+    "home": 2080,
+    "away": 2079,
+    "mean_depth_per_pitcher": 9.35,
+    "history_depth": {
+      "0": 3624,
+      "1": 357,
+      "2": 125,
+      "3_plus": 53
+    },
+    "last3_complete": 53,
+    "last5_complete": 1,
+    "last10_complete": 0,
+    "last3_pct": 1.27,
+    "last5_pct": 0.02,
+    "last10_pct": 0.0,
+    "date_order_only": {
+      "last3_complete": 3101,
+      "last5_complete": 2614,
+      "last10_complete": 1655,
+      "last3_pct": 74.56,
+      "last5_pct": 62.85,
+      "last10_pct": 39.79,
+      "evidence_level": "Final status + earlier calendar date; no reliable game_end timestamp"
+    },
+    "by_month": {
+      "2026-03": {
+        "pitcher_games": 856,
+        "home": 428,
+        "away": 428,
+        "last3": 0,
+        "last5": 0,
+        "last10": 0
+      },
+      "2026-04": {
+        "pitcher_games": 605,
+        "home": 303,
+        "away": 302,
+        "last3": 0,
+        "last5": 0,
+        "last10": 0
+      },
+      "2026-05": {
+        "pitcher_games": 700,
+        "home": 350,
+        "away": 350,
+        "last3": 0,
+        "last5": 0,
+        "last10": 0
+      },
+      "2026-06": {
+        "pitcher_games": 642,
+        "home": 321,
+        "away": 321,
+        "last3": 0,
+        "last5": 0,
+        "last10": 0
+      },
+      "2026-07": {
+        "pitcher_games": 694,
+        "home": 347,
+        "away": 347,
+        "last3": 17,
+        "last5": 0,
+        "last10": 0
+      },
+      "2026-08": {
+        "pitcher_games": 662,
+        "home": 331,
+        "away": 331,
+        "last3": 36,
+        "last5": 1,
+        "last10": 0
+      }
+    },
+    "defensible_training_rows_without_retro_identity": 265,
+    "methodological_warning": "Las filas usan playerId del boxscore final del target para definir la identidad objetivo; son cobertura estructural experimental, no observaciones pregame defendibles automáticamente. El timestamp local es de captura/backfill, no game_end."
+  },
+  "temporal_tests": {
+    "comparisons_generated": 70703,
+    "accepted_history_links": 770,
+    "rejected_history_links": 34724,
+    "same_game_links_accepted": 0,
+    "assertions_passed": true
+  },
+  "decision": {
+    "viable": [
+      "last3 K/IP/BF",
+      "last5 K/IP/BF/pitches",
+      "pitches last start/last3",
+      "days since last start"
+    ],
+    "conditional": [
+      "season-to-date K%, BB%, FIP y team offense",
+      "projected pitches/innings"
+    ],
+    "not_viable_from_basic_boxscores": [
+      "SwStr%, CSW%, xFIP, SIERA, xERA",
+      "lineup pregame",
+      "weather",
+      "park factor exacto",
+      "xwOBA exacto"
+    ]
+  }
+}
