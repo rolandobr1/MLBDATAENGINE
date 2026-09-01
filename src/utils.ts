@@ -7,7 +7,7 @@ import { MLBGame } from "./types";
 import { enrichWithVortexMetrics } from "./etl/transformers/vortexMetrics";
 import { savantCache } from "./etl/extractors/savantScraper";
 
-function escapeCsvValue(val: any): string {
+export function escapeCsvValue(val: any): string {
   if (val === undefined || val === null || val === "") return "";
   return `"${String(val).replace(/"/g, '""')}"`;
 }
@@ -73,7 +73,7 @@ const MLB_TEAM_ABBR: Record<string, string> = {
   "Washington Nationals": "WSH"
 };
 
-function getTeamAbbr(teamName: string): string | null {
+export function getTeamAbbr(teamName: string): string | null {
   return MLB_TEAM_ABBR[teamName] || null;
 }
 

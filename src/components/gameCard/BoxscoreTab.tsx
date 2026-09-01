@@ -21,9 +21,13 @@ interface BoxscoreTabProps {
   game: MLBGame;
   isRefreshing: boolean;
   onRefreshClick: (e: React.MouseEvent) => void;
+  /** Click en cualquier nombre del boxscore (bateador o lanzador, de
+   * cualquiera de los dos equipos) → abre su ventana de detalle completo
+   * (`PlayerStatsModal`). */
+  onSelectPlayer: (side: "home" | "away", name: string) => void;
 }
 
-export const BoxscoreTab: React.FC<BoxscoreTabProps> = ({ game, isRefreshing, onRefreshClick }) => {
+export const BoxscoreTab: React.FC<BoxscoreTabProps> = ({ game, isRefreshing, onRefreshClick, onSelectPlayer }) => {
   const [showAllPlays, setShowAllPlays] = React.useState(false);
   const [playSearch, setPlaySearch] = React.useState("");
 
@@ -105,7 +109,7 @@ export const BoxscoreTab: React.FC<BoxscoreTabProps> = ({ game, isRefreshing, on
                                 <td className="py-1.5 px-2 truncate">
                                   <div className="flex items-center gap-2 truncate">
                                     <span className="bg-slate-100 text-slate-600 px-1 rounded text-[8px] font-bold shrink-0 w-6 text-center">{player.position}</span>
-                                    <span className="text-slate-800 font-sans font-medium truncate" title={player.name}>{player.name}</span>
+                                    <button type="button" onClick={() => onSelectPlayer("away", player.name)} className="text-slate-800 font-sans font-medium truncate hover:text-blue-700 hover:underline underline-offset-2 focus:outline-none text-left" title={`${player.name} — click para ver todos los números`}>{player.name}</button>
                                   </div>
                                 </td>
                                 <td className="py-1.5 px-1 text-center text-slate-700">{player.ab}</td>
@@ -157,7 +161,7 @@ export const BoxscoreTab: React.FC<BoxscoreTabProps> = ({ game, isRefreshing, on
                             {game.liveBoxscore.away.pitchers.map((player: any, idx: number) => (
                               <tr key={idx} className="hover:bg-slate-50/50">
                                 <td className="py-1.5 px-2 truncate">
-                                  <span className="text-slate-800 font-sans font-medium truncate" title={player.name}>{player.name}</span>
+                                  <button type="button" onClick={() => onSelectPlayer("away", player.name)} className="text-slate-800 font-sans font-medium truncate hover:text-blue-700 hover:underline underline-offset-2 focus:outline-none text-left" title={`${player.name} — click para ver todos los números`}>{player.name}</button>
                                 </td>
                                 <td className="py-1.5 px-1 text-center font-bold text-slate-800">{player.ip}</td>
                                 <td className="py-1.5 px-1 text-center text-slate-700">{player.h || 0}</td>
@@ -215,7 +219,7 @@ export const BoxscoreTab: React.FC<BoxscoreTabProps> = ({ game, isRefreshing, on
                                 <td className="py-1.5 px-2 truncate">
                                   <div className="flex items-center gap-2 truncate">
                                     <span className="bg-slate-100 text-slate-600 px-1 rounded text-[8px] font-bold shrink-0 w-6 text-center">{player.position}</span>
-                                    <span className="text-slate-800 font-sans font-medium truncate" title={player.name}>{player.name}</span>
+                                    <button type="button" onClick={() => onSelectPlayer("home", player.name)} className="text-slate-800 font-sans font-medium truncate hover:text-red-700 hover:underline underline-offset-2 focus:outline-none text-left" title={`${player.name} — click para ver todos los números`}>{player.name}</button>
                                   </div>
                                 </td>
                                 <td className="py-1.5 px-1 text-center text-slate-700">{player.ab}</td>
@@ -267,7 +271,7 @@ export const BoxscoreTab: React.FC<BoxscoreTabProps> = ({ game, isRefreshing, on
                             {game.liveBoxscore.home.pitchers.map((player: any, idx: number) => (
                               <tr key={idx} className="hover:bg-slate-50/50">
                                 <td className="py-1.5 px-2 truncate">
-                                  <span className="text-slate-800 font-sans font-medium truncate" title={player.name}>{player.name}</span>
+                                  <button type="button" onClick={() => onSelectPlayer("home", player.name)} className="text-slate-800 font-sans font-medium truncate hover:text-red-700 hover:underline underline-offset-2 focus:outline-none text-left" title={`${player.name} — click para ver todos los números`}>{player.name}</button>
                                 </td>
                                 <td className="py-1.5 px-1 text-center font-bold text-slate-800">{player.ip}</td>
                                 <td className="py-1.5 px-1 text-center text-slate-700">{player.h || 0}</td>

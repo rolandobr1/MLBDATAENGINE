@@ -44,7 +44,7 @@ import {
 } from "lucide-react";
 
 import LiveFieldUI from "./gameCard/LiveFieldUI";
-import { PitcherStatsModal } from "./gameCard/PitcherStatsModal";
+import { PlayerStatsModal } from "./gameCard/PlayerStatsModal";
 import { ResumenTab } from "./gameCard/ResumenTab";
 import { LineupsTab } from "./gameCard/LineupsTab";
 import { BoxscoreTab } from "./gameCard/BoxscoreTab";
@@ -60,6 +60,12 @@ interface GameCardProps {
   onTogglePin?: (gameId: string) => void;
   globalExpandToggle?: number;
   globalExpandTarget?: boolean;
+  /** Fase "Vista Compacta": al hacer click en el mini-marcador de un juego,
+   * `App.tsx` manda esta señal para forzar la expansión de esta tarjeta en
+   * particular (sin afectar el estado expandido/contraído de las demás) y
+   * hacerle scroll. El `token` cambia en cada click para que un mismo juego
+   * pueda re-solicitarse aunque ya esté expandido. */
+  focusRequest?: { gameId: string; token: number } | null;
 }
 
 /**
@@ -71,17 +77,28 @@ interface GameCardProps {
  * cambió, y pasa `onRefresh`/`onTogglePin` como funciones estables (useCallback)
  * en vez de una función nueva por tarjeta en cada render.
  */
-const GameCardComponent: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, onTogglePin, globalExpandToggle, globalExpandTarget }) => {
+const GameCardComponent: React.FC<GameCardProps> = ({ game, onRefresh, isPinned, onTogglePin, globalExpandToggle, globalExpandTarget, focusRequest }) => {
   const [isCardExpanded, setIsCardExpanded] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<"resumen" | "lineups" | "boxscore" | "splits" | "fatigue" | "sabermetrics" | "injuries">("resumen");
   const [isRefreshing, setIsRefreshing] = React.useState(false);
-  const [selectedPitcherSide, setSelectedPitcherSide] = React.useState<"home" | "away" | null>(null);
+  // Generalizado (antes `selectedPitcherSide`, solo para el abridor): ahora
+  // cualquier nombre clickeado en Resumen/Alineaciones/Boxscore guarda acá su
+  // lado y su nombre, y `PlayerStatsModal` decide qué tan completo mostrarlo.
+  const [selectedPlayer, setSelectedPlayer] = React.useState<{ side: "home" | "away"; name: string } | null>(null);
+  const handleSelectPlayer = (side: "home" | "away", name: string) => setSelectedPlayer({ side, name });
 
   React.useEffect(() => {
     if (globalExpandToggle !== undefined && globalExpandToggle > 0) {
       setIsCardExpanded(!!globalExpandTarget);
     }
   }, [globalExpandToggle, globalExpandTarget]);
+
+  React.useEffect(() => {
+    if (focusRequest && String(focusRequest.gameId) === String(game.id)) {
+      setIsCardExpanded(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRequest]);
 
   const handleRefreshClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -107,8 +124,8 @@ const GameCardComponent: React.FC<GameCardProps> = ({ game, onRefresh, isPinned,
 
   return (
     <div className="rounded-xl overflow-hidden shadow-sm hover:shadow-md transition duration-200 font-sans bg-white border border-slate-200">
-      {selectedPitcherSide && (
-        <PitcherStatsModal game={game} side={selectedPitcherSide} onClose={() => setSelectedPitcherSide(null)} />
+      {selectedPlayer && (
+        <PlayerStatsModal game={game} side={selectedPlayer.side} name={selectedPlayer.name} onClose={() => setSelectedPlayer(null)} />
       )}
 
       {/* Game Card Header Block (Colorful Banner) */}
@@ -359,15 +376,15 @@ const GameCardComponent: React.FC<GameCardProps> = ({ game, onRefresh, isPinned,
 
           <div className="p-0 sm:p-6 font-sans text-slate-700 text-sm leading-relaxed space-y-4">
             {activeTab === "resumen" && (
-              <ResumenTab game={game} onSelectPitcher={(side) => setSelectedPitcherSide(side)} />
+              <ResumenTab game={game} onSelectPlayer={handleSelectPlayer} />
             )}
 
             {activeTab === "lineups" && (
-              <LineupsTab game={game} />
+              <LineupsTab game={game} onSelectPlayer={handleSelectPlayer} />
             )}
 
             {activeTab === "boxscore" && (
-              <BoxscoreTab game={game} isRefreshing={isRefreshing} onRefreshClick={handleRefreshClick} />
+              <BoxscoreTab game={game} isRefreshing={isRefreshing} onRefreshClick={handleRefreshClick} onSelectPlayer={handleSelectPlayer} />
             )}
 
             {activeTab === "splits" && (

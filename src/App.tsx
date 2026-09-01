@@ -7,6 +7,7 @@ import React from "react";
 import { Header } from "./components/Header";
 import { HarvesterPanel } from "./components/HarvesterPanel";
 import { GameCard } from "./components/GameCard";
+import { GameCardCompact } from "./components/GameCardCompact";
 import { GoogleSheetsSync } from "./components/GoogleSheetsSync";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
 import { BetTracking } from "./components/BetTracking";
@@ -31,7 +32,9 @@ import {
   Landmark,
   Compass,
   Pin,
-  X
+  X,
+  LayoutGrid,
+  Rows3
 } from "lucide-react";
 
 const mlbDivisions: Record<string, { league: string, division: string }> = {
@@ -172,6 +175,28 @@ export default function App() {
     setGlobalExpandTarget(newTarget);
     setGlobalExpandToggle(prev => prev + 1);
   };
+
+  // Menú de navegación de juegos: "Vista Completa" (tarjetas de siempre, con
+  // todo el detalle) vs "Vista Compacta" (mini-marcadores — logo, abreviación
+  // y carrera/hora — para ver todos los juegos del día de un vistazo). Al
+  // hacer click en un mini-marcador, `focusRequest` le indica a la tarjeta
+  // completa de ese juego (en `GameCard`) que se expanda, y el efecto de más
+  // abajo hace scroll hasta ella.
+  const [viewMode, setViewMode] = React.useState<"full" | "compact">("full");
+  const [focusRequest, setFocusRequest] = React.useState<{ gameId: string; token: number } | null>(null);
+
+  const handleSelectGameFromCompactView = (gameId: string) => {
+    setViewMode("full");
+    setFocusRequest({ gameId, token: Date.now() });
+  };
+
+  React.useEffect(() => {
+    if (!focusRequest || viewMode !== "full") return;
+    const t = setTimeout(() => {
+      document.getElementById(`game-card-${focusRequest.gameId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+    return () => clearTimeout(t);
+  }, [focusRequest, viewMode]);
 
   React.useEffect(() => {
     if (!selectedDate) return;
@@ -733,11 +758,15 @@ export default function App() {
                   extractedDates={extractedDates}
                   onCancel={handleCancelHarvest}
                   syncRemoteDates={() => fetchExtractedDates(true)}
-                />
-              </div>
-
-              <div ref={sheetsRef} className="px-6 pb-6">
-                <GoogleSheetsSync games={games} selectedDate={selectedDate} compact />
+                  games={games}
+                >
+                  {/* A pedido: las descargas de props/derivados/histórico van
+                      justo debajo de las principales, en la misma columna
+                      derecha, en vez de en un panel aparte más abajo. */}
+                  <div ref={sheetsRef}>
+                    <GoogleSheetsSync games={games} selectedDate={selectedDate} compact />
+                  </div>
+                </HarvesterPanel>
               </div>
 
             </>
@@ -780,22 +809,52 @@ export default function App() {
                 <Award className="text-baseball-blue" />
                 <span>Datos de Enfrentamientos Diarios</span>
                 {games.length > 0 && (
-                  <button
-                    onClick={handleToggleExpandAll}
-                    className="ml-4 flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 shadow-sm transition-colors"
-                  >
-                    {globalExpandTarget ? (
-                      <>
-                        <EyeOff size={14} className="text-slate-500" />
-                        Contraer todos
-                      </>
-                    ) : (
-                      <>
-                        <Eye size={14} className="text-slate-500" />
-                        Mostrar todos
-                      </>
+                  <>
+                    {/* Menú de navegación: Vista Completa (detalle de siempre) vs Vista
+                        Compacta (mini-marcadores para ver todos los juegos de un vistazo) */}
+                    <div className="ml-4 flex items-center rounded-lg border border-slate-300 bg-white p-0.5 shadow-sm" role="tablist" aria-label="Modo de vista de los juegos">
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={viewMode === "full"}
+                        onClick={() => setViewMode("full")}
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${viewMode === "full" ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
+                        title="Vista completa: una tarjeta detallada por juego"
+                      >
+                        <Rows3 size={13} />
+                        Vista Completa
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={viewMode === "compact"}
+                        onClick={() => setViewMode("compact")}
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${viewMode === "compact" ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
+                        title="Vista compacta: logo, abreviación y resultado de todos los juegos, para navegar rápido"
+                      >
+                        <LayoutGrid size={13} />
+                        Vista Compacta
+                      </button>
+                    </div>
+                    {viewMode === "full" && (
+                      <button
+                        onClick={handleToggleExpandAll}
+                        className="ml-2 flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 shadow-sm transition-colors"
+                      >
+                        {globalExpandTarget ? (
+                          <>
+                            <EyeOff size={14} className="text-slate-500" />
+                            Contraer todos
+                          </>
+                        ) : (
+                          <>
+                            <Eye size={14} className="text-slate-500" />
+                            Mostrar todos
+                          </>
+                        )}
+                      </button>
                     )}
-                  </button>
+                  </>
                 )}
               </h2>
               <p className="text-slate-500 text-xs mt-0.5">
@@ -805,10 +864,10 @@ export default function App() {
 
             <div className="flex flex-col items-start gap-2 w-full mt-3 sm:mt-0">
               {games.length > 0 && (
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full">
+                <div className="flex flex-col gap-2 w-full">
 
-                  {/* Search — full width on mobile, auto-shrink on desktop */}
-                  <div className="relative w-full sm:flex-1 sm:min-w-[180px] sm:max-w-xs">
+                  {/* Search — siempre en su propia fila, ancho completo */}
+                  <div className="relative w-full">
                     <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
                       <Search size={13} className="text-slate-400" />
                     </div>
@@ -821,36 +880,40 @@ export default function App() {
                     />
                   </div>
 
-                  {/* Selects: 2-col grid on mobile, single flex row on desktop */}
-                  <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:flex-row sm:items-center sm:gap-2 sm:w-auto">
-                    <div className="relative w-full sm:w-auto">
+                  {/* Selects: SIEMPRE cuadrícula 2x2, en cualquier ancho de pantalla — nada de
+                      flex-wrap ni de "4 en una fila". Ya se intentaron ambas variantes:
+                      flex-wrap desalineaba las columnas entre filas, y 4 columnas en una fila
+                      no daba espacio suficiente y cortaba el texto ("Hora (Tod▾"). 2x2 fijo es
+                      lo único que garantiza texto completo y columnas alineadas siempre. */}
+                  <div className="grid grid-cols-2 gap-2 w-full">
+                    <div className="relative w-full">
                       <Clock size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                      <select value={filterTime} onChange={e => setFilterTime(e.target.value)} className="pl-7 pr-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
+                      <select value={filterTime} onChange={e => setFilterTime(e.target.value)} className="pl-7 pr-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full">
                         <option value="All">Hora (Todas)</option>
                         <option value="Afternoon">Tarde (antes 6 PM)</option>
                         <option value="Night">Noche (desde 6 PM)</option>
                       </select>
                     </div>
-                    <div className="relative w-full sm:w-auto">
+                    <div className="relative w-full">
                       <ListChecks size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                      <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="pl-7 pr-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
+                      <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="pl-7 pr-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full">
                         <option value="All">Estatus (Todos)</option>
                         <option value="Scheduled">Programado</option>
                         <option value="In Progress">En Vivo</option>
                         <option value="Final">Finalizado</option>
                       </select>
                     </div>
-                    <div className="relative w-full sm:w-auto">
+                    <div className="relative w-full">
                       <Landmark size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                      <select value={filterLeague} onChange={e => setFilterLeague(e.target.value)} className="pl-7 pr-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
+                      <select value={filterLeague} onChange={e => setFilterLeague(e.target.value)} className="pl-7 pr-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full">
                         <option value="All">Liga (Ambas)</option>
                         <option value="AL">Americana (AL)</option>
                         <option value="NL">Nacional (NL)</option>
                       </select>
                     </div>
-                    <div className="relative w-full sm:w-auto">
+                    <div className="relative w-full">
                       <Compass size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                      <select value={filterDivision} onChange={e => setFilterDivision(e.target.value)} className="pl-7 pr-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full sm:w-auto">
+                      <select value={filterDivision} onChange={e => setFilterDivision(e.target.value)} className="pl-7 pr-2 py-1.5 text-xs font-sans border border-slate-200 rounded shadow-sm text-slate-700 outline-none bg-white w-full">
                         <option value="All">División (Todas)</option>
                         <option value="East">Este</option>
                         <option value="Central">Central</option>
@@ -1002,7 +1065,7 @@ export default function App() {
                 const restForDisplay = isXlScreen ? interleaveForTwoColumnMasonry(restInView) : restInView;
 
                 const renderGameCard = (game: MLBGame) => (
-                  <div key={game.id} className="break-inside-avoid mb-6">
+                  <div key={game.id} id={`game-card-${game.id}`} className="break-inside-avoid mb-6 scroll-mt-4">
                     <GameCard
                       game={game}
                       onRefresh={handleRefreshGame}
@@ -1010,9 +1073,40 @@ export default function App() {
                       onTogglePin={togglePin}
                       globalExpandToggle={globalExpandToggle}
                       globalExpandTarget={globalExpandTarget}
+                      focusRequest={focusRequest}
                     />
                   </div>
                 );
+
+                if (viewMode === "compact") {
+                  const renderGameCardCompact = (game: MLBGame) => (
+                    <GameCardCompact
+                      key={game.id}
+                      game={game}
+                      isPinned={pinnedGames.includes(String(game.id))}
+                      onSelect={handleSelectGameFromCompactView}
+                    />
+                  );
+                  return (
+                    <>
+                      {pinnedInView.length > 0 && (
+                        <div className="space-y-2 mb-4">
+                          <h3 className="text-xs font-bold uppercase tracking-wider text-blue-600 flex items-center gap-1.5">
+                            <Pin size={12} className="fill-blue-600" /> Fijados
+                          </h3>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+                            {pinnedInView.map(renderGameCardCompact)}
+                          </div>
+                        </div>
+                      )}
+                      {restInView.length > 0 && (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+                          {restInView.map(renderGameCardCompact)}
+                        </div>
+                      )}
+                    </>
+                  );
+                }
 
                 return (
                   <>

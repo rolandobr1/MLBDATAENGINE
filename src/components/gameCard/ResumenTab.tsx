@@ -25,10 +25,10 @@ import {
 
 interface ResumenTabProps {
   game: MLBGame;
-  onSelectPitcher: (side: "home" | "away") => void;
+  onSelectPlayer: (side: "home" | "away", name: string) => void;
 }
 
-export const ResumenTab: React.FC<ResumenTabProps> = ({ game, onSelectPitcher }) => {
+export const ResumenTab: React.FC<ResumenTabProps> = ({ game, onSelectPlayer }) => {
   const [pitcherTab, setPitcherTab] = React.useState<"season" | "last7" | "vsOpp">("season");
 
   const getPitcherDisplayStats = (pitcherTeam: 'away' | 'home') => {
@@ -113,7 +113,7 @@ export const ResumenTab: React.FC<ResumenTabProps> = ({ game, onSelectPitcher })
             <div className="space-y-1.5 border-r border-slate-200/60 pr-2">
               <button
                 type="button"
-                onClick={() => onSelectPitcher("away")}
+                onClick={() => onSelectPlayer("away", game.pitchers.away.name)}
                 className="block max-w-full text-left text-blue-900 font-bold font-display truncate underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-300 rounded"
                 title={game.pitchers.away.name}
               >
@@ -186,7 +186,7 @@ export const ResumenTab: React.FC<ResumenTabProps> = ({ game, onSelectPitcher })
             <div className="space-y-1.5 pl-1">
               <button
                 type="button"
-                onClick={() => onSelectPitcher("home")}
+                onClick={() => onSelectPlayer("home", game.pitchers.home.name)}
                 className="block max-w-full text-left text-red-900 font-bold font-display truncate underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-red-300 rounded"
                 title={game.pitchers.home.name}
               >

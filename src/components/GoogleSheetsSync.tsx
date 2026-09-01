@@ -1,6 +1,32 @@
 import React, { useState } from "react";
-import { CalendarDays, Database, FileSpreadsheet } from "lucide-react";
+import { Database, FileSpreadsheet, ChevronDown, ChevronUp } from "lucide-react";
 import { MLBGame } from "../types";
+
+/**
+ * Grupo de descargas colapsable ("menú desplegable"). Antes los 4 grupos de
+ * este panel (Datasets Principales, Props, Derivados, Histórico K-lab)
+ * mostraban todos sus botones a la vez; ahora cada grupo empieza cerrado y
+ * se expande al hacer click en su título, para que el panel no se vea
+ * saturado de botones. "Datasets Principales" se movió fuera de este
+ * componente (ver `HarvesterPanel.tsx`, columna de "Descargas Rápidas").
+ */
+const CollapsibleDownloadGroup: React.FC<{ title: string; defaultOpen?: boolean; children: React.ReactNode }> = ({ title, defaultOpen = false, children }) => {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="border border-slate-200 rounded-lg bg-white overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left hover:bg-slate-50 transition cursor-pointer"
+      >
+        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">{title}</span>
+        {open ? <ChevronUp size={14} className="text-slate-400 shrink-0" /> : <ChevronDown size={14} className="text-slate-400 shrink-0" />}
+      </button>
+      {open && <div className="px-3 pb-3 pt-1 border-t border-slate-100 space-y-3">{children}</div>}
+    </div>
+  );
+};
 
 interface GoogleSheetsSyncProps {
   games: MLBGame[];
@@ -84,47 +110,9 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({ games, selec
       setKlabLoading(false);
     }
   };
-  const fetchBattersCSV = async () => {
-    const res = await fetch(`/api/batters-dataset/csv?date=${encodeURIComponent(selectedDate)}&_=${Date.now()}`);
-    if (!res.ok) {
-      throw new Error(await res.text());
-    }
-    return res.text();
-  };
-
-  const handleDownloadBattersCSV = async () => {
-    const csv = await fetchBattersCSV();
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `MLB_BATTERS_DATASET_${selectedDate}.csv`);
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
-  const handleDownloadDailyResultsCSV = async () => {
-    try {
-      const res = await fetch(`/api/daily-results/csv?date=${encodeURIComponent(selectedDate)}&_=${Date.now()}`);
-      if (!res.ok) throw new Error(await res.text());
-      const csv = await res.text();
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.setAttribute("href", url);
-      link.setAttribute("download", `MLB_RESULTADOS_DIA_${selectedDate}.csv`);
-      link.style.visibility = "hidden";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error("Error downloading Daily Results CSV:", err);
-    }
-  };
+  // `handleDownloadDailyResultsCSV`/`handleDownloadBattersCSV` (Datasets
+  // Principales) se movieron a `HarvesterPanel.tsx` — ver comentario en el
+  // import de arriba y en `CollapsibleDownloadGroup`.
 
   const handleDownloadKPropsCSV = async () => {
     try {
@@ -143,6 +131,26 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({ games, selec
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error("Error downloading K Props CSV:", err);
+    }
+  };
+
+  const handleDownloadKPropsHistoryCSV = async () => {
+    try {
+      const res = await fetch(`/api/props/k-line-history/csv?date=${encodeURIComponent(selectedDate)}&_=${Date.now()}`);
+      if (!res.ok) throw new Error(await res.text());
+      const csv = await res.text();
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `k_props_line_history_${selectedDate}.csv`);
+      link.style.visibility = "hidden";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Error downloading K Props line history CSV:", err);
     }
   };
 
@@ -213,36 +221,8 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({ games, selec
           </p>
         </div>
 
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-              Datasets Principales (Sin Props)
-            </span>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <button
-                onClick={handleDownloadDailyResultsCSV}
-                disabled={games.length === 0}
-                className="flex-1 py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-              >
-                <CalendarDays size={14} />
-                <span>Descargar resultados del día</span>
-              </button>
-
-              <button
-                onClick={handleDownloadBattersCSV}
-                disabled={games.length === 0}
-                className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-              >
-                <Database size={14} />
-                <span>Descargar CSV Bateadores</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-              Props de Jugadores (Líneas e Odds)
-            </span>
+        <div className="space-y-2.5">
+          <CollapsibleDownloadGroup title="Props de Jugadores (Líneas e Odds)">
             <div className="flex flex-col sm:flex-row gap-2">
               <button
                 onClick={handleDownloadKPropsCSV}
@@ -261,28 +241,29 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({ games, selec
                 <Database size={14} />
                 <span>Descargar Bases Totales (Bateadores)</span>
               </button>
-            </div>
-          </div>
 
-          <div className="space-y-1.5">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-              Datasets ML derivados (snapshot pregame)
-            </span>
+              <button
+                onClick={handleDownloadKPropsHistoryCSV}
+                disabled={games.length === 0}
+                className="flex-1 py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+              >
+                <Database size={14} />
+                <span>Descargar Historial de Líneas K's</span>
+              </button>
+            </div>
+          </CollapsibleDownloadGroup>
+
+          <CollapsibleDownloadGroup title="Datasets ML derivados (snapshot pregame)">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button onClick={() => handleDownloadDerivedCSV("pitcher-game", `MLB_PITCHER_GAME_DATASET_${selectedDate}.csv`)} disabled={games.length === 0} className="py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition cursor-pointer">Pitcher por juego</button>
               <button onClick={() => handleDownloadDerivedCSV("game", `MLB_GAME_DATASET_${selectedDate}.csv`)} disabled={games.length === 0} className="py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition cursor-pointer">Juego</button>
               <button onClick={() => handleDownloadDerivedCSV("batter-game", `MLB_BATTER_GAME_DATASET_${selectedDate}.csv`)} disabled={games.length === 0} className="py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition cursor-pointer">Bateador por juego</button>
               <button onClick={() => handleDownloadDerivedCSV("pitcher-props", `MLB_PITCHER_PROPS_DATASET_${selectedDate}.csv`)} disabled={games.length === 0} className="py-2 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition cursor-pointer">Props de pitchers</button>
             </div>
-          </div>
+          </CollapsibleDownloadGroup>
 
-          <div className="space-y-3 border-t border-slate-200 pt-4">
-            <div>
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-                Histórico de entrenamiento K-lab
-              </span>
-              <p className="text-xs text-slate-500 mt-1">Selecciona un rango inclusivo. Primero se muestra la validación; no se usa todo el historial por defecto.</p>
-            </div>
+          <CollapsibleDownloadGroup title="Histórico de entrenamiento K-lab">
+            <p className="text-xs text-slate-500 -mt-1">Selecciona un rango inclusivo. Primero se muestra la validación; no se usa todo el historial por defecto.</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <label className="text-xs font-semibold text-slate-600">
                 Fecha inicial
@@ -316,7 +297,7 @@ export const GoogleSheetsSync: React.FC<GoogleSheetsSyncProps> = ({ games, selec
                 </button>
               </div>
             )}
-          </div>
+          </CollapsibleDownloadGroup>
         </div>
       </div>
     </div>

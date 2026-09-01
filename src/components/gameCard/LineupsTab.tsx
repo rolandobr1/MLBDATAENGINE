@@ -15,9 +15,15 @@ import { formatOdds, getTrueKPercentage } from "./gameCardHelpers";
 
 interface LineupsTabProps {
   game: MLBGame;
+  /** Click en el nombre de un bateador → abre su ventana de detalle completo
+   * (`PlayerStatsModal`, misma experiencia que clickear al pitcher en Resumen
+   * General). Es aparte del click en el resto de la fila, que solo expande
+   * el resumen rápido inline (`togglePlayerExpansion`) — no se reemplaza esa
+   * función, se le suma esta. */
+  onSelectPlayer: (side: "home" | "away", name: string) => void;
 }
 
-export const LineupsTab: React.FC<LineupsTabProps> = ({ game }) => {
+export const LineupsTab: React.FC<LineupsTabProps> = ({ game, onSelectPlayer }) => {
   const [expandedPlayer, setExpandedPlayer] = React.useState<string | null>(null);
 
   const togglePlayerExpansion = (team: "home" | "away", idx: number) => {
@@ -52,7 +58,14 @@ export const LineupsTab: React.FC<LineupsTabProps> = ({ game }) => {
                           <div className="flex items-center gap-2 flex-1 min-w-0">
                             <span className="text-slate-400 font-semibold w-3 text-right text-[11px] md:text-xs">{idx + 1}</span>
                             <span className="bg-slate-100 text-slate-600 px-1 rounded text-[10px] font-bold shrink-0 w-8 text-center">{player.position}</span>
-                            <span className="text-slate-900 font-sans font-semibold text-xs md:text-sm truncate" title={player.name}>{player.name}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); onSelectPlayer("away", player.name); }}
+                              className="text-slate-900 font-sans font-semibold text-xs md:text-sm truncate underline-offset-2 hover:underline hover:text-blue-700 focus:outline-none text-left"
+                              title={`${player.name} — click para ver todos los números`}
+                            >
+                              {player.name}
+                            </button>
                             {player.totalBasesProp != null && (
                               <span title={`Bases totales DataStreak: O ${formatOdds(player.totalBasesPropOverOdds)} / U ${formatOdds(player.totalBasesPropUnderOdds)}`} className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0">
                                 TB {player.totalBasesProp}
@@ -137,7 +150,14 @@ export const LineupsTab: React.FC<LineupsTabProps> = ({ game }) => {
                           <div className="flex items-center gap-2 flex-1 min-w-0">
                             <span className="text-slate-400 font-semibold w-3 text-right text-[11px] md:text-xs">{idx + 1}</span>
                             <span className="bg-slate-100 text-slate-600 px-1 rounded text-[10px] font-bold shrink-0 w-8 text-center">{player.position}</span>
-                            <span className="text-slate-900 font-sans font-semibold text-xs md:text-sm truncate" title={player.name}>{player.name}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); onSelectPlayer("home", player.name); }}
+                              className="text-slate-900 font-sans font-semibold text-xs md:text-sm truncate underline-offset-2 hover:underline hover:text-red-700 focus:outline-none text-left"
+                              title={`${player.name} — click para ver todos los números`}
+                            >
+                              {player.name}
+                            </button>
                             {player.totalBasesProp != null && (
                               <span title={`Bases totales DataStreak: O ${formatOdds(player.totalBasesPropOverOdds)} / U ${formatOdds(player.totalBasesPropUnderOdds)}`} className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0">
                                 TB {player.totalBasesProp}

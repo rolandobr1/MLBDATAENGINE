@@ -4,7 +4,8 @@
  */
 
 import React from "react";
-import { Search, Calendar, Zap, Play, Loader2, Clock, CheckCircle, Database, Brain, HardDrive, Layers } from "lucide-react";
+import { Search, Calendar, CalendarDays, Zap, Play, Loader2, Clock, CheckCircle, Database, Brain, HardDrive, Layers } from "lucide-react";
+import { MLBGame } from "../types";
 
 interface HarvesterPanelProps {
   onHarvest: (date: string, refreshOdds: boolean) => void;
@@ -23,6 +24,17 @@ interface HarvesterPanelProps {
   extractedDates?: string[];
   onCancel?: () => void;
   syncRemoteDates?: () => void;
+  /** Reorganización del panel: las descargas rápidas ("Datasets Principales")
+   * que antes vivían en `GoogleSheetsSync` ahora se muestran acá, a la
+   * derecha, en el espacio que dejó libre el botón de extracción al bajarlo
+   * debajo de "Configurar Extracción". El resto de las descargas (props,
+   * derivados, histórico K-lab) se quedaron en `GoogleSheetsSync`, ahora
+   * colapsadas en menús desplegables. */
+  games?: MLBGame[];
+  /** `GoogleSheetsSync` (props/derivados/histórico K-lab), pasado por
+   * App.tsx — se renderiza en la columna de "Descargas Rápidas", justo
+   * debajo de los dos botones principales. */
+  children?: React.ReactNode;
 }
 
 // Phase icon map for step dots
@@ -44,6 +56,8 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
   extractedDates,
   onCancel,
   syncRemoteDates,
+  games,
+  children,
 }) => {
   const [refreshOdds, setRefreshOdds] = React.useState(false);
   const [isBatchMode, setIsBatchMode] = React.useState(false);
@@ -57,11 +71,53 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
     }
   };
 
+  const hasGames = (games?.length ?? 0) > 0;
+
+  const handleDownloadDailyResultsCSV = async () => {
+    try {
+      const res = await fetch(`/api/daily-results/csv?date=${encodeURIComponent(selectedDate)}&_=${Date.now()}`);
+      if (!res.ok) throw new Error(await res.text());
+      const csv = await res.text();
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `MLB_RESULTADOS_DIA_${selectedDate}.csv`);
+      link.style.visibility = "hidden";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Error downloading Daily Results CSV:", err);
+    }
+  };
+
+  const handleDownloadBattersCSV = async () => {
+    try {
+      const res = await fetch(`/api/batters-dataset/csv?date=${encodeURIComponent(selectedDate)}&_=${Date.now()}`);
+      if (!res.ok) throw new Error(await res.text());
+      const csv = await res.text();
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `MLB_BATTERS_DATASET_${selectedDate}.csv`);
+      link.style.visibility = "hidden";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Error downloading Batters CSV:", err);
+    }
+  };
+
   return (
     <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 font-sans">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
-        
-        {/* Date Selector & Engine Mode Column */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        {/* Column 1: Configurar Extracción (arriba) + botón de extracción y progreso (abajo) */}
         <div className="space-y-4">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-baseball-blue font-bold">
@@ -160,41 +216,76 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
               </div>
             )}
           </div>
+
+          {/* Botón de extracción + progreso: ahora debajo de la configuración
+              (antes vivía en una columna aparte al lado derecho) */}
+          <div className="flex flex-col items-center justify-center space-y-3 pt-2 border-t border-slate-200/70">
+            {isLoading ? (
+              <button
+                onClick={() => onCancel && onCancel()}
+                className="w-full py-4 rounded-xl font-display font-semibold text-white transition flex items-center justify-center gap-3 shadow-md bg-red-600 hover:bg-red-700 hover:shadow-lg active:scale-98 cursor-pointer"
+              >
+                <Loader2 size={18} className="animate-spin text-white" />
+                <span className="text-sm">Detener Extracción</span>
+              </button>
+            ) : (
+              <button
+                onClick={runHarvest}
+                className="w-full py-4 rounded-xl font-display font-semibold text-white transition flex items-center justify-center gap-3 shadow-md bg-baseball-red hover:bg-red-700 hover:shadow-lg hover:shadow-red-500/10 active:scale-98 cursor-pointer"
+              >
+                <Play size={18} fill="currentColor" />
+                <span className="text-sm">
+                  {isBatchMode ? "Ejecutar Lote y Descargar CSV" : "Ejecutar Extracción ETL"}
+                </span>
+              </button>
+            )}
+
+            {/* Progress Bar Block */}
+            {isLoading ? (
+              <HarvestProgressBar progress={harvestProgress} />
+            ) : (
+              <div className="text-slate-400 text-xs flex items-center gap-1.5 font-mono">
+                <CheckCircle size={12} className="text-emerald-500" />
+                <span>Base lista para consultas</span>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Engine Launch Button + Progress Bar */}
-        <div className="flex flex-col items-center justify-center space-y-3 lg:border-x lg:border-slate-200/70 lg:px-6">
-          {isLoading ? (
+        {/* Column 2: Descargas rápidas — antes eran "Datasets Principales
+            (Sin Props)" dentro de GoogleSheetsSync; se subieron acá, al
+            espacio que dejó libre el botón de extracción al bajar a la
+            columna 1. El resto de las descargas (props, derivados, histórico
+            K-lab) se quedaron en GoogleSheetsSync, ahora en desplegables. */}
+        <div className="lg:border-l lg:border-slate-200/70 lg:pl-6 space-y-3">
+          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+            Descargas Rápidas (Datasets Principales)
+          </span>
+          <div className="flex flex-col gap-2">
             <button
-              onClick={() => onCancel && onCancel()}
-              className="w-full py-4 rounded-xl font-display font-semibold text-white transition flex items-center justify-center gap-3 shadow-md bg-red-600 hover:bg-red-700 hover:shadow-lg active:scale-98 cursor-pointer"
+              onClick={handleDownloadDailyResultsCSV}
+              disabled={!hasGames}
+              className="w-full py-2.5 px-3 border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
             >
-              <Loader2 size={18} className="animate-spin text-white" />
-              <span className="text-sm">Detener Extracción</span>
+              <CalendarDays size={14} />
+              <span>Descargar resultados del día</span>
             </button>
-          ) : (
             <button
-              onClick={runHarvest}
-              className="w-full py-4 rounded-xl font-display font-semibold text-white transition flex items-center justify-center gap-3 shadow-md bg-baseball-red hover:bg-red-700 hover:shadow-lg hover:shadow-red-500/10 active:scale-98 cursor-pointer"
+              onClick={handleDownloadBattersCSV}
+              disabled={!hasGames}
+              className="w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
             >
-              <Play size={18} fill="currentColor" />
-              <span className="text-sm">
-                {isBatchMode ? "Ejecutar Lote y Descargar CSV" : "Ejecutar Extracción ETL"}
-              </span>
+              <Database size={14} />
+              <span>Descargar CSV Bateadores</span>
             </button>
-          )}
+          </div>
 
-          {/* Progress Bar Block */}
-          {isLoading ? (
-            <HarvestProgressBar progress={harvestProgress} />
-          ) : (
-            <div className="text-slate-400 text-xs flex items-center gap-1.5 font-mono">
-              <CheckCircle size={12} className="text-emerald-500" />
-              <span>Base lista para consultas</span>
-            </div>
-          )}
+          {/* Resto de las descargas (props, derivados, histórico K-lab) —
+              `GoogleSheetsSync`, inyectado por App.tsx como children — se
+              muestran justo debajo de las principales, en esta misma
+              columna, en vez de en un panel aparte más abajo en la página. */}
+          {children}
         </div>
-
 
       </div>
     </div>

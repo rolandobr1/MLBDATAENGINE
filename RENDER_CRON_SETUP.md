@@ -106,3 +106,68 @@ completo. Si me confirmás cuál preferís, lo armo en la próxima fase.
 Si en vez de esto la app corre solo en tu máquina Windows por ahora, avisame
 y armamos el `.bat`/Programador de tareas de Windows en su lugar — ese
 enfoque no tiene este problema porque Python y Node ya conviven en tu máquina.
+
+## 4. Segundo Cron Job: refresco de líneas de K's (3 veces al día)
+
+Este es un **segundo Cron Job, independiente** del de arriba. Dispara el
+endpoint `/api/cron/refresh-k-props-lines` (agregado junto con el historial
+de líneas), que solo revisa la línea de ponches (K's) de los lanzadores de
+los juegos del día que todavía no terminaron, y registra en
+`k_props_line_history.json` cualquier cambio de línea u odds con su hora
+exacta — sin tocar boxscore, clima, splits, ni el resto del juego (por eso
+es seguro correrlo varias veces al día sin generarle carga extra al
+pipeline principal).
+
+- **Command**:
+  ```bash
+  curl -fsS -X POST "$APP_URL/api/cron/refresh-k-props-lines" \
+    -H "X-Cron-Secret: $CRON_SECRET" \
+    -H "Content-Type: application/json" \
+    -d '{}'
+  ```
+  (Usa las mismas variables de entorno `APP_URL` y `CRON_SECRET` ya
+  configuradas para el Cron Job de la sección 2 — no hace falta crear un
+  secreto nuevo.)
+- **Schedule**: 3 veces al día, a las 8:00 AM, 12:00 PM (mediodía) y 6:00 PM,
+  hora de RD/ET. República Dominicana no tiene horario de verano (se queda
+  fija en UTC-4 todo el año), así que anclando el horario a RD:
+
+  ```
+  0 12,16,22 * * *
+  ```
+
+  Ahora mismo (finales de agosto/septiembre 2026, con Estados Unidos en
+  horario de verano — EDT, UTC-4) esto también cae exactamente a las 8am,
+  12pm y 6pm hora del Este. Cuando termine el horario de verano en EE.UU. en
+  noviembre (ET pasa a UTC-5), esta misma expresión va a seguir disparando a
+  las 8am/12pm/6pm en RD, pero una hora más tarde en hora del Este
+  (9am/1pm/7pm ET) — igual que pasa con el Cron Job diario de la sección 2,
+  Render no ajusta esto solo. Si preferís que se mantenga fijo en hora ET en
+  vez de hora RD, avisame después de noviembre y ajustamos la expresión.
+
+- **Body**: igual que el pipeline diario, `{}` procesa la fecha de **hoy**
+  (hora de Nueva York). Podés pasar `-d '{"date":"2026-08-30"}'` para
+  reprocesar una fecha puntual a mano.
+
+### Verificar que corrió
+
+A diferencia del pipeline diario, este endpoint responde de una vez (no es
+`202` + segundo plano) porque es rápido — vas a ver directamente el
+resultado:
+
+```json
+{ "date": "2026-08-30", "gamesChecked": 12, "gamesSkippedFinal": 3, "changesDetected": 2, "errors": [] }
+```
+
+Para ver el historial completo de cambios detectados (o descargarlo en CSV
+desde la propia app, botón **"Descargar Historial de Líneas K's"** en el
+panel de Google Sheets Sync):
+
+```bash
+curl "$APP_URL/api/props/k-line-history?date=2026-08-30" -H "X-Cron-Secret: $CRON_SECRET"
+```
+
+Nota: este endpoint de lectura del historial (`/api/props/k-line-history` y
+su variante `/csv`) **no** exige el header `X-Cron-Secret` — queda abierto
+igual que el resto de los endpoints de lectura de la app (`/api/k-props/csv`,
+etc.), ya que no expone nada más sensible que las líneas de apuestas mismas.

@@ -68,6 +68,7 @@ import { calculateOpponentLineupKPct } from "./src/utils/lineupMetrics";
 import { isFinalGameStatus } from "./src/utils/gameStatus";
 import { buildKlabTrainingDataset, validateKlabDateRange } from "./src/datasets/klabTrainingDataset";
 import { registerCronPipelineRoutes } from "./src/routes/cronPipelineRoutes";
+import { registerKPropsLineHistoryRoutes } from "./src/routes/kPropsLineHistoryRoutes";
 
 const app = express();
 app.use(express.json());
@@ -6014,6 +6015,16 @@ registerCronPipelineRoutes(app, {
   generateBattersCSV,
   enrichGamesWithSavantBatterContact,
   enrichGamesWithTotalBasesProps,
+  getNewYorkDateString,
+});
+
+registerKPropsLineHistoryRoutes(app, {
+  readGamesDB,
+  writeGamesDB,
+  fetchRealBettingLines,
+  fetchDataStreakPitcherStrikeoutProps,
+  findDataStreakPitcherKProp,
+  normalizeName,
   getNewYorkDateString,
 });
 
