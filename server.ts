@@ -77,6 +77,14 @@ app.get("/favicon.ico", (req, res) => {
   res.sendFile(path.join(process.cwd(), "src", "favicon.svg"));
 });
 
+// Endpoint liviano de keep-alive/health-check: no toca la DB ni Firestore,
+// solo confirma que el proceso Node está vivo. Pensado para que un cron
+// externo (cron-job.org, UptimeRobot, etc.) le haga ping y evite que Render
+// duerma el Web Service por inactividad, sin generarle carga real al pipeline.
+app.get("/health", (req, res) => {
+  res.status(200).json({ ok: true, uptimeSeconds: process.uptime() });
+});
+
 const PORT = Number(process.env.PORT || 3001);
 const DB_PATH = path.join(process.cwd(), "mlb_database.json");
 const ERRORS_PATH = path.join(process.cwd(), "mlb_errors.json");
@@ -4121,6 +4129,183 @@ async function fetchGameResult(gamePk: string, bettingLines?: BettingLines | nul
 }
 
 // --------------------------------------------------------------------
+// Refresco liviano de "solo el juego en sí" (linescore, boxscore en vivo,
+// play-by-play) — para juegos que ya tienen toda su cobertura pregame
+// (clima, splits, pitcheo avanzado, cuotas) guardada y solo les falta el
+// resultado real. Extraído de las llamadas que ya hacía `fetchRealMLBGameData`
+// para lineups/liveBoxscore, pero sin las ~20 llamadas pregame (stats de
+// temporada de los pitchers, splits ofensivos, bullpen, roster de lesionados,
+// etc.) que no cambian una vez que el juego ya fue capturado.
+// --------------------------------------------------------------------
+async function fetchLiveResultOnly(gamePk: string): Promise<{ linescore: any; liveBoxscore: any; playByPlay: any }> {
+  const parseLiveStats = (teamBox: any) => {
+    const batters: any[] = [];
+    const pitchers: any[] = [];
+    if (!teamBox?.players) return { batters, pitchers };
+    const players = teamBox.players;
+
+    if (teamBox.batters) {
+      teamBox.batters.forEach((id: number) => {
+        const p = players[`ID${id}`];
+        if (!p) return;
+        const s = p.stats?.batting || {};
+        const liveHits = s.hits || 0;
+        const liveDbl = s.doubles || 0;
+        const liveTpl = s.triples || 0;
+        const liveHr = s.homeRuns || 0;
+        const liveSingles = Math.max(0, liveHits - liveDbl - liveTpl - liveHr);
+        batters.push({
+          id, name: p.person?.fullName || "Bateador", position: p.position?.abbreviation || "DH",
+          ab: s.atBats || 0, r: s.runs || 0, h: liveHits, rbi: s.rbi || 0, bb: s.baseOnBalls || 0,
+          k: s.strikeOuts || 0, doubles: liveDbl, triples: liveTpl, home_runs: liveHr,
+          total_bases: liveSingles + 2 * liveDbl + 3 * liveTpl + 4 * liveHr
+        });
+      });
+    }
+
+    if (teamBox.pitchers) {
+      teamBox.pitchers.forEach((id: number) => {
+        const p = players[`ID${id}`];
+        if (!p) return;
+        const s = p.stats?.pitching || {};
+        pitchers.push({
+          id, name: p.person?.fullName || "Lanzador", position: "P",
+          ip: s.inningsPitched || "0.0", h: s.hits || 0, r: s.runs || 0, er: s.earnedRuns || 0,
+          bb: s.baseOnBalls || 0, k: s.strikeOuts || 0, bf: s.battersFaced ?? "",
+          pitches: s.numberOfPitches || 0, strikes: s.strikes || 0
+        });
+      });
+    }
+    return { batters, pitchers };
+  };
+
+  const fetchBoxscore = async () => {
+    try {
+      const boxRes = await fetchWithTimeout(`https://statsapi.mlb.com/api/v1/game/${gamePk}/boxscore`);
+      const boxData = await boxRes.json();
+      return {
+        home: parseLiveStats(boxData.teams?.home),
+        away: parseLiveStats(boxData.teams?.away)
+      };
+    } catch { return null; }
+  };
+
+  const fetchLinescore = async () => {
+    try {
+      const r = await fetchWithTimeout(`https://statsapi.mlb.com/api/v1.1/game/${gamePk}/feed/live`);
+      const fullD = await r.json();
+      const d = fullD?.liveData?.linescore;
+      if (!d || !d.innings) return null;
+      return {
+        innings: d.innings.map((i: any) => ({
+          num: i.num,
+          home: { runs: i.home?.runs || 0, hits: i.home?.hits || 0, errors: i.home?.errors || 0 },
+          away: { runs: i.away?.runs || 0, hits: i.away?.hits || 0, errors: i.away?.errors || 0 }
+        })),
+        homeTotals: { runs: d.teams?.home?.runs || 0, hits: d.teams?.home?.hits || 0, errors: d.teams?.home?.errors || 0 },
+        awayTotals: { runs: d.teams?.away?.runs || 0, hits: d.teams?.away?.hits || 0, errors: d.teams?.away?.errors || 0 },
+        currentInning: d.currentInning,
+        currentInningOrdinal: d.currentInningOrdinal,
+        inningState: d.inningState,
+        inningHalf: d.inningHalf,
+        isTopInning: d.isTopInning,
+        balls: d.balls,
+        strikes: d.strikes,
+        outs: d.outs,
+        defense: d.defense?.pitcher ? {
+          pitcher: { id: d.defense.pitcher.id, fullName: d.defense.pitcher.fullName }
+        } : undefined,
+        offense: d.offense ? {
+          batter: d.offense.batter ? { id: d.offense.batter.id, fullName: d.offense.batter.fullName } : undefined,
+          first: d.offense.first ? { id: d.offense.first.id, fullName: d.offense.first.fullName } : undefined,
+          second: d.offense.second ? { id: d.offense.second.id, fullName: d.offense.second.fullName } : undefined,
+          third: d.offense.third ? { id: d.offense.third.id, fullName: d.offense.third.fullName } : undefined,
+        } : undefined
+      };
+    } catch { return null; }
+  };
+
+  const fetchPxP = async () => {
+    try {
+      const r = await fetchWithTimeout(`https://statsapi.mlb.com/api/v1/game/${gamePk}/playByPlay`);
+      const d = await r.json();
+      const allPlays = d.allPlays || [];
+
+      const mappedAllPlays = allPlays.map((p: any) => ({
+        description: p.result?.description || "",
+        inning: `${p.about?.halfInning === 'top' ? 'Top' : 'Bot'} ${p.about?.inning || 1}`,
+        score: `${p.result?.awayScore || 0} - ${p.result?.homeScore || 0}`,
+        isScoringPlay: p.about?.isScoringPlay || false
+      }));
+
+      const scoring = mappedAllPlays.filter((p: any) => p.isScoringPlay);
+
+      let currentPlay = null;
+      const cp = d.currentPlay;
+      if (cp) {
+        currentPlay = {
+          description: cp.result?.description || cp.playEvents?.[cp.playEvents.length - 1]?.details?.description || "En progreso...",
+          inning: `${cp.about?.halfInning === 'top' ? 'Top' : 'Bot'} ${cp.about?.inning || 1}`,
+          score: `${cp.result?.awayScore || 0} - ${cp.result?.homeScore || 0}`,
+          isScoringPlay: cp.about?.isScoringPlay || false
+        };
+      }
+      return { scoringPlays: scoring, currentPlay, allPlays: mappedAllPlays };
+    } catch { return null; }
+  };
+
+  const [liveBoxscore, linescore, playByPlay] = await Promise.all([fetchBoxscore(), fetchLinescore(), fetchPxP()]);
+  return { linescore, liveBoxscore, playByPlay };
+}
+
+// Un juego ya tiene "cobertura pregame sólida" si clima, cuotas, splits
+// ofensivos, pitcheo avanzado y los nombres reales de ambos pitchers ya están
+// guardados. En ese caso, si todavía no es final, alcanza con refrescar el
+// resultado (fetchLiveResultOnly + fetchGameResult) en vez de reconstruir
+// todo el juego desde cero.
+function hasSolidPregameCoverage(stored: MLBGame | null | undefined): boolean {
+  if (!stored) return false;
+  const homeName = stored?.pitchers?.home?.name;
+  const awayName = stored?.pitchers?.away?.name;
+  const pitchersKnown = !!homeName && homeName !== "Por definir" && homeName !== "TBD"
+    && !!awayName && awayName !== "Por definir" && awayName !== "TBD";
+  return pitchersKnown
+    && !!stored?.weather
+    && !!stored?.betting_lines
+    && !!stored?.advanced_pitching?.home
+    && !!stored?.advanced_pitching?.away
+    && !!stored?.offensive_splits?.home
+    && !!stored?.offensive_splits?.away;
+}
+
+// Aplica el refresco liviano sobre una copia del juego ya guardado: solo
+// pisa el resultado y los datos en vivo, preservando todo lo pregame tal
+// cual estaba (clima, splits, pitcheo avanzado, cuotas, lineups, etc.).
+function applyLiveResultRefresh(
+  baseGame: any,
+  gameResult: MLGameResult | undefined,
+  live: { linescore: any; liveBoxscore: any; playByPlay: any },
+  starterBoxStats: any
+): any {
+  const merged: any = { ...baseGame };
+  if (gameResult) merged.game_result = gameResult;
+  merged.linescore = live.linescore ?? merged.linescore ?? null;
+  merged.liveBoxscore = live.liveBoxscore ?? merged.liveBoxscore ?? null;
+  merged.playByPlay = live.playByPlay ?? merged.playByPlay ?? null;
+
+  const canUseActualKs = isFinalGameStatus(merged.game_result?.gameStatus);
+  merged.boxscore_stats = canUseActualKs ? starterBoxStats : null;
+  merged.advanced_pitching = {
+    ...merged.advanced_pitching,
+    home: { ...merged.advanced_pitching?.home, actualStrikeouts: canUseActualKs ? (starterBoxStats?.home?.strikeOuts ?? null) : null },
+    away: { ...merged.advanced_pitching?.away, actualStrikeouts: canUseActualKs ? (starterBoxStats?.away?.strikeOuts ?? null) : null },
+  };
+  merged.timestamp = new Date().toISOString();
+  merged.lastReverifyAttempt = merged.timestamp;
+  return merged;
+}
+
+// --------------------------------------------------------------------
 // Helpers for Direct Mode
 // --------------------------------------------------------------------
 function americanOddsToProbability(odds: number): number {
@@ -4604,11 +4789,16 @@ app.post("/api/harvest", async (req, res) => {
     const stored = existingGamesById.get(gamePk);
     if (!stored) return false;
     if (!historicalDate) return isFinalGameStatus(stored?.game_result?.gameStatus);
-    // Fecha histórica: si ya tiene cobertura PIT, es seguro reutilizarla para siempre
-    // (el resultado del juego no cambia). Si NO tiene cobertura PIT, solo se reutiliza
-    // mientras no haya pasado el período de reverificación — pasado ese período, se
-    // vuelve a extraer (lo cual también reintenta fetchPitcherStats con la corrección
-    // de la Fase 1, por si el juego se capturó originalmente con el bug).
+    // Fecha histórica: antes de tratar el juego como "inmutable" hay que confirmar
+    // que su resultado ya es final. Un juego guardado en "Scheduled"/"Pre-Game"
+    // (extraído antes de que terminara, o pospuesto) NO es inmutable solo porque su
+    // fecha ya pasó — sigue necesitando extracción para traer el resultado real.
+    if (!isFinalGameStatus(stored?.game_result?.gameStatus)) return false;
+    // El resultado ya es final: si además tiene cobertura PIT, es seguro reutilizarlo
+    // para siempre (el resultado del juego no cambia). Si NO tiene cobertura PIT, solo
+    // se reutiliza mientras no haya pasado el período de reverificación — pasado ese
+    // período, se vuelve a extraer (lo cual también reintenta fetchPitcherStats con la
+    // corrección de la Fase 1, por si el juego se capturó originalmente con el bug).
     if (hasPitCoverage(gamePk, stored)) return true;
     const lastAttempt = stored?.lastReverifyAttempt;
     if (!lastAttempt) return false;
@@ -4744,11 +4934,16 @@ app.post("/api/harvest", async (req, res) => {
       const basePct = 5 + gi * pctPerGame; // starting pct for this game
       const gameStartedAt = Date.now();
 
-      // CACHÉ INTELIGENTE: Si el juego ya está en la DB local y terminó, no hacemos ninguna llamada a APIs
+      // CACHÉ INTELIGENTE: Si el juego ya está en la DB local y terminó, no hacemos ninguna llamada a APIs.
+      // Antes esto también reutilizaba el juego solo por ser de una fecha pasada
+      // (`historicalDate`), sin confirmar que el resultado fuera final — un juego
+      // guardado en "Scheduled"/"Pre-Game" (extraído antes de que terminara, o
+      // pospuesto) se quedaba así para siempre aunque la fecha ya hubiera pasado.
+      // Ahora la única condición es que el resultado guardado ya sea final.
       if (!forceRebuild) {
         const cachedGame = existingGamesForDate.find((g: any) => String(g.id) === String(gameId));
-        if (cachedGame && (historicalDate || isFinalGameStatus(cachedGame.game_result?.gameStatus))) {
-          console.log(`[Caché] Juego ${gameId} (${gameLabel}) ya pasó o está finalizado — cargando desde DB local.`);
+        if (cachedGame && isFinalGameStatus(cachedGame.game_result?.gameStatus)) {
+          console.log(`[Caché] Juego ${gameId} (${gameLabel}) ya finalizó — cargando desde DB local.`);
           harvestedGames.push(cachedGame);
           emit({
             phase: "game_done",
@@ -4760,6 +4955,70 @@ app.post("/api/harvest", async (req, res) => {
             cached: true,
           });
           continue;
+        }
+
+        // REFRESCO LIVIANO: el juego no es final, pero ya tiene toda su cobertura
+        // pregame guardada (clima, splits, pitcheo avanzado, cuotas). No hace falta
+        // rehacer las ~20 llamadas pregame — alcanza con traer el resultado y los
+        // datos en vivo. Se omite si el usuario pidió explícitamente refrescar cuotas
+        // (refreshOdds), ya que ese caso sí necesita el pipeline completo.
+        if (!refreshOdds && cachedGame && hasSolidPregameCoverage(cachedGame)) {
+          emit({
+            phase: "real_data",
+            step: `Actualizando resultado: ${gameLabel}`,
+            gameLabel, gameIndex: gi + 1, totalGames,
+            pct: basePct + Math.floor(pctPerGame * 0.3),
+          });
+          try {
+            const [gameResultLight, liveOnly, starterBoxLight] = await Promise.all([
+              fetchGameResult(gameId, cachedGame.betting_lines),
+              fetchLiveResultOnly(gameId),
+              getStarterBoxscoreStats(gameId),
+            ]);
+            const refreshedGame = applyLiveResultRefresh(cachedGame, gameResultLight, liveOnly, starterBoxLight);
+            const validationResultLight = validateGamePayload(refreshedGame, errorsCollection);
+            refreshedGame.validation = {
+              isValid: validationResultLight.isValid,
+              errors: validationResultLight.errors,
+              checkedAt: new Date().toISOString(),
+            };
+            enrichWithVortexMetrics(refreshedGame);
+            capturePregameSnapshot(refreshedGame);
+
+            harvestedGames.push(refreshedGame);
+            saveGameData(gameId, refreshedGame).catch((fsErr) => {
+              console.error(`Error saving to Firestore for game ${gameId}:`, fsErr);
+              errorsCollection.push({
+                id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                timestamp: new Date().toISOString(),
+                gameId,
+                source: "Firestore",
+                message: `Fallo al sincronizar con Firestore: ${fsErr instanceof Error ? fsErr.message : String(fsErr)}`,
+                severity: "medium",
+              });
+            });
+
+            const incrementalDB = readGamesDB();
+            const incrementalDateGames = [...(incrementalDB[date] || [])];
+            const incrementalIndex = incrementalDateGames.findIndex((g: any) => String(g.id) === String(gameId));
+            if (incrementalIndex >= 0) incrementalDateGames[incrementalIndex] = refreshedGame;
+            else incrementalDateGames.push(refreshedGame);
+            incrementalDB[date] = incrementalDateGames;
+            writeGamesDB(incrementalDB);
+
+            console.log(`[Refresco liviano] Juego ${gameId} (${gameLabel}): ${Date.now() - gameStartedAt}ms — pregame reutilizado, solo resultado actualizado.`);
+            emit({
+              phase: "game_done",
+              step: `✓ ${gameLabel} (resultado actualizado)`,
+              gameLabel, gameIndex: gi + 1, totalGames,
+              pct: basePct + pctPerGame,
+            });
+            await new Promise((r) => setTimeout(r, 400));
+            continue;
+          } catch (lightErr) {
+            console.warn(`[Refresco liviano] Falló para ${gameId}, se hará extracción completa:`, lightErr);
+            // Cae al flujo pesado de abajo.
+          }
         }
       }
 
@@ -5297,6 +5556,48 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
   const awayTeamId: number = match.teams.away.team.id;
   const venueName = match.venue?.name || "MLB Stadium";
   const matchTime = formatGameTime(match.gameDate);
+
+  // REFRESCO LIVIANO: si el juego ya está guardado con toda su cobertura pregame
+  // (clima, splits, pitcheo avanzado, cuotas) y todavía no es final, alcanza con
+  // traer el resultado y los datos en vivo — no hace falta rehacer las ~20
+  // llamadas pregame. Se omite si se pidió refrescar cuotas explícitamente
+  // (forceRefreshOdds), ya que ese caso sí necesita el pipeline completo.
+  if (!forceRefreshOdds) {
+    const dbForLightCheck = readGamesDB();
+    const gamesForDateLightCheck = dbForLightCheck[actualDate] || [];
+    const cachedGameLight = gamesForDateLightCheck.find((g: any) => String(g.id) === String(gameId));
+    if (cachedGameLight && !isFinalGameStatus(cachedGameLight.game_result?.gameStatus) && hasSolidPregameCoverage(cachedGameLight)) {
+      console.log(`[Refresco liviano] Juego individual ${gameId} — pregame ya completo, solo se actualiza el resultado.`);
+      const [gameResultLight, liveOnlyLight, starterBoxLight] = await Promise.all([
+        fetchGameResult(gameId, cachedGameLight.betting_lines),
+        fetchLiveResultOnly(gameId),
+        getStarterBoxscoreStats(gameId),
+      ]);
+      const refreshedGameLight = applyLiveResultRefresh(cachedGameLight, gameResultLight, liveOnlyLight, starterBoxLight);
+      const errorsCollectionLight = readErrorsDB();
+      const validationResultLight = validateGamePayload(refreshedGameLight, errorsCollectionLight);
+      refreshedGameLight.validation = {
+        isValid: validationResultLight.isValid,
+        errors: validationResultLight.errors,
+        checkedAt: new Date().toISOString(),
+      };
+      enrichWithVortexMetrics(refreshedGameLight);
+      capturePregameSnapshot(refreshedGameLight);
+
+      saveGameData(gameId, refreshedGameLight).catch((fsErr) => {
+        console.error(`Error saving to Firestore for game ${gameId}:`, fsErr);
+      });
+
+      const updatedGamesLight = gamesForDateLightCheck.map((g: any) =>
+        String(g.id) === String(gameId) ? refreshedGameLight : g
+      );
+      dbForLightCheck[actualDate] = updatedGamesLight;
+      writeGamesDB(dbForLightCheck);
+      writeErrorsDB(errorsCollectionLight);
+
+      return refreshedGameLight;
+    }
+  }
 
   // 2. Fetch real odds. Los mercados históricos se leen solo de DB/caché.
   const historicalDate = isPastGameDate(actualDate);

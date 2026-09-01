@@ -62,7 +62,7 @@ function snapshotPairs(games: MLBGame[]) {
 }
 
 const PITCHER_HEADERS = [
-  "game_id", "pitcher_id", "side", "snapshot_captured_at", "game_date", "scheduled_time", "team", "opponent", "venue",
+  "game_id", "pitcher_id", "pitcher_name", "side", "snapshot_captured_at", "game_date", "scheduled_time", "team", "opponent", "venue",
   "pitcher_era", "pitcher_whip", "pitcher_k_pct", "pitcher_bb_pct", "pitcher_ip", "pitcher_starts", "pitcher_total_strikeouts", "pitcher_pitch_hand",
   "opponent_lineup_k_pct", "opponent_lineup_contact_pct", "opponent_offense_ops", "opponent_offense_woba", "opponent_offense_xwoba",
   "pitcher_xera", "pitcher_fip", "pitcher_xfip", "pitcher_siera", "pitcher_so_rate", "pitcher_bb_rate", "pitcher_swstr_pct", "pitcher_csw_pct",
@@ -88,7 +88,7 @@ export function buildPitcherGameRows(games: MLBGame[]): Row[] {
       const oppOffense = pregame?.advanced_offense?.[opponent] || {};
       const fatigue = pregame?.fatigue_metrics?.pitchers?.[side] || {};
       rows.push({
-        game_id: gameId(current), pitcher_id: id, side, snapshot_captured_at: snapshot.capturedAt,
+        game_id: gameId(current), pitcher_id: id, pitcher_name: pitcher.name ?? null, side, snapshot_captured_at: snapshot.capturedAt,
         game_date: pregame.metadata?.date ?? null, scheduled_time: pregame.metadata?.time ?? null,
         team: pregame.metadata?.[side === "home" ? "homeTeam" : "awayTeam"] ?? null,
         opponent: pregame.metadata?.[opponent === "home" ? "homeTeam" : "awayTeam"] ?? null, venue: pregame.metadata?.venue ?? null,
@@ -113,7 +113,7 @@ export function buildPitcherGameRows(games: MLBGame[]): Row[] {
 const GAME_HEADERS = [
   "game_id", "snapshot_captured_at", "game_date", "scheduled_time", "home_team", "away_team", "venue", "park_factor_k", "park_factor_runs", "park_factor_hr",
   "weather_temp", "weather_humidity", "weather_wind_speed", "weather_rain_probability", "home_moneyline", "away_moneyline", "total_runs",
-  "home_pitcher_id", "away_pitcher_id", "home_projected_lineup_k_pct", "away_projected_lineup_k_pct", "home_bullpen_ip_3d", "away_bullpen_ip_3d",
+  "home_pitcher_id", "home_pitcher_name", "away_pitcher_id", "away_pitcher_name", "home_projected_lineup_k_pct", "away_projected_lineup_k_pct", "home_bullpen_ip_3d", "away_bullpen_ip_3d",
   "home_score", "away_score", "winner", "final_game_status"
 ];
 
@@ -126,7 +126,8 @@ export function buildGameRows(games: MLBGame[]): Row[] {
       park_factor_k: game.park_factors?.index_so ?? null, park_factor_runs: game.park_factors?.index_runs ?? null, park_factor_hr: game.park_factors?.index_hr ?? null,
       weather_temp: game.weather?.temp ?? null, weather_humidity: game.weather?.humidity ?? null, weather_wind_speed: game.weather?.windSpeed ?? null, weather_rain_probability: game.weather?.rainProbability ?? null,
       home_moneyline: game.betting_lines?.currentMoneylineHome ?? null, away_moneyline: game.betting_lines?.currentMoneylineAway ?? null, total_runs: game.betting_lines?.totalRuns ?? null,
-      home_pitcher_id: pitcherId(game.pitchers?.home), away_pitcher_id: pitcherId(game.pitchers?.away),
+      home_pitcher_id: pitcherId(game.pitchers?.home), home_pitcher_name: game.pitchers?.home?.name ?? null,
+      away_pitcher_id: pitcherId(game.pitchers?.away), away_pitcher_name: game.pitchers?.away?.name ?? null,
       home_projected_lineup_k_pct: game.advanced_offense?.home?.projectedLineupKPct ?? null, away_projected_lineup_k_pct: game.advanced_offense?.away?.projectedLineupKPct ?? null,
       home_bullpen_ip_3d: game.fatigue_metrics?.bullpen?.home?.ipLast3Days ?? null, away_bullpen_ip_3d: game.fatigue_metrics?.bullpen?.away?.ipLast3Days ?? null,
       home_score: isFinal(current) ? current.game_result?.homeScore ?? null : null, away_score: isFinal(current) ? current.game_result?.awayScore ?? null : null,
@@ -136,8 +137,8 @@ export function buildGameRows(games: MLBGame[]): Row[] {
 }
 
 const BATTER_HEADERS = [
-  "game_id", "batter_id", "side", "snapshot_captured_at", "game_date", "team", "opponent", "batting_order", "position", "bat_side",
-  "opposing_pitcher_id", "avg", "obp", "slg", "ops", "woba", "iso", "pa", "home_runs", "strikeout_pct", "walk_pct",
+  "game_id", "batter_id", "batter_name", "side", "snapshot_captured_at", "game_date", "team", "opponent", "batting_order", "position", "bat_side",
+  "opposing_pitcher_id", "opposing_pitcher_name", "avg", "obp", "slg", "ops", "woba", "iso", "pa", "home_runs", "strikeout_pct", "walk_pct",
   "last7_avg", "last7_ops", "last7_slg", "last7_total_bases", "ops_vs_rhp", "ops_vs_lhp", "k_pct_vs_rhp", "k_pct_vs_lhp", "contact_pct_vs_rhp", "contact_pct_vs_lhp",
   "actual_hits", "actual_runs", "actual_rbi", "actual_strikeouts", "actual_total_bases", "final_game_status"
 ];
@@ -159,6 +160,7 @@ export function buildBatterGameRows(games: MLBGame[]): Row[] {
     for (const side of ["home", "away"] as const) {
       const opponent = sideOpponent(side);
       const opponentPitcherId = pitcherId(game.pitchers?.[opponent]);
+      const opponentPitcherName = game.pitchers?.[opponent]?.name ?? null;
       for (const batter of game.lineups?.[side] || []) {
         const id = batter?.id ?? batter?.mlbId ?? batter?.batter_id;
         if (!id || Number(id) <= 0) continue;
@@ -166,9 +168,10 @@ export function buildBatterGameRows(games: MLBGame[]): Row[] {
         if (keys.has(key)) continue;
         keys.add(key);
         rows.push({
-          game_id: gameId(current), batter_id: String(id), side, snapshot_captured_at: snapshot.capturedAt, game_date: game.metadata?.date ?? null,
+          game_id: gameId(current), batter_id: String(id), batter_name: batter.name ?? batter.player_name ?? null, side, snapshot_captured_at: snapshot.capturedAt, game_date: game.metadata?.date ?? null,
           team: game.metadata?.[side === "home" ? "homeTeam" : "awayTeam"] ?? null, opponent: game.metadata?.[opponent === "home" ? "homeTeam" : "awayTeam"] ?? null,
-          batting_order: batter.batting_order ?? null, position: batter.position ?? null, bat_side: batter.bat_side ?? null, opposing_pitcher_id: opponentPitcherId,
+          batting_order: batter.batting_order ?? null, position: batter.position ?? null, bat_side: batter.bat_side ?? null,
+          opposing_pitcher_id: opponentPitcherId, opposing_pitcher_name: opponentPitcherName,
           avg: batter.avg ?? null, obp: batter.obp ?? null, slg: batter.slg ?? null, ops: batter.ops ?? null, woba: batter.woba ?? null, iso: batter.iso ?? null,
           pa: batter.pa ?? null, home_runs: batter.home_runs ?? batter.hr ?? null, strikeout_pct: batter.strikeout_pct ?? batter.kPct ?? null, walk_pct: batter.walk_pct ?? null,
           last7_avg: batter.last7_avg ?? null, last7_ops: batter.last7_ops ?? null, last7_slg: batter.last7_slg ?? null, last7_total_bases: batter.last7_total_bases ?? null,
@@ -182,7 +185,7 @@ export function buildBatterGameRows(games: MLBGame[]): Row[] {
   return rows;
 }
 
-const PROPS_HEADERS = ["game_id", "pitcher_id", "side", "game_date", "team", "prop_line", "over_odds", "under_odds", "sportsbook", "source", "timestamp"];
+const PROPS_HEADERS = ["game_id", "pitcher_id", "pitcher_name", "side", "game_date", "team", "opponent", "prop_line", "over_odds", "under_odds", "sportsbook", "source", "timestamp"];
 
 export function buildPitcherPropsRows(games: MLBGame[]): Row[] {
   const keys = new Set<string>();
@@ -196,9 +199,11 @@ export function buildPitcherPropsRows(games: MLBGame[]): Row[] {
       const key = `${gameId(current)}:${id}`;
       if (keys.has(key)) continue;
       keys.add(key);
+      const opponent = sideOpponent(side);
       rows.push({
-        game_id: gameId(current), pitcher_id: id, side, game_date: game.metadata?.date ?? null,
-        team: game.metadata?.[side === "home" ? "homeTeam" : "awayTeam"] ?? null, prop_line: pitcher.strikeoutProp,
+        game_id: gameId(current), pitcher_id: id, pitcher_name: pitcher.name ?? null, side, game_date: game.metadata?.date ?? null,
+        team: game.metadata?.[side === "home" ? "homeTeam" : "awayTeam"] ?? null,
+        opponent: game.metadata?.[opponent === "home" ? "homeTeam" : "awayTeam"] ?? null, prop_line: pitcher.strikeoutProp,
         over_odds: pitcher.strikeoutPropOverOdds ?? null, under_odds: pitcher.strikeoutPropUnderOdds ?? null,
         sportsbook: pitcher.strikeoutPropBook ?? null, source: pitcher.strikeoutPropSource ?? null, timestamp: snapshot.capturedAt,
       });

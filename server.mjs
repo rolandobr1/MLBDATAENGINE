@@ -7303,6 +7303,164 @@ async function fetchGameResult(gamePk, bettingLines) {
     return void 0;
   }
 }
+async function fetchLiveResultOnly(gamePk) {
+  const parseLiveStats = (teamBox) => {
+    const batters = [];
+    const pitchers = [];
+    if (!teamBox?.players) return { batters, pitchers };
+    const players = teamBox.players;
+    if (teamBox.batters) {
+      teamBox.batters.forEach((id) => {
+        const p = players[`ID${id}`];
+        if (!p) return;
+        const s = p.stats?.batting || {};
+        const liveHits = s.hits || 0;
+        const liveDbl = s.doubles || 0;
+        const liveTpl = s.triples || 0;
+        const liveHr = s.homeRuns || 0;
+        const liveSingles = Math.max(0, liveHits - liveDbl - liveTpl - liveHr);
+        batters.push({
+          id,
+          name: p.person?.fullName || "Bateador",
+          position: p.position?.abbreviation || "DH",
+          ab: s.atBats || 0,
+          r: s.runs || 0,
+          h: liveHits,
+          rbi: s.rbi || 0,
+          bb: s.baseOnBalls || 0,
+          k: s.strikeOuts || 0,
+          doubles: liveDbl,
+          triples: liveTpl,
+          home_runs: liveHr,
+          total_bases: liveSingles + 2 * liveDbl + 3 * liveTpl + 4 * liveHr
+        });
+      });
+    }
+    if (teamBox.pitchers) {
+      teamBox.pitchers.forEach((id) => {
+        const p = players[`ID${id}`];
+        if (!p) return;
+        const s = p.stats?.pitching || {};
+        pitchers.push({
+          id,
+          name: p.person?.fullName || "Lanzador",
+          position: "P",
+          ip: s.inningsPitched || "0.0",
+          h: s.hits || 0,
+          r: s.runs || 0,
+          er: s.earnedRuns || 0,
+          bb: s.baseOnBalls || 0,
+          k: s.strikeOuts || 0,
+          bf: s.battersFaced ?? "",
+          pitches: s.numberOfPitches || 0,
+          strikes: s.strikes || 0
+        });
+      });
+    }
+    return { batters, pitchers };
+  };
+  const fetchBoxscore = async () => {
+    try {
+      const boxRes = await fetchWithTimeout(`https://statsapi.mlb.com/api/v1/game/${gamePk}/boxscore`);
+      const boxData = await boxRes.json();
+      return {
+        home: parseLiveStats(boxData.teams?.home),
+        away: parseLiveStats(boxData.teams?.away)
+      };
+    } catch {
+      return null;
+    }
+  };
+  const fetchLinescore = async () => {
+    try {
+      const r = await fetchWithTimeout(`https://statsapi.mlb.com/api/v1.1/game/${gamePk}/feed/live`);
+      const fullD = await r.json();
+      const d = fullD?.liveData?.linescore;
+      if (!d || !d.innings) return null;
+      return {
+        innings: d.innings.map((i) => ({
+          num: i.num,
+          home: { runs: i.home?.runs || 0, hits: i.home?.hits || 0, errors: i.home?.errors || 0 },
+          away: { runs: i.away?.runs || 0, hits: i.away?.hits || 0, errors: i.away?.errors || 0 }
+        })),
+        homeTotals: { runs: d.teams?.home?.runs || 0, hits: d.teams?.home?.hits || 0, errors: d.teams?.home?.errors || 0 },
+        awayTotals: { runs: d.teams?.away?.runs || 0, hits: d.teams?.away?.hits || 0, errors: d.teams?.away?.errors || 0 },
+        currentInning: d.currentInning,
+        currentInningOrdinal: d.currentInningOrdinal,
+        inningState: d.inningState,
+        inningHalf: d.inningHalf,
+        isTopInning: d.isTopInning,
+        balls: d.balls,
+        strikes: d.strikes,
+        outs: d.outs,
+        defense: d.defense?.pitcher ? {
+          pitcher: { id: d.defense.pitcher.id, fullName: d.defense.pitcher.fullName }
+        } : void 0,
+        offense: d.offense ? {
+          batter: d.offense.batter ? { id: d.offense.batter.id, fullName: d.offense.batter.fullName } : void 0,
+          first: d.offense.first ? { id: d.offense.first.id, fullName: d.offense.first.fullName } : void 0,
+          second: d.offense.second ? { id: d.offense.second.id, fullName: d.offense.second.fullName } : void 0,
+          third: d.offense.third ? { id: d.offense.third.id, fullName: d.offense.third.fullName } : void 0
+        } : void 0
+      };
+    } catch {
+      return null;
+    }
+  };
+  const fetchPxP = async () => {
+    try {
+      const r = await fetchWithTimeout(`https://statsapi.mlb.com/api/v1/game/${gamePk}/playByPlay`);
+      const d = await r.json();
+      const allPlays = d.allPlays || [];
+      const mappedAllPlays = allPlays.map((p) => ({
+        description: p.result?.description || "",
+        inning: `${p.about?.halfInning === "top" ? "Top" : "Bot"} ${p.about?.inning || 1}`,
+        score: `${p.result?.awayScore || 0} - ${p.result?.homeScore || 0}`,
+        isScoringPlay: p.about?.isScoringPlay || false
+      }));
+      const scoring = mappedAllPlays.filter((p) => p.isScoringPlay);
+      let currentPlay = null;
+      const cp = d.currentPlay;
+      if (cp) {
+        currentPlay = {
+          description: cp.result?.description || cp.playEvents?.[cp.playEvents.length - 1]?.details?.description || "En progreso...",
+          inning: `${cp.about?.halfInning === "top" ? "Top" : "Bot"} ${cp.about?.inning || 1}`,
+          score: `${cp.result?.awayScore || 0} - ${cp.result?.homeScore || 0}`,
+          isScoringPlay: cp.about?.isScoringPlay || false
+        };
+      }
+      return { scoringPlays: scoring, currentPlay, allPlays: mappedAllPlays };
+    } catch {
+      return null;
+    }
+  };
+  const [liveBoxscore, linescore, playByPlay] = await Promise.all([fetchBoxscore(), fetchLinescore(), fetchPxP()]);
+  return { linescore, liveBoxscore, playByPlay };
+}
+function hasSolidPregameCoverage(stored) {
+  if (!stored) return false;
+  const homeName = stored?.pitchers?.home?.name;
+  const awayName = stored?.pitchers?.away?.name;
+  const pitchersKnown = !!homeName && homeName !== "Por definir" && homeName !== "TBD" && !!awayName && awayName !== "Por definir" && awayName !== "TBD";
+  return pitchersKnown && !!stored?.weather && !!stored?.betting_lines && !!stored?.advanced_pitching?.home && !!stored?.advanced_pitching?.away && !!stored?.offensive_splits?.home && !!stored?.offensive_splits?.away;
+}
+function applyLiveResultRefresh(baseGame, gameResult, live, starterBoxStats) {
+  const merged = { ...baseGame };
+  if (gameResult) merged.game_result = gameResult;
+  merged.linescore = live.linescore ?? merged.linescore ?? null;
+  merged.liveBoxscore = live.liveBoxscore ?? merged.liveBoxscore ?? null;
+  merged.playByPlay = live.playByPlay ?? merged.playByPlay ?? null;
+  const canUseActualKs = isFinalGameStatus2(merged.game_result?.gameStatus);
+  merged.boxscore_stats = canUseActualKs ? starterBoxStats : null;
+  merged.advanced_pitching = {
+    ...merged.advanced_pitching,
+    home: { ...merged.advanced_pitching?.home, actualStrikeouts: canUseActualKs ? starterBoxStats?.home?.strikeOuts ?? null : null },
+    away: { ...merged.advanced_pitching?.away, actualStrikeouts: canUseActualKs ? starterBoxStats?.away?.strikeOuts ?? null : null }
+  };
+  merged.timestamp = (/* @__PURE__ */ new Date()).toISOString();
+  merged.lastReverifyAttempt = merged.timestamp;
+  return merged;
+}
 function hasMatchupPropRows(rows, pitcherTeam, opponentTeam) {
   if (!Array.isArray(rows) || rows.length === 0) return false;
   const teamAbbr = getTeamAbbr2(pitcherTeam);
@@ -7724,6 +7882,7 @@ app2.post("/api/harvest", async (req, res) => {
     const stored = existingGamesById.get(gamePk);
     if (!stored) return false;
     if (!historicalDate) return isFinalGameStatus2(stored?.game_result?.gameStatus);
+    if (!isFinalGameStatus2(stored?.game_result?.gameStatus)) return false;
     if (hasPitCoverage(gamePk, stored)) return true;
     const lastAttempt = stored?.lastReverifyAttempt;
     if (!lastAttempt) return false;
@@ -7833,8 +7992,8 @@ app2.post("/api/harvest", async (req, res) => {
       const gameStartedAt = Date.now();
       if (!forceRebuild) {
         const cachedGame = existingGamesForDate.find((g) => String(g.id) === String(gameId2));
-        if (cachedGame && (historicalDate || isFinalGameStatus2(cachedGame.game_result?.gameStatus))) {
-          console.log(`[Cach\xE9] Juego ${gameId2} (${gameLabel}) ya pas\xF3 o est\xE1 finalizado \u2014 cargando desde DB local.`);
+        if (cachedGame && isFinalGameStatus2(cachedGame.game_result?.gameStatus)) {
+          console.log(`[Cach\xE9] Juego ${gameId2} (${gameLabel}) ya finaliz\xF3 \u2014 cargando desde DB local.`);
           harvestedGames.push(cachedGame);
           emit({
             phase: "game_done",
@@ -7846,6 +8005,64 @@ app2.post("/api/harvest", async (req, res) => {
             cached: true
           });
           continue;
+        }
+        if (!refreshOdds && cachedGame && hasSolidPregameCoverage(cachedGame)) {
+          emit({
+            phase: "real_data",
+            step: `Actualizando resultado: ${gameLabel}`,
+            gameLabel,
+            gameIndex: gi + 1,
+            totalGames,
+            pct: basePct + Math.floor(pctPerGame * 0.3)
+          });
+          try {
+            const [gameResultLight, liveOnly, starterBoxLight] = await Promise.all([
+              fetchGameResult(gameId2, cachedGame.betting_lines),
+              fetchLiveResultOnly(gameId2),
+              getStarterBoxscoreStats(gameId2)
+            ]);
+            const refreshedGame = applyLiveResultRefresh(cachedGame, gameResultLight, liveOnly, starterBoxLight);
+            const validationResultLight = validateGamePayload(refreshedGame, errorsCollection);
+            refreshedGame.validation = {
+              isValid: validationResultLight.isValid,
+              errors: validationResultLight.errors,
+              checkedAt: (/* @__PURE__ */ new Date()).toISOString()
+            };
+            enrichWithVortexMetrics(refreshedGame);
+            capturePregameSnapshot(refreshedGame);
+            harvestedGames.push(refreshedGame);
+            saveGameData(gameId2, refreshedGame).catch((fsErr) => {
+              console.error(`Error saving to Firestore for game ${gameId2}:`, fsErr);
+              errorsCollection.push({
+                id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+                gameId: gameId2,
+                source: "Firestore",
+                message: `Fallo al sincronizar con Firestore: ${fsErr instanceof Error ? fsErr.message : String(fsErr)}`,
+                severity: "medium"
+              });
+            });
+            const incrementalDB2 = readGamesDB();
+            const incrementalDateGames2 = [...incrementalDB2[date] || []];
+            const incrementalIndex2 = incrementalDateGames2.findIndex((g) => String(g.id) === String(gameId2));
+            if (incrementalIndex2 >= 0) incrementalDateGames2[incrementalIndex2] = refreshedGame;
+            else incrementalDateGames2.push(refreshedGame);
+            incrementalDB2[date] = incrementalDateGames2;
+            writeGamesDB(incrementalDB2);
+            console.log(`[Refresco liviano] Juego ${gameId2} (${gameLabel}): ${Date.now() - gameStartedAt}ms \u2014 pregame reutilizado, solo resultado actualizado.`);
+            emit({
+              phase: "game_done",
+              step: `\u2713 ${gameLabel} (resultado actualizado)`,
+              gameLabel,
+              gameIndex: gi + 1,
+              totalGames,
+              pct: basePct + pctPerGame
+            });
+            await new Promise((r) => setTimeout(r, 400));
+            continue;
+          } catch (lightErr) {
+            console.warn(`[Refresco liviano] Fall\xF3 para ${gameId2}, se har\xE1 extracci\xF3n completa:`, lightErr);
+          }
         }
       }
       emit({
@@ -8290,6 +8507,39 @@ async function updateSingleGameData(gameId2, date, forceRefreshOdds = false) {
   const awayTeamId = match.teams.away.team.id;
   const venueName = match.venue?.name || "MLB Stadium";
   const matchTime = formatGameTime(match.gameDate);
+  if (!forceRefreshOdds) {
+    const dbForLightCheck = readGamesDB();
+    const gamesForDateLightCheck = dbForLightCheck[actualDate] || [];
+    const cachedGameLight = gamesForDateLightCheck.find((g) => String(g.id) === String(gameId2));
+    if (cachedGameLight && !isFinalGameStatus2(cachedGameLight.game_result?.gameStatus) && hasSolidPregameCoverage(cachedGameLight)) {
+      console.log(`[Refresco liviano] Juego individual ${gameId2} \u2014 pregame ya completo, solo se actualiza el resultado.`);
+      const [gameResultLight, liveOnlyLight, starterBoxLight] = await Promise.all([
+        fetchGameResult(gameId2, cachedGameLight.betting_lines),
+        fetchLiveResultOnly(gameId2),
+        getStarterBoxscoreStats(gameId2)
+      ]);
+      const refreshedGameLight = applyLiveResultRefresh(cachedGameLight, gameResultLight, liveOnlyLight, starterBoxLight);
+      const errorsCollectionLight = readErrorsDB();
+      const validationResultLight = validateGamePayload(refreshedGameLight, errorsCollectionLight);
+      refreshedGameLight.validation = {
+        isValid: validationResultLight.isValid,
+        errors: validationResultLight.errors,
+        checkedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      enrichWithVortexMetrics(refreshedGameLight);
+      capturePregameSnapshot(refreshedGameLight);
+      saveGameData(gameId2, refreshedGameLight).catch((fsErr) => {
+        console.error(`Error saving to Firestore for game ${gameId2}:`, fsErr);
+      });
+      const updatedGamesLight = gamesForDateLightCheck.map(
+        (g) => String(g.id) === String(gameId2) ? refreshedGameLight : g
+      );
+      dbForLightCheck[actualDate] = updatedGamesLight;
+      writeGamesDB(dbForLightCheck);
+      writeErrorsDB(errorsCollectionLight);
+      return refreshedGameLight;
+    }
+  }
   const historicalDate = isPastGameDate(actualDate);
   const realOddsData = await fetchRealBettingLines(actualDate, forceRefreshOdds);
   const pitcherStrikeoutRows = historicalDate ? [] : await fetchDataStreakPitcherStrikeoutProps(actualDate, forceRefreshOdds);
