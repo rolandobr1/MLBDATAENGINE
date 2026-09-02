@@ -805,14 +805,14 @@ export default function App() {
         <section className="space-y-4">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
             <div>
-              <h2 className="font-display font-bold text-2xl tracking-tight text-slate-800 flex items-center gap-2.5">
-                <Award className="text-baseball-blue" />
+              <h2 className="font-display font-bold text-2xl tracking-tight text-slate-800 flex flex-wrap items-center gap-x-2.5 gap-y-2">
+                <Award className="text-baseball-blue shrink-0" />
                 <span>Datos de Enfrentamientos Diarios</span>
                 {games.length > 0 && (
                   <>
                     {/* Menú de navegación: Vista Completa (detalle de siempre) vs Vista
                         Compacta (mini-marcadores para ver todos los juegos de un vistazo) */}
-                    <div className="ml-4 flex items-center rounded-lg border border-slate-300 bg-white p-0.5 shadow-sm" role="tablist" aria-label="Modo de vista de los juegos">
+                    <div className="flex items-center rounded-lg border border-slate-300 bg-white p-0.5 shadow-sm" role="tablist" aria-label="Modo de vista de los juegos">
                       <button
                         type="button"
                         role="tab"
@@ -839,7 +839,7 @@ export default function App() {
                     {viewMode === "full" && (
                       <button
                         onClick={handleToggleExpandAll}
-                        className="ml-2 flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 shadow-sm transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 shadow-sm transition-colors"
                       >
                         {globalExpandTarget ? (
                           <>

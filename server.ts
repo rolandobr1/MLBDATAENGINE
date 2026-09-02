@@ -6028,25 +6028,46 @@ registerKPropsLineHistoryRoutes(app, {
   getNewYorkDateString,
 });
 
-// Auto-updater for live/in-progress games in background (every 2 minutes)
+// Auto-updater para juegos en vivo Y pendientes de arrancar, en background (cada 2 minutos).
+//
+// IMPORTANTE (bug corregido): antes este filtro solo re-consultaba juegos cuyo
+// `game_result.gameStatus` YA ESTABA guardado como "In Progress"/"Live"/etc. —
+// es decir, dependía del propio dato guardado (desactualizado por definición)
+// para decidir si valía la pena actualizarlo. Un juego que arranca (pasa de
+// "Scheduled"/"Pre-Game"/"Warmup" a "In Progress" en la vida real) nunca
+// cumplía esa condición, así que se quedaba congelado en su estatus pregame
+// para siempre — solo se corregía si alguien lo refrescaba manualmente. Ahora
+// se re-consulta cualquier juego que no esté ya definitivamente terminado
+// (`isFinalGameStatus` o Postponed/Cancelled), sin importar el estatus
+// guardado, para poder detectar esa transición sin depender de un refresco manual.
+const NON_ACTIONABLE_STATUSES = ["Postponed", "Cancelled"]; // no se van a jugar hoy; no tiene caso seguir consultando
+
 function startLiveGamesAutoupdater() {
   const INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
   console.log(`[Auto-Updater] Iniciando programador de actualización cada 2 minutos...`);
 
   setInterval(async () => {
     try {
-      console.log(`[Auto-Updater] Ejecutando verificación de juegos en progreso para actualización automática...`);
+      console.log(`[Auto-Updater] Ejecutando verificación de juegos pendientes/en progreso para actualización automática...`);
       const db = readGamesDB();
       const liveGamesToUpdate: { gameId: string; date: string; label: string }[] = [];
 
-      // Find all live games across all dates in local DB
+      // Encuentra todos los juegos que no están definitivamente terminados en la DB local.
+      // Nota: si el juego todavía no tiene cobertura pregame completa (ej. abridor
+      // "Por definir") Y su estatus guardado tampoco es ya "en vivo", se omite acá a
+      // propósito — `updateSingleGameData` caería al pipeline pregame completo (incluye
+      // scraping de Rotowire) en vez del refresco liviano, y no tiene sentido repetir eso
+      // cada 2 minutos solo para detectar si ya arrancó. Ese caso puntual (raro: abridor
+      // aún no anunciado) sigue necesitando un refresco manual la primera vez.
       for (const date of Object.keys(db)) {
         const games = db[date] || [];
         for (const game of games) {
           const status = game.game_result?.gameStatus || "";
-          const isLive = status.includes("In Progress") || status.includes("Live") || status.includes("Delayed") || status.includes("Suspended");
+          const isDone = status === "" || isFinalGameStatus(status) || NON_ACTIONABLE_STATUSES.some(s => status.includes(s));
+          const isLiveStatus = status.includes("In Progress") || status.includes("Live") || status.includes("Delayed") || status.includes("Suspended");
+          const needsUpdate = !isDone && (isLiveStatus || hasSolidPregameCoverage(game));
 
-          if (isLive) {
+          if (needsUpdate) {
             liveGamesToUpdate.push({
               gameId: String(game.id),
               date: game.metadata?.date || date,
@@ -6057,11 +6078,11 @@ function startLiveGamesAutoupdater() {
       }
 
       if (liveGamesToUpdate.length === 0) {
-        console.log(`[Auto-Updater] No se encontraron juegos en progreso para actualizar.`);
+        console.log(`[Auto-Updater] No se encontraron juegos pendientes/en progreso para actualizar.`);
         return;
       }
 
-      console.log(`[Auto-Updater] Detectados ${liveGamesToUpdate.length} juego(s) en progreso. Iniciando actualización secuencial...`);
+      console.log(`[Auto-Updater] Detectados ${liveGamesToUpdate.length} juego(s) pendientes/en progreso. Iniciando actualización secuencial...`);
 
       for (const item of liveGamesToUpdate) {
         try {
