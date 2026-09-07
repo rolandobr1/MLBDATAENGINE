@@ -29,3 +29,25 @@ export function isFinalGameStatus(status: unknown): boolean {
     normalized === "completed"
   );
 }
+
+/**
+ * Un juego "Postponed"/"Cancelled" no es un juego terminado (`isFinalGameStatus`
+ * es false) pero tampoco va a seguir avanzando — no tiene sentido ni volver a
+ * consultarlo (server.ts) ni mostrarlo con la misma UI que un juego EN VIVO
+ * (App.tsx / GameCard / GameCardCompact).
+ *
+ * Encontrado (sept. 2026): cuando MLB pospone un juego y lo reprograma el mismo
+ * día como un juego nuevo (doubleheader, ID distinto), el juego original queda
+ * para siempre con estatus "Postponed" en la base de datos — eso es correcto,
+ * genuinely nunca se jugó. El bug estaba en cómo se MOSTRABA ese estatus: como
+ * "Postponed" no está en la lista `["Scheduled", "Pre-Game", "Warmup"]`, las
+ * tarjetas lo trataban como "ya arrancó" y, al no incluir "Final", lo pintaban
+ * con el badge rojo pulsante de "EN VIVO" — dando a entender que un juego que
+ * nunca se jugó (y nunca se va a jugar) está en curso ahora mismo. Ver
+ * `NON_ACTIONABLE_STATUSES` en server.ts, que usa este mismo criterio para
+ * dejar de re-consultar el juego vía la API de MLB.
+ */
+export function isNonActionableGameStatus(status: unknown): boolean {
+  const normalized = String(status ?? "").trim().toLowerCase();
+  return normalized.includes("postponed") || normalized.includes("cancelled") || normalized.includes("canceled");
+}

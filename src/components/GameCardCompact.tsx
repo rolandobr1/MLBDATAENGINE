@@ -16,6 +16,7 @@
 import React from "react";
 import { MLBGame } from "../types";
 import { getTeamLogo, getTeamAbbr } from "../utils/teamLogos";
+import { isNonActionableGameStatus } from "../utils/gameStatus";
 import { Pin } from "lucide-react";
 
 interface GameCardCompactProps {
@@ -51,13 +52,22 @@ export const GameCardCompact: React.FC<GameCardCompactProps> = ({ game, isPinned
   const awayScore = hasStarted ? (game.linescore?.awayTotals?.runs ?? game.game_result?.awayScore ?? null) : null;
   const homeScore = hasStarted ? (game.linescore?.homeTotals?.runs ?? game.game_result?.homeScore ?? null) : null;
   const isFinal = status.includes("Final") || status === "Game Over";
-  const isLive = hasStarted && !isFinal;
+  // Un juego "Postponed"/"Cancelled" cumplía `hasStarted && !isFinal` y por lo tanto
+  // caía en la rama "En Vivo" de abajo con el badge rojo pulsante — mostrando como
+  // "en curso ahora mismo" un juego que nunca se jugó y nunca se va a jugar. Se
+  // excluye explícitamente para que tenga su propio badge neutro. Ver
+  // isNonActionableGameStatus en utils/gameStatus.ts.
+  const isNonActionable = isNonActionableGameStatus(status);
+  const isLive = hasStarted && !isFinal && !isNonActionable;
 
   let badgeLabel: string;
   let badgeClass: string;
   if (isFinal) {
     badgeLabel = "Final";
     badgeClass = "bg-slate-800 text-slate-100";
+  } else if (isNonActionable) {
+    badgeLabel = status.toLowerCase().includes("cancel") ? "Cancelado" : "Pospuesto";
+    badgeClass = "bg-amber-100 text-amber-700 border border-amber-200";
   } else if (isLive) {
     badgeLabel = game.linescore?.currentInning
       ? `${game.linescore.inningHalf === "Top" ? "Alta" : "Baja"} ${game.linescore.currentInning}°`

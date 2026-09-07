@@ -144,8 +144,8 @@ var getPitcherArsenals = (pitcherIds, year) => {
 
 // server.ts
 import dotenv from "dotenv";
-import fs7 from "fs";
-import path6 from "path";
+import fs8 from "fs";
+import path7 from "path";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 
@@ -2987,6 +2987,7 @@ function snapshotPairs(games) {
 var PITCHER_HEADERS = [
   "game_id",
   "pitcher_id",
+  "pitcher_name",
   "side",
   "snapshot_captured_at",
   "game_date",
@@ -3054,6 +3055,7 @@ function buildPitcherGameRows(games) {
       rows.push({
         game_id: gameId(current),
         pitcher_id: id,
+        pitcher_name: pitcher.name ?? null,
         side,
         snapshot_captured_at: snapshot.capturedAt,
         game_date: pregame.metadata?.date ?? null,
@@ -3120,7 +3122,9 @@ var GAME_HEADERS = [
   "away_moneyline",
   "total_runs",
   "home_pitcher_id",
+  "home_pitcher_name",
   "away_pitcher_id",
+  "away_pitcher_name",
   "home_projected_lineup_k_pct",
   "away_projected_lineup_k_pct",
   "home_bullpen_ip_3d",
@@ -3152,7 +3156,9 @@ function buildGameRows(games) {
       away_moneyline: game.betting_lines?.currentMoneylineAway ?? null,
       total_runs: game.betting_lines?.totalRuns ?? null,
       home_pitcher_id: pitcherId(game.pitchers?.home),
+      home_pitcher_name: game.pitchers?.home?.name ?? null,
       away_pitcher_id: pitcherId(game.pitchers?.away),
+      away_pitcher_name: game.pitchers?.away?.name ?? null,
       home_projected_lineup_k_pct: game.advanced_offense?.home?.projectedLineupKPct ?? null,
       away_projected_lineup_k_pct: game.advanced_offense?.away?.projectedLineupKPct ?? null,
       home_bullpen_ip_3d: game.fatigue_metrics?.bullpen?.home?.ipLast3Days ?? null,
@@ -3167,6 +3173,7 @@ function buildGameRows(games) {
 var BATTER_HEADERS = [
   "game_id",
   "batter_id",
+  "batter_name",
   "side",
   "snapshot_captured_at",
   "game_date",
@@ -3176,6 +3183,7 @@ var BATTER_HEADERS = [
   "position",
   "bat_side",
   "opposing_pitcher_id",
+  "opposing_pitcher_name",
   "avg",
   "obp",
   "slg",
@@ -3222,6 +3230,7 @@ function buildBatterGameRows(games) {
     for (const side of ["home", "away"]) {
       const opponent = sideOpponent(side);
       const opponentPitcherId = pitcherId(game.pitchers?.[opponent]);
+      const opponentPitcherName = game.pitchers?.[opponent]?.name ?? null;
       for (const batter of game.lineups?.[side] || []) {
         const id = batter?.id ?? batter?.mlbId ?? batter?.batter_id;
         if (!id || Number(id) <= 0) continue;
@@ -3231,6 +3240,7 @@ function buildBatterGameRows(games) {
         rows.push({
           game_id: gameId(current),
           batter_id: String(id),
+          batter_name: batter.name ?? batter.player_name ?? null,
           side,
           snapshot_captured_at: snapshot.capturedAt,
           game_date: game.metadata?.date ?? null,
@@ -3240,6 +3250,7 @@ function buildBatterGameRows(games) {
           position: batter.position ?? null,
           bat_side: batter.bat_side ?? null,
           opposing_pitcher_id: opponentPitcherId,
+          opposing_pitcher_name: opponentPitcherName,
           avg: batter.avg ?? null,
           obp: batter.obp ?? null,
           slg: batter.slg ?? null,
@@ -3268,7 +3279,7 @@ function buildBatterGameRows(games) {
   }
   return rows;
 }
-var PROPS_HEADERS = ["game_id", "pitcher_id", "side", "game_date", "team", "prop_line", "over_odds", "under_odds", "sportsbook", "source", "timestamp"];
+var PROPS_HEADERS = ["game_id", "pitcher_id", "pitcher_name", "side", "game_date", "team", "opponent", "prop_line", "over_odds", "under_odds", "sportsbook", "source", "timestamp"];
 function buildPitcherPropsRows(games) {
   const keys = /* @__PURE__ */ new Set();
   const rows = [];
@@ -3281,12 +3292,15 @@ function buildPitcherPropsRows(games) {
       const key = `${gameId(current)}:${id}`;
       if (keys.has(key)) continue;
       keys.add(key);
+      const opponent = sideOpponent(side);
       rows.push({
         game_id: gameId(current),
         pitcher_id: id,
+        pitcher_name: pitcher.name ?? null,
         side,
         game_date: game.metadata?.date ?? null,
         team: game.metadata?.[side === "home" ? "homeTeam" : "awayTeam"] ?? null,
+        opponent: game.metadata?.[opponent === "home" ? "homeTeam" : "awayTeam"] ?? null,
         prop_line: pitcher.strikeoutProp,
         over_odds: pitcher.strikeoutPropOverOdds ?? null,
         under_odds: pitcher.strikeoutPropUnderOdds ?? null,
@@ -4030,15 +4044,269 @@ function registerCronPipelineRoutes(app3, deps) {
   });
 }
 
+// src/services/kPropsLineHistory.ts
+import fs7 from "fs";
+import path6 from "path";
+var HISTORY_PATH = path6.join(process.cwd(), "k_props_line_history.json");
+var MAX_RECORDS_KEPT = 2e4;
+function readAllRecords() {
+  try {
+    if (!fs7.existsSync(HISTORY_PATH)) return [];
+    const parsed = JSON.parse(fs7.readFileSync(HISTORY_PATH, "utf-8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.error("[KPropsLineHistory] Error leyendo k_props_line_history.json, se empieza de cero:", err);
+    return [];
+  }
+}
+function writeAllRecords(records) {
+  try {
+    const trimmed = records.slice(-MAX_RECORDS_KEPT);
+    fs7.writeFileSync(HISTORY_PATH, JSON.stringify(trimmed, null, 2));
+  } catch (err) {
+    console.error("[KPropsLineHistory] Error escribiendo k_props_line_history.json:", err);
+  }
+}
+function appendLineChanges(newRecords) {
+  if (!newRecords.length) return;
+  const all = readAllRecords();
+  all.push(...newRecords);
+  writeAllRecords(all);
+}
+function getLineHistory(opts = {}) {
+  let records = readAllRecords();
+  if (opts.date) records = records.filter((r) => r.date === opts.date);
+  records = records.slice().reverse();
+  if (opts.limit) records = records.slice(0, opts.limit);
+  return records;
+}
+var CSV_HEADERS = [
+  "recorded_at",
+  "date",
+  "game_id",
+  "side",
+  "pitcher_name",
+  "team",
+  "opponent",
+  "old_line",
+  "new_line",
+  "old_over_odds",
+  "new_over_odds",
+  "old_under_odds",
+  "new_under_odds",
+  "source"
+];
+function generateKPropsLineHistoryCSV(records) {
+  const rows = records.map((r) => [
+    r.recordedAt,
+    r.date,
+    r.gameId,
+    r.side,
+    escapeCsvValue(r.pitcherName),
+    escapeCsvValue(r.team),
+    escapeCsvValue(r.opponent),
+    r.oldLine ?? "",
+    r.newLine ?? "",
+    r.oldOverOdds ?? "",
+    r.newOverOdds ?? "",
+    r.oldUnderOdds ?? "",
+    r.newUnderOdds ?? "",
+    r.source ? escapeCsvValue(r.source) : ""
+  ]);
+  return [CSV_HEADERS.join(","), ...rows.map((row) => row.join(","))].join("\n");
+}
+
+// src/services/kPropsLineRefresher.ts
+function matchOddsApiKProp(events, homeName, awayName, pitcherName, normalizeName2) {
+  if (!pitcherName || pitcherName === "Por definir" || pitcherName === "TBD") return null;
+  if (!Array.isArray(events)) return null;
+  const matchOdds = events.find((o) => {
+    const oHome = String(o.home_team || "").toLowerCase();
+    const oAway = String(o.away_team || "").toLowerCase();
+    const dbHome = homeName.toLowerCase();
+    const dbAway = awayName.toLowerCase();
+    return (oHome === dbHome || oHome.includes(dbHome) || dbHome.includes(oHome)) && (oAway === dbAway || oAway.includes(dbAway) || dbAway.includes(oAway));
+  });
+  if (!matchOdds || !Array.isArray(matchOdds.bookmakers)) return null;
+  const pitcherStrikeoutsOutcomes = [];
+  for (const b of matchOdds.bookmakers) {
+    const mPitcher = (b.markets || []).find((mk) => mk.key === "pitcher_strikeouts");
+    if (mPitcher?.outcomes) {
+      pitcherStrikeoutsOutcomes.push(
+        ...mPitcher.outcomes.map((outcome) => ({
+          ...outcome,
+          bookKey: b.key,
+          source: outcome.source || (b.key === "datastreak" ? "datastreak" : "the_odds_api")
+        }))
+      );
+    }
+  }
+  if (pitcherStrikeoutsOutcomes.length === 0) return null;
+  const normalizedPitcherName = normalizeName2(pitcherName);
+  const parts = normalizedPitcherName.split(" ");
+  const lastName = parts[parts.length - 1];
+  const outcomes = pitcherStrikeoutsOutcomes.filter((o) => {
+    const description = normalizeName2(o.description);
+    const isTheOddsApi = o.source !== "datastreak" && o.bookKey !== "datastreak";
+    return isTheOddsApi && (description === normalizedPitcherName || description.includes(normalizedPitcherName) || description.split(" ").includes(lastName));
+  });
+  if (outcomes.length === 0) return null;
+  const over = outcomes.find((o) => o.name === "Over");
+  const under = outcomes.find((o) => o.name === "Under");
+  return {
+    point: over?.point ?? under?.point ?? null,
+    overOdds: over?.price ?? null,
+    underOdds: under?.price ?? null,
+    source: "the_odds_api"
+  };
+}
+function buildSkipListShim(games) {
+  return games.map((g) => ({
+    teams: { home: { team: { name: g?.metadata?.homeTeam || "" } }, away: { team: { name: g?.metadata?.awayTeam || "" } } },
+    status: {
+      abstractGameState: isFinalGameStatus2(g?.game_result?.gameStatus) ? "Final" : "",
+      statusCode: ""
+    }
+  }));
+}
+function valuesEqual(a, b) {
+  return (a ?? null) === (b ?? null);
+}
+async function refreshPitcherKPropLinesForDate(date, deps) {
+  const summary = { date, gamesChecked: 0, gamesSkippedFinal: 0, changesDetected: 0, errors: [] };
+  const db2 = deps.readGamesDB();
+  const games = db2[date] || [];
+  const activeGames = games.filter((g) => !isFinalGameStatus2(g?.game_result?.gameStatus));
+  summary.gamesSkippedFinal = games.length - activeGames.length;
+  if (activeGames.length === 0) {
+    return summary;
+  }
+  const skipListShim = buildSkipListShim(games);
+  const [oddsEvents, dataStreakRows] = await Promise.all([
+    deps.fetchRealBettingLines(date, true, skipListShim).catch((err) => {
+      summary.errors.push(`fetchRealBettingLines: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }),
+    deps.fetchDataStreakPitcherStrikeoutProps(date, true).catch((err) => {
+      summary.errors.push(`fetchDataStreakPitcherStrikeoutProps: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    })
+  ]);
+  const changeRecords = [];
+  const recordedAt = (/* @__PURE__ */ new Date()).toISOString();
+  let dbChanged = false;
+  for (const game of activeGames) {
+    summary.gamesChecked++;
+    const homeName = game?.metadata?.homeTeam || "";
+    const awayName = game?.metadata?.awayTeam || "";
+    const gameId2 = String(game?.id || game?.metadata?.id || "");
+    for (const side of ["home", "away"]) {
+      const opponentSide = side === "home" ? "away" : "home";
+      const pitcher = game?.pitchers?.[side];
+      if (!pitcher?.name || pitcher.name === "Por definir" || pitcher.name === "TBD") continue;
+      const team = side === "home" ? homeName : awayName;
+      const opponent = side === "home" ? awayName : homeName;
+      let newProp = oddsEvents ? matchOddsApiKProp(oddsEvents, homeName, awayName, pitcher.name, deps.normalizeName) : null;
+      if (!newProp) {
+        const fallback = deps.findDataStreakPitcherKProp(dataStreakRows || [], pitcher.name, team, opponent);
+        if (fallback) {
+          newProp = {
+            point: fallback.point ?? null,
+            overOdds: fallback.overOdds ?? null,
+            underOdds: fallback.underOdds ?? null,
+            source: fallback.source ?? "datastreak"
+          };
+        }
+      }
+      if (!newProp || newProp.point === null) continue;
+      const oldLine = pitcher.strikeoutProp ?? null;
+      const oldOver = pitcher.strikeoutPropOverOdds ?? null;
+      const oldUnder = pitcher.strikeoutPropUnderOdds ?? null;
+      const changed = !valuesEqual(oldLine, newProp.point) || !valuesEqual(oldOver, newProp.overOdds) || !valuesEqual(oldUnder, newProp.underOdds);
+      if (!changed) continue;
+      changeRecords.push({
+        recordedAt,
+        date,
+        gameId: gameId2,
+        side,
+        pitcherName: pitcher.name,
+        team,
+        opponent,
+        oldLine,
+        newLine: newProp.point,
+        oldOverOdds: oldOver,
+        newOverOdds: newProp.overOdds,
+        oldUnderOdds: oldUnder,
+        newUnderOdds: newProp.underOdds,
+        source: newProp.source
+      });
+      pitcher.strikeoutProp = newProp.point;
+      pitcher.strikeoutPropOverOdds = newProp.overOdds;
+      pitcher.strikeoutPropUnderOdds = newProp.underOdds;
+      pitcher.strikeoutPropSource = newProp.source;
+      dbChanged = true;
+    }
+    if (dbChanged) {
+      saveGameData(gameId2, game).catch((err) => {
+        console.error(`[KPropsLineRefresher] No se pudo guardar en Firestore el juego ${gameId2} tras refrescar l\xEDneas:`, err);
+      });
+    }
+  }
+  if (dbChanged) {
+    db2[date] = games;
+    deps.writeGamesDB(db2);
+  }
+  appendLineChanges(changeRecords);
+  summary.changesDetected = changeRecords.length;
+  return summary;
+}
+
+// src/routes/kPropsLineHistoryRoutes.ts
+function registerKPropsLineHistoryRoutes(app3, deps) {
+  app3.post("/api/cron/refresh-k-props-lines", async (req, res) => {
+    const secret = process.env.CRON_SECRET;
+    if (!secret) {
+      res.status(503).json({ error: "CRON_SECRET no est\xE1 configurado en el servidor; este endpoint est\xE1 deshabilitado por seguridad hasta que se configure." });
+      return;
+    }
+    if (req.headers["x-cron-secret"] !== secret) {
+      res.status(401).json({ error: "No autorizado." });
+      return;
+    }
+    const date = typeof req.body?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.body.date) ? req.body.date : deps.getNewYorkDateString();
+    try {
+      const summary = await refreshPitcherKPropLinesForDate(date, deps);
+      console.log(`[KPropsLineHistory] Refresco para ${date}: ${summary.changesDetected} cambio(s) detectado(s) sobre ${summary.gamesChecked} juego(s).`);
+      res.status(200).json(summary);
+    } catch (err) {
+      console.error(`[KPropsLineHistory] Error refrescando l\xEDneas de K's para ${date}:`, err);
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  app3.get("/api/props/k-line-history", (req, res) => {
+    const date = typeof req.query.date === "string" ? req.query.date : void 0;
+    const limit2 = Number(req.query.limit) || void 0;
+    res.json({ changes: getLineHistory({ date, limit: limit2 }) });
+  });
+  app3.get("/api/props/k-line-history/csv", (req, res) => {
+    const date = typeof req.query.date === "string" ? req.query.date : void 0;
+    const records = getLineHistory({ date });
+    const csvContent = generateKPropsLineHistoryCSV(records);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename=k_props_line_history_${date || "all"}.csv`);
+    res.send(csvContent);
+  });
+}
+
 // server.ts
 var envPaths = [
-  path6.join(process.cwd(), ".env.local"),
-  path6.join(process.cwd(), "env.local"),
-  path6.join("/etc", "secrets", ".env.local"),
-  path6.join("/etc", "secrets", "env.local")
+  path7.join(process.cwd(), ".env.local"),
+  path7.join(process.cwd(), "env.local"),
+  path7.join("/etc", "secrets", ".env.local"),
+  path7.join("/etc", "secrets", "env.local")
 ];
 for (const envPath of envPaths) {
-  if (fs7.existsSync(envPath)) {
+  if (fs8.existsSync(envPath)) {
     dotenv.config({ path: envPath });
     console.log(`[ENV] Cargado desde: ${envPath}`);
   }
@@ -4052,30 +4320,33 @@ for (const key in process.env) {
 var app2 = express();
 app2.use(express.json());
 app2.get("/favicon.ico", (req, res) => {
-  res.sendFile(path6.join(process.cwd(), "src", "favicon.svg"));
+  res.sendFile(path7.join(process.cwd(), "src", "favicon.svg"));
+});
+app2.get("/health", (req, res) => {
+  res.status(200).json({ ok: true, uptimeSeconds: process.uptime() });
 });
 var PORT = Number(process.env.PORT || 3001);
-var DB_PATH = path6.join(process.cwd(), "mlb_database.json");
-var ERRORS_PATH = path6.join(process.cwd(), "mlb_errors.json");
+var DB_PATH = path7.join(process.cwd(), "mlb_database.json");
+var ERRORS_PATH = path7.join(process.cwd(), "mlb_errors.json");
 var gamesDbCache = null;
 var gamesDbCacheMtime = 0;
 var oddsApiBackfillsInFlight = /* @__PURE__ */ new Set();
 var harvestDatesInFlight = /* @__PURE__ */ new Set();
 var firestoreRangeSyncInFlight = false;
 var REVERIFY_COOLDOWN_DAYS = 3;
-if (!fs7.existsSync(DB_PATH)) {
-  fs7.writeFileSync(DB_PATH, JSON.stringify({}, null, 2));
+if (!fs8.existsSync(DB_PATH)) {
+  fs8.writeFileSync(DB_PATH, JSON.stringify({}, null, 2));
 }
-if (!fs7.existsSync(ERRORS_PATH)) {
-  fs7.writeFileSync(ERRORS_PATH, JSON.stringify([], null, 2));
+if (!fs8.existsSync(ERRORS_PATH)) {
+  fs8.writeFileSync(ERRORS_PATH, JSON.stringify([], null, 2));
 }
 function readGamesDB() {
   try {
-    const stat = fs7.statSync(DB_PATH);
+    const stat = fs8.statSync(DB_PATH);
     if (gamesDbCache && stat.mtimeMs === gamesDbCacheMtime) {
       return gamesDbCache;
     }
-    const raw = fs7.readFileSync(DB_PATH, "utf-8");
+    const raw = fs8.readFileSync(DB_PATH, "utf-8");
     gamesDbCache = JSON.parse(raw);
     gamesDbCacheMtime = stat.mtimeMs;
     return gamesDbCache || {};
@@ -4093,19 +4364,19 @@ function readPitLookups() {
   }
   const result = {};
   try {
-    const pPath = path6.join(process.cwd(), "pitcher_stats_pit.json");
-    if (fs7.existsSync(pPath)) {
-      const parsed = JSON.parse(fs7.readFileSync(pPath, "utf-8"));
+    const pPath = path7.join(process.cwd(), "pitcher_stats_pit.json");
+    if (fs8.existsSync(pPath)) {
+      const parsed = JSON.parse(fs8.readFileSync(pPath, "utf-8"));
       result.pitchers = parsed.pitchers || parsed;
     }
-    const oPath = path6.join(process.cwd(), "offense_stats_pit.json");
-    if (fs7.existsSync(oPath)) {
-      const parsed = JSON.parse(fs7.readFileSync(oPath, "utf-8"));
+    const oPath = path7.join(process.cwd(), "offense_stats_pit.json");
+    if (fs8.existsSync(oPath)) {
+      const parsed = JSON.parse(fs8.readFileSync(oPath, "utf-8"));
       result.offense = parsed.offense || parsed;
     }
-    const bPath = path6.join(process.cwd(), "boxscore_game_stats.json");
-    if (fs7.existsSync(bPath)) {
-      const parsed = JSON.parse(fs7.readFileSync(bPath, "utf-8"));
+    const bPath = path7.join(process.cwd(), "boxscore_game_stats.json");
+    if (fs8.existsSync(bPath)) {
+      const parsed = JSON.parse(fs8.readFileSync(bPath, "utf-8"));
       result.boxscore = parsed.boxscore || parsed;
     }
     pitLookupsCache = result;
@@ -4117,8 +4388,8 @@ function readPitLookups() {
 }
 function writeGamesDB(data) {
   try {
-    fs7.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-    const stat = fs7.statSync(DB_PATH);
+    fs8.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+    const stat = fs8.statSync(DB_PATH);
     gamesDbCache = data;
     gamesDbCacheMtime = stat.mtimeMs;
   } catch (err) {
@@ -4299,8 +4570,8 @@ function maybeBackfillTheOddsApiForDate(date, dateGames) {
   if (!process.env.ODDS_API_KEY) return;
   if (oddsApiBackfillsInFlight.has(date)) return;
   if (isPastGameDate(date)) return;
-  const cacheFile = path6.join(process.cwd(), `odds_cache_${date}.json`);
-  const hasOddsCache = fs7.existsSync(cacheFile);
+  const cacheFile = path7.join(process.cwd(), `odds_cache_${date}.json`);
+  const hasOddsCache = fs8.existsSync(cacheFile);
   const apiPropsCount = getTheOddsApiPropsCountForGames(dateGames);
   if (hasOddsCache && apiPropsCount > 0) return;
   oddsApiBackfillsInFlight.add(date);
@@ -4366,7 +4637,7 @@ async function syncFirestoreToLocalDB(reason = "manual") {
 }
 function readErrorsDB() {
   try {
-    const raw = fs7.readFileSync(ERRORS_PATH, "utf-8");
+    const raw = fs8.readFileSync(ERRORS_PATH, "utf-8");
     return JSON.parse(raw);
   } catch (err) {
     console.error("Error reading errors database:", err);
@@ -4375,7 +4646,7 @@ function readErrorsDB() {
 }
 function writeErrorsDB(errors) {
   try {
-    fs7.writeFileSync(ERRORS_PATH, JSON.stringify(errors, null, 2));
+    fs8.writeFileSync(ERRORS_PATH, JSON.stringify(errors, null, 2));
   } catch (err) {
     console.error("Error writing errors database:", err);
   }
@@ -5065,9 +5336,9 @@ app2.get("/api/datasets/klab-training/preview", (req, res) => {
 app2.get("/api/datasets/klab-training/csv", (req, res) => {
   try {
     const result = buildRequestedKlabDataset(req.query.start_date, req.query.end_date);
-    const outputDirectory = path6.join(process.cwd(), "datasets", "ml");
-    fs7.mkdirSync(outputDirectory, { recursive: true });
-    fs7.writeFileSync(path6.join(outputDirectory, result.report.outputFilename), result.csv, "utf8");
+    const outputDirectory = path7.join(process.cwd(), "datasets", "ml");
+    fs8.mkdirSync(outputDirectory, { recursive: true });
+    fs8.writeFileSync(path7.join(outputDirectory, result.report.outputFilename), result.csv, "utf8");
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename=${result.report.outputFilename}`);
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -5576,10 +5847,10 @@ function fetchWithTimeout(url, ms = 8e3) {
   return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 async function fetchDataStreakSheetRows(date, statKey, cachePrefix, forceRefresh = false, excludeInjured = true) {
-  const cacheFile = path6.join(process.cwd(), `${cachePrefix}${excludeInjured ? "" : "_all"}_${date}.json`);
-  if (!forceRefresh && fs7.existsSync(cacheFile)) {
+  const cacheFile = path7.join(process.cwd(), `${cachePrefix}${excludeInjured ? "" : "_all"}_${date}.json`);
+  if (!forceRefresh && fs8.existsSync(cacheFile)) {
     try {
-      return JSON.parse(fs7.readFileSync(cacheFile, "utf-8"));
+      return JSON.parse(fs8.readFileSync(cacheFile, "utf-8"));
     } catch (e) {
       console.warn(`Error leyendo cache de DataStreak ${statKey}, se descargara nuevamente.`, e);
     }
@@ -5593,7 +5864,7 @@ async function fetchDataStreakSheetRows(date, statKey, cachePrefix, forceRefresh
     }
     const data = await res.json();
     const rows = Array.isArray(data?.rows) ? data.rows : [];
-    fs7.writeFileSync(cacheFile, JSON.stringify(rows, null, 2));
+    fs8.writeFileSync(cacheFile, JSON.stringify(rows, null, 2));
     return rows;
   } catch (err) {
     console.warn(`Error al obtener ${statKey} de DataStreak:`, err);
@@ -5760,11 +6031,11 @@ async function enrichGamesWithTotalBasesProps(games) {
   });
 }
 async function fetchRealBettingLines(date, forceRefreshOdds = false, gamesList = []) {
-  const cacheFile = path6.join(process.cwd(), `odds_cache_${date}.json`);
-  if (!forceRefreshOdds && fs7.existsSync(cacheFile)) {
+  const cacheFile = path7.join(process.cwd(), `odds_cache_${date}.json`);
+  if (!forceRefreshOdds && fs8.existsSync(cacheFile)) {
     try {
       console.log(`Leyendo cuotas desde el cach\xE9 local: odds_cache_${date}.json`);
-      const cached = fs7.readFileSync(cacheFile, "utf-8");
+      const cached = fs8.readFileSync(cacheFile, "utf-8");
       return JSON.parse(cached);
     } catch (e) {
       console.warn("Error leyendo el cach\xE9 de cuotas, se ignorar\xE1 y se descargar\xE1 nuevamente.", e);
@@ -5806,11 +6077,11 @@ async function fetchRealBettingLines(date, forceRefreshOdds = false, gamesList =
   }
   if (!activeKey || !data) {
     console.error("[Odds API] Todas las keys de The Odds API agotaron su cuota o fallaron.");
-    if (fs7.existsSync(cacheFile) && fs7.statSync(cacheFile).size > 10) {
+    if (fs8.existsSync(cacheFile) && fs8.statSync(cacheFile).size > 10) {
       console.log(`Recuperando cuotas del cach\xE9 existente debido a falla de la API.`);
-      return JSON.parse(fs7.readFileSync(cacheFile, "utf-8"));
+      return JSON.parse(fs8.readFileSync(cacheFile, "utf-8"));
     }
-    fs7.writeFileSync(cacheFile, JSON.stringify([]));
+    fs8.writeFileSync(cacheFile, JSON.stringify([]));
     return null;
   }
   try {
@@ -5850,12 +6121,12 @@ async function fetchRealBettingLines(date, forceRefreshOdds = false, gamesList =
     const dataStreakPitcherKs = await fetchDataStreakPitcherStrikeoutProps(date, forceRefreshOdds);
     const eventsWithDataStreakProps = mergeDataStreakPitcherStrikeouts(eventsWithProps, dataStreakPitcherKs);
     try {
-      if (eventsWithDataStreakProps.length > 0 || !fs7.existsSync(cacheFile) || fs7.statSync(cacheFile).size < 10) {
-        fs7.writeFileSync(cacheFile, JSON.stringify(eventsWithDataStreakProps, null, 2));
+      if (eventsWithDataStreakProps.length > 0 || !fs8.existsSync(cacheFile) || fs8.statSync(cacheFile).size < 10) {
+        fs8.writeFileSync(cacheFile, JSON.stringify(eventsWithDataStreakProps, null, 2));
         console.log(`Cuotas guardadas en cache: odds_cache_${date}.json`);
       } else {
         console.log(`No se recibieron cuotas nuevas (posible fecha pasada). Conservando el cach\xE9 original: odds_cache_${date}.json`);
-        return JSON.parse(fs7.readFileSync(cacheFile, "utf-8"));
+        return JSON.parse(fs8.readFileSync(cacheFile, "utf-8"));
       }
     } catch (e) {
       console.warn("No se pudo guardar el cache de cuotas.", e);
@@ -8876,20 +9147,32 @@ registerCronPipelineRoutes(app2, {
   enrichGamesWithTotalBasesProps,
   getNewYorkDateString
 });
+registerKPropsLineHistoryRoutes(app2, {
+  readGamesDB,
+  writeGamesDB,
+  fetchRealBettingLines,
+  fetchDataStreakPitcherStrikeoutProps,
+  findDataStreakPitcherKProp,
+  normalizeName,
+  getNewYorkDateString
+});
+var NON_ACTIONABLE_STATUSES = ["Postponed", "Cancelled"];
 function startLiveGamesAutoupdater() {
   const INTERVAL_MS = 2 * 60 * 1e3;
   console.log(`[Auto-Updater] Iniciando programador de actualizaci\xF3n cada 2 minutos...`);
   setInterval(async () => {
     try {
-      console.log(`[Auto-Updater] Ejecutando verificaci\xF3n de juegos en progreso para actualizaci\xF3n autom\xE1tica...`);
+      console.log(`[Auto-Updater] Ejecutando verificaci\xF3n de juegos pendientes/en progreso para actualizaci\xF3n autom\xE1tica...`);
       const db2 = readGamesDB();
       const liveGamesToUpdate = [];
       for (const date of Object.keys(db2)) {
         const games = db2[date] || [];
         for (const game of games) {
           const status = game.game_result?.gameStatus || "";
-          const isLive = status.includes("In Progress") || status.includes("Live") || status.includes("Delayed") || status.includes("Suspended");
-          if (isLive) {
+          const isDone = status === "" || isFinalGameStatus2(status) || NON_ACTIONABLE_STATUSES.some((s) => status.includes(s));
+          const isLiveStatus = status.includes("In Progress") || status.includes("Live") || status.includes("Delayed") || status.includes("Suspended");
+          const needsUpdate = !isDone && (isLiveStatus || hasSolidPregameCoverage(game));
+          if (needsUpdate) {
             liveGamesToUpdate.push({
               gameId: String(game.id),
               date: game.metadata?.date || date,
@@ -8899,10 +9182,10 @@ function startLiveGamesAutoupdater() {
         }
       }
       if (liveGamesToUpdate.length === 0) {
-        console.log(`[Auto-Updater] No se encontraron juegos en progreso para actualizar.`);
+        console.log(`[Auto-Updater] No se encontraron juegos pendientes/en progreso para actualizar.`);
         return;
       }
-      console.log(`[Auto-Updater] Detectados ${liveGamesToUpdate.length} juego(s) en progreso. Iniciando actualizaci\xF3n secuencial...`);
+      console.log(`[Auto-Updater] Detectados ${liveGamesToUpdate.length} juego(s) pendientes/en progreso. Iniciando actualizaci\xF3n secuencial...`);
       for (const item of liveGamesToUpdate) {
         try {
           console.log(`[Auto-Updater] Actualizando juego ${item.label} (ID: ${item.gameId}, Fecha: ${item.date})...`);
@@ -8975,10 +9258,10 @@ async function startServer() {
     });
     app2.use(vite.middlewares);
   } else {
-    const distPath = path6.join(process.cwd(), "dist");
+    const distPath = path7.join(process.cwd(), "dist");
     app2.use(express.static(distPath));
     app2.get("*", (req, res) => {
-      res.sendFile(path6.join(distPath, "index.html"));
+      res.sendFile(path7.join(distPath, "index.html"));
     });
   }
   app2.listen(PORT, "0.0.0.0", () => {

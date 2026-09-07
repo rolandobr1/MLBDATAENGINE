@@ -7,6 +7,7 @@
 
 import { MLBGame } from "../../types";
 import { Bet, LiveProgress, OddsFormat, BetCategory, BetStatus } from "./betTrackingTypes";
+import { isNonActionableGameStatus } from "../../utils/gameStatus";
 
 // ════════════════════════════════════════════════════════════════════════════
 // STORAGE LAYER  — swap localStorage.getItem/setItem for Firestore calls
@@ -200,7 +201,12 @@ export function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LivePr
   const status = game.game_result?.gameStatus ?? "";
   const isLive = LIVE_STATUSES.some(s => status.includes(s));
   const isFinal = FINAL_STATUSES.some(s => status.includes(s));
-  const isPostponed = ["Postponed", "Cancelled"].some(s => status.includes(s));
+  // Antes era un array local `["Postponed", "Cancelled"]` — tercera copia del
+  // mismo criterio que ya vivía en server.ts (auto-updater) y en las tarjetas de
+  // juego (badge "En Vivo" indebido para juegos pospuestos). Unificado en
+  // isNonActionableGameStatus (utils/gameStatus.ts) para que las tres dejen de
+  // poder divergir silenciosamente.
+  const isPostponed = isNonActionableGameStatus(status);
 
   // Si el partido no ha comenzado (no está en vivo ni finalizado), forzar estado de espera a 0%
   if (!isLive && !isFinal) {

@@ -65,7 +65,7 @@ import {
   generatePitcherPropsDatasetCSV,
 } from "./src/datasets/derivedDatasets";
 import { calculateOpponentLineupKPct } from "./src/utils/lineupMetrics";
-import { isFinalGameStatus } from "./src/utils/gameStatus";
+import { isFinalGameStatus, isNonActionableGameStatus } from "./src/utils/gameStatus";
 import { buildKlabTrainingDataset, validateKlabDateRange } from "./src/datasets/klabTrainingDataset";
 import { registerCronPipelineRoutes } from "./src/routes/cronPipelineRoutes";
 import { registerKPropsLineHistoryRoutes } from "./src/routes/kPropsLineHistoryRoutes";
@@ -239,6 +239,56 @@ function getNewYorkDateString(): string {
 
 function isPastGameDate(date: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(date) && date < getNewYorkDateString();
+}
+
+// Suma (o resta, con `days` negativo) días a una fecha "YYYY-MM-DD" tratándola como
+// medianoche UTC — como son fechas puras de calendario (sin hora), esto evita
+// cualquier ambigüedad de zona horaria del servidor al calcular "el día anterior".
+function addDaysToDateString(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+// El disco local de Render es efímero (se borra en cada redeploy) — Firestore es la
+// única copia que sobrevive a eso. Antes, cada llamada a `saveGameData` se disparaba
+// "fire-and-forget" (sin `await`, con un `.catch` que solo logueaba el error): si el
+// proceso se reiniciaba (ej. por un deploy) mientras ese guardado todavía estaba en
+// vuelo, o si fallaba una sola vez por una falla transitoria de red, ese juego se
+// perdía de Firestore para siempre y sin ningún registro visible del problema — así
+// fue como el 2026-09-02 terminó con solo 4 de 15 juegos respaldados. Este helper
+// reemplaza ese patrón: espera (`await`) la confirmación real de Firestore antes de
+// seguir, y reintenta un par de veces con backoff simple ante una falla transitoria.
+// Solo si los 3 intentos fallan se deja constancia en `errorsCollection` (visible en
+// el panel de diagnósticos) en vez de fallar en silencio.
+async function saveGameDataReliably(
+  gameId: string,
+  gameData: any,
+  errorsCollection?: any[],
+  maxAttempts = 3
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await saveGameData(gameId, gameData);
+      return true;
+    } catch (fsErr) {
+      const isLastAttempt = attempt === maxAttempts;
+      console.error(`[Firestore] Intento ${attempt}/${maxAttempts} fallido guardando juego ${gameId}:`, fsErr);
+      if (isLastAttempt) {
+        errorsCollection?.push({
+          id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+          timestamp: new Date().toISOString(),
+          gameId,
+          source: "Firestore",
+          message: `Fallo al sincronizar con Firestore tras ${maxAttempts} intentos: ${fsErr instanceof Error ? fsErr.message : String(fsErr)}`,
+          severity: "medium",
+        });
+        return false;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  return false;
 }
 
 const PITCHER_PROP_FIELDS = ["strikeoutProp", "strikeoutPropOverOdds", "strikeoutPropUnderOdds", "strikeoutPropBook", "strikeoutPropSource"] as const;
@@ -4987,17 +5037,7 @@ app.post("/api/harvest", async (req, res) => {
             capturePregameSnapshot(refreshedGame);
 
             harvestedGames.push(refreshedGame);
-            saveGameData(gameId, refreshedGame).catch((fsErr) => {
-              console.error(`Error saving to Firestore for game ${gameId}:`, fsErr);
-              errorsCollection.push({
-                id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-                timestamp: new Date().toISOString(),
-                gameId,
-                source: "Firestore",
-                message: `Fallo al sincronizar con Firestore: ${fsErr instanceof Error ? fsErr.message : String(fsErr)}`,
-                severity: "medium",
-              });
-            });
+            await saveGameDataReliably(gameId, refreshedGame, errorsCollection);
 
             const incrementalDB = readGamesDB();
             const incrementalDateGames = [...(incrementalDB[date] || [])];
@@ -5431,18 +5471,10 @@ app.post("/api/harvest", async (req, res) => {
       // First pregame representation is immutable and powers leak-free ML datasets.
       capturePregameSnapshot(gameDataParsed);
 
-      // Sincronizar con Firestore de forma asíncrona para no bloquear el flujo
-      saveGameData(gameId, gameDataParsed).catch((fsErr) => {
-        console.error(`Error saving to Firestore for game ${gameId}:`, fsErr);
-        errorsCollection.push({
-          id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-          timestamp: new Date().toISOString(),
-          gameId,
-          source: "Firestore",
-          message: `Fallo al sincronizar con Firestore: ${fsErr instanceof Error ? fsErr.message : String(fsErr)}`,
-          severity: "medium",
-        });
-      });
+      // Se espera la confirmación real de Firestore (con reintento) antes de seguir —
+      // ver `saveGameDataReliably`: el disco local no sobrevive a un redeploy de Render,
+      // así que este es el único respaldo real de este juego.
+      await saveGameDataReliably(gameId, gameDataParsed, errorsCollection);
 
       harvestedGames.push(gameDataParsed);
 
@@ -5585,9 +5617,7 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
       enrichWithVortexMetrics(refreshedGameLight);
       capturePregameSnapshot(refreshedGameLight);
 
-      saveGameData(gameId, refreshedGameLight).catch((fsErr) => {
-        console.error(`Error saving to Firestore for game ${gameId}:`, fsErr);
-      });
+      await saveGameDataReliably(gameId, refreshedGameLight, errorsCollectionLight);
 
       const updatedGamesLight = gamesForDateLightCheck.map((g: any) =>
         String(g.id) === String(gameId) ? refreshedGameLight : g
@@ -5954,9 +5984,7 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
   capturePregameSnapshot(gameDataParsed);
 
   // Firestore sync
-  saveGameData(gameId, gameDataParsed).catch((fsErr) => {
-    console.error(`Error saving to Firestore for game ${gameId}:`, fsErr);
-  });
+  await saveGameDataReliably(gameId, gameDataParsed, errorsCollection);
 
   // Update local database
   const updatedGames = existingGamesForDate.map((g: any) =>
@@ -6040,7 +6068,11 @@ registerKPropsLineHistoryRoutes(app, {
 // se re-consulta cualquier juego que no esté ya definitivamente terminado
 // (`isFinalGameStatus` o Postponed/Cancelled), sin importar el estatus
 // guardado, para poder detectar esa transición sin depender de un refresco manual.
-const NON_ACTIONABLE_STATUSES = ["Postponed", "Cancelled"]; // no se van a jugar hoy; no tiene caso seguir consultando
+// Antes era un array local `["Postponed", "Cancelled"]` verificado con `.includes()`
+// contra cada string de estatus — duplicaba (y podía divergir de) el criterio de
+// `isNonActionableGameStatus` en src/utils/gameStatus.ts, que el frontend ahora usa
+// para decidir cómo pintar estos juegos (evitar el badge rojo de "EN VIVO"). Unificado
+// para que servidor y cliente compartan la misma definición de "no tiene caso seguir".
 
 function startLiveGamesAutoupdater() {
   const INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
@@ -6052,6 +6084,19 @@ function startLiveGamesAutoupdater() {
       const db = readGamesDB();
       const liveGamesToUpdate: { gameId: string; date: string; label: string }[] = [];
 
+      // IMPORTANTE — corrección tras incidente de pérdida de datos (sept. 2026):
+      // este bucle originalmente recorría `Object.keys(db)` sin ningún filtro de
+      // fecha, es decir, TODA la base de datos histórica (meses de juegos) cada
+      // 2 minutos. Eso nunca había pasado antes de ampliar el filtro de "juegos
+      // a actualizar" más abajo, y muy probablemente fue la causa real de que se
+      // corrompiera/truncara `mlb_database.json` (200+MB) al coincidir una ráfaga
+      // de escrituras completas del archivo con el reinicio del proceso en un
+      // deploy. Los juegos en vivo solo pueden ser de hoy o, como mucho, de ayer
+      // (partidos que cruzan medianoche), así que restringimos el barrido a esas
+      // dos fechas — el resto del historial no necesita ni debe tocarse acá.
+      const todayStr = getNewYorkDateString();
+      const yesterdayStr = addDaysToDateString(todayStr, -1);
+
       // Encuentra todos los juegos que no están definitivamente terminados en la DB local.
       // Nota: si el juego todavía no tiene cobertura pregame completa (ej. abridor
       // "Por definir") Y su estatus guardado tampoco es ya "en vivo", se omite acá a
@@ -6060,10 +6105,11 @@ function startLiveGamesAutoupdater() {
       // cada 2 minutos solo para detectar si ya arrancó. Ese caso puntual (raro: abridor
       // aún no anunciado) sigue necesitando un refresco manual la primera vez.
       for (const date of Object.keys(db)) {
+        if (date !== todayStr && date !== yesterdayStr) continue;
         const games = db[date] || [];
         for (const game of games) {
           const status = game.game_result?.gameStatus || "";
-          const isDone = status === "" || isFinalGameStatus(status) || NON_ACTIONABLE_STATUSES.some(s => status.includes(s));
+          const isDone = status === "" || isFinalGameStatus(status) || isNonActionableGameStatus(status);
           const isLiveStatus = status.includes("In Progress") || status.includes("Live") || status.includes("Delayed") || status.includes("Suspended");
           const needsUpdate = !isDone && (isLiveStatus || hasSolidPregameCoverage(game));
 

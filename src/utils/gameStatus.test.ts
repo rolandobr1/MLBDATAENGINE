@@ -10,7 +10,7 @@
  * ese archivo Python tiene que replicar.
  */
 import { describe, expect, it } from "vitest";
-import { isFinalGameStatus } from "./gameStatus";
+import { isFinalGameStatus, isNonActionableGameStatus } from "./gameStatus";
 
 describe("isFinalGameStatus", () => {
   it.each([
@@ -45,5 +45,39 @@ describe("isFinalGameStatus", () => {
   it("no lanza con tipos inesperados (number, object) y los trata como no terminado", () => {
     expect(isFinalGameStatus(42)).toBe(false);
     expect(isFinalGameStatus({})).toBe(false);
+  });
+});
+
+describe("isNonActionableGameStatus", () => {
+  // Regresión (sept. 2026): un juego "Postponed" cumplía `hasStarted && !isFinal`
+  // en GameCard/GameCardCompact y se pintaba con el badge rojo pulsante de
+  // "EN VIVO" — dando a entender que un juego que nunca se jugó estaba en curso.
+  // Esta función es el criterio único para excluir esos juegos de esa UI (y del
+  // auto-updater en server.ts, que ya no tiene sentido que los siga consultando).
+  it.each([
+    "Postponed",
+    "Cancelled",
+    "Canceled", // variante en inglés americano, por si la API la devuelve así
+    "POSTPONED",
+    "  Postponed  ",
+  ])("reconoce %j como no accionable", (status) => {
+    expect(isNonActionableGameStatus(status)).toBe(true);
+  });
+
+  it.each([
+    "Final",
+    "In Progress",
+    "Scheduled",
+    "Suspended: Rain",
+    "Pre-Game",
+    "Warmup",
+  ])("no reconoce %j como no accionable", (status) => {
+    expect(isNonActionableGameStatus(status)).toBe(false);
+  });
+
+  it("trata undefined, null y string vacío como accionable (false)", () => {
+    expect(isNonActionableGameStatus(undefined)).toBe(false);
+    expect(isNonActionableGameStatus(null)).toBe(false);
+    expect(isNonActionableGameStatus("")).toBe(false);
   });
 });

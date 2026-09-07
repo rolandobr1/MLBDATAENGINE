@@ -33,6 +33,7 @@
 import React from "react";
 import { MLBGame } from "../types";
 import { getTeamLogo, getTeamColor, getTeamAbbr } from "../utils/teamLogos";
+import { isNonActionableGameStatus } from "../utils/gameStatus";
 import {
   CheckCircle,
   AlertTriangle,
@@ -231,6 +232,13 @@ const GameCardComponent: React.FC<GameCardProps> = ({ game, onRefresh, isPinned,
                 </div>
                 <div className={`text-[9px] font-mono font-bold uppercase px-2 py-1 rounded shadow-sm ${game.game_result.gameStatus.includes("Final") || game.game_result.gameStatus === "Game Over"
                     ? "bg-slate-800 text-slate-100"
+                    // Un juego "Postponed"/"Cancelled" no está ni terminado ni en vivo —
+                    // antes caía en este mismo `else` y se pintaba con el badge rojo
+                    // pulsante de "en vivo" (animate-pulse), dando a entender que un
+                    // juego que nunca se jugó está en curso ahora mismo. Ver
+                    // isNonActionableGameStatus en utils/gameStatus.ts.
+                    : isNonActionableGameStatus(game.game_result.gameStatus)
+                    ? "bg-slate-200 text-slate-600 border border-slate-300"
                     : "bg-red-100 text-red-700 animate-pulse border border-red-200"
                   }`}>
                   {game.game_result.gameStatus}
