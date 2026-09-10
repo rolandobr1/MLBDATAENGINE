@@ -223,6 +223,49 @@ function mergeGamesIntoLocalDB(games: any[]): { games: number; dates: number } {
   return { games: games.length, dates: dates.length };
 }
 
+// Encontrado (sept. 2026): a diferencia de `/api/games`, todos los endpoints de
+// descarga (`/api/*/csv`) leen `readGamesDB()` directo, sin el mismo respaldo a
+// Firestore. Consecuencia real: si el disco local se vació por un reinicio en frío
+// (pasa seguido en el plan gratuito de Render — ver comentarios en
+// runStartupFirestoreSync y firestoreService.ts) y el usuario no "calentó" antes esa
+// fecha abriendo el panel de juegos, la descarga sale en blanco (solo el header del
+// CSV) aunque Firestore sí tenga los datos completos — justo lo reportado el
+// 2026-09-10 al descargar líneas de un día pasado. Estos helpers centralizan el
+// mismo patrón que ya usa `/api/games`: si la fecha (o el rango) pedido no está en
+// el disco local, se restaura desde Firestore antes de generar el CSV.
+async function ensureDateLoadedForExport(date: string): Promise<void> {
+  const db = readGamesDB();
+  if ((db[date] || []).length > 0) return;
+  try {
+    const firestoreGames = await loadGamesByDateFromFirestore(date);
+    if (firestoreGames.length > 0) {
+      mergeGamesIntoLocalDB(firestoreGames);
+      console.log(`[Export] Restaurados ${firestoreGames.length} juego(s) desde Firestore para ${date} antes de generar la descarga.`);
+    }
+  } catch (err) {
+    console.error(`[Export] No se pudo restaurar ${date} desde Firestore para la descarga:`, err);
+  }
+}
+
+async function ensureDatesLoadedForExport(dates: string[]): Promise<void> {
+  for (const date of dates) {
+    await ensureDateLoadedForExport(date);
+  }
+}
+
+async function ensureDateRangeLoadedForExport(startDate: unknown, endDate: unknown): Promise<void> {
+  if (typeof startDate !== "string" || typeof endDate !== "string" || !startDate || !endDate) return;
+  try {
+    const firestoreGames = await loadGamesByDateRangeFromFirestore(startDate, endDate);
+    if (firestoreGames.length > 0) {
+      mergeGamesIntoLocalDB(firestoreGames);
+      console.log(`[Export] Restaurados ${firestoreGames.length} juego(s) desde Firestore para el rango ${startDate}..${endDate} antes de generar la descarga.`);
+    }
+  } catch (err) {
+    console.error(`[Export] No se pudo restaurar el rango ${startDate}..${endDate} desde Firestore para la descarga:`, err);
+  }
+}
+
 function getGameTimestamp(game: any): number {
   const value = game?.timestamp || game?.updatedAt || game?.createdAt;
   const time = value ? new Date(value).getTime() : 0;
@@ -1120,18 +1163,19 @@ app.get("/api/ml-dataset", (req, res) => {
 });
 
 // Download ML consolidation dataset as CSV
-app.get("/api/ml-dataset/csv", (req, res) => {
+app.get("/api/ml-dataset/csv", async (req, res) => {
   try {
     const { dates } = req.query;
-    const db = readGamesDB();
-    const allGames: MLBGame[] = [];
-    
+
     // Parse dates if provided
     let filterDates: string[] = [];
     if (typeof dates === "string" && dates.trim() !== "") {
       filterDates = dates.split(",").map(d => d.trim());
     }
+    if (filterDates.length > 0) await ensureDatesLoadedForExport(filterDates);
 
+    const db = readGamesDB();
+    const allGames: MLBGame[] = [];
     for (const date of Object.keys(db)) {
       // If dates filter is provided, skip dates not in the list
       if (filterDates.length > 0 && !filterDates.includes(date)) {
@@ -1157,6 +1201,7 @@ app.get("/api/ml-dataset/csv", (req, res) => {
 app.get("/api/k-props/csv", async (req, res) => {
   try {
     const { date } = req.query;
+    if (date && typeof date === "string") await ensureDateLoadedForExport(date);
     const db = readGamesDB();
     const allGames: MLBGame[] = [];
     if (date && typeof date === "string") {
@@ -1181,6 +1226,7 @@ app.get("/api/k-props/csv", async (req, res) => {
 app.get("/api/batter-total-bases/csv", async (req, res) => {
   try {
     const { date } = req.query;
+    if (date && typeof date === "string") await ensureDateLoadedForExport(date);
     const db = readGamesDB();
     const allGames: MLBGame[] = [];
     if (date && typeof date === "string") {
@@ -1205,16 +1251,17 @@ app.get("/api/batter-total-bases/csv", async (req, res) => {
 app.get("/api/batters-dataset/csv", async (req, res) => {
   try {
     const { dates, date } = req.query;
-    const db = readGamesDB();
-    const allGames: MLBGame[] = [];
-    
+
     // Parse dates if provided
     let filterDates: string[] = [];
     const queryDates = dates || date;
     if (typeof queryDates === "string" && queryDates.trim() !== "") {
       filterDates = queryDates.split(",").map(d => d.trim());
     }
+    if (filterDates.length > 0) await ensureDatesLoadedForExport(filterDates);
 
+    const db = readGamesDB();
+    const allGames: MLBGame[] = [];
     for (const dateKey of Object.keys(db)) {
       if (filterDates.length > 0 && !filterDates.includes(dateKey)) {
         continue;
@@ -1243,57 +1290,62 @@ function getDatasetGamesForDate(db: Record<string, MLBGame[]>, date: unknown): M
 
 // Derived ML datasets are intentionally separate from the master batters CSV.
 // They only emit games with an immutable pregame snapshot.
-app.get("/api/datasets/pitcher-game/csv", (req, res) => {
+app.get("/api/datasets/pitcher-game/csv", async (req, res) => {
   const { date } = req.query;
+  if (typeof date === "string" && date.trim()) await ensureDateLoadedForExport(date);
   const csv = generatePitcherGameDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", `attachment; filename=MLB_PITCHER_GAME_DATASET_${date || "all"}.csv`);
   res.send(csv);
 });
 
-app.get("/api/datasets/game/csv", (req, res) => {
+app.get("/api/datasets/game/csv", async (req, res) => {
   const { date } = req.query;
+  if (typeof date === "string" && date.trim()) await ensureDateLoadedForExport(date);
   const csv = generateGameDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", `attachment; filename=MLB_GAME_DATASET_${date || "all"}.csv`);
   res.send(csv);
 });
 
-app.get("/api/datasets/batter-game/csv", (req, res) => {
+app.get("/api/datasets/batter-game/csv", async (req, res) => {
   const { date } = req.query;
+  if (typeof date === "string" && date.trim()) await ensureDateLoadedForExport(date);
   const csv = generateBatterGameDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", `attachment; filename=MLB_BATTER_GAME_DATASET_${date || "all"}.csv`);
   res.send(csv);
 });
 
-app.get("/api/datasets/pitcher-props/csv", (req, res) => {
+app.get("/api/datasets/pitcher-props/csv", async (req, res) => {
   const { date } = req.query;
+  if (typeof date === "string" && date.trim()) await ensureDateLoadedForExport(date);
   const csv = generatePitcherPropsDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", `attachment; filename=MLB_PITCHER_PROPS_DATASET_${date || "all"}.csv`);
   res.send(csv);
 });
 
-function buildRequestedKlabDataset(startDate: unknown, endDate: unknown) {
+async function buildRequestedKlabDataset(startDate: unknown, endDate: unknown) {
+  await ensureDateRangeLoadedForExport(startDate, endDate);
   const allGames = Object.values(readGamesDB()).flat() as MLBGame[];
   return buildKlabTrainingDataset(allGames, startDate, endDate);
 }
 
 // Historical K-lab training data is generated only for an explicit inclusive range.
 // Preview performs every validation without writing a file.
-app.get("/api/datasets/klab-training/preview", (req, res) => {
+app.get("/api/datasets/klab-training/preview", async (req, res) => {
   try {
-    const result = buildRequestedKlabDataset(req.query.start_date, req.query.end_date);
+    const result = await buildRequestedKlabDataset(req.query.start_date, req.query.end_date);
     res.json({ report: result.report, sample: result.rows.slice(0, 5) });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Rango inválido" });
   }
 });
 
-app.get("/api/datasets/klab-training/csv", (req, res) => {
+app.get("/api/datasets/klab-training/csv", async (req, res) => {
   try {
-    const result = buildRequestedKlabDataset(req.query.start_date, req.query.end_date);
+    const result = await buildRequestedKlabDataset(req.query.start_date, req.query.end_date);
     const outputDirectory = path.join(process.cwd(), "datasets", "ml");
     fs.mkdirSync(outputDirectory, { recursive: true });
     fs.writeFileSync(path.join(outputDirectory, result.report.outputFilename), result.csv, "utf8");
@@ -1383,6 +1435,7 @@ app.get("/api/game/:gameId/csv", async (req, res) => {
   try {
     const { gameId } = req.params;
     const { date } = req.query;
+    if (date && typeof date === "string") await ensureDateLoadedForExport(date);
     const db = readGamesDB();
     const candidateGames: MLBGame[] = [];
 
@@ -1412,9 +1465,10 @@ app.get("/api/game/:gameId/csv", async (req, res) => {
 });
 
 // Download daily player results from live boxscore only
-app.get("/api/daily-results/csv", (req, res) => {
+app.get("/api/daily-results/csv", async (req, res) => {
   try {
     const { date } = req.query;
+    if (date && typeof date === "string") await ensureDateLoadedForExport(date);
     const db = readGamesDB();
     const games = date && db[String(date)] ? db[String(date)] : [];
     const csvContent = generateDailyPlayerResultsCSV(games);
@@ -6146,6 +6200,19 @@ function startLiveGamesAutoupdater() {
   }, INTERVAL_MS);
 }
 
+// Cuántos días hacia atrás (incluyendo hoy) restaura automáticamente
+// `runStartupFirestoreSync` en cada arranque en frío. Antes solo se restauraba
+// "la fecha más reciente" (un solo día) — quedaba bien la mayoría del tiempo,
+// pero es justo la ventana donde el usuario más revisa resultados (hoy/ayer), y
+// un solo timeout de Firestore en ese request bastaba para mostrar una fecha
+// casi vacía hasta forzar una re-extracción manual (ver comentario en
+// firestoreService.ts sobre el bug de caché negativo del 2026-09-09). Restaurar
+// una ventana chica en vez de una sola fecha es barato (unos pocos días de
+// juegos, no el historial completo — eso sigue detrás de
+// FULL_FIRESTORE_STARTUP_SYNC) y elimina la dependencia de que ese único día
+// resuelva bien en el primer intento.
+const STARTUP_RESTORE_WINDOW_DAYS = 4;
+
 async function runStartupFirestoreSync() {
   // Intentar restaurar base de datos local desde Firestore si está vacía
   try {
@@ -6153,13 +6220,25 @@ async function runStartupFirestoreSync() {
     const isLocalEmpty = Object.keys(localDB).length === 0;
 
     if (isLocalEmpty) {
-      console.log("[Restaurador Firestore] La base de datos local está vacía. Restaurando solo la fecha más reciente desde Firestore...");
-      const games = await loadLatestGamesFromFirestore();
+      const todayStr = getNewYorkDateString();
+      const windowStart = addDaysToDateString(todayStr, -(STARTUP_RESTORE_WINDOW_DAYS - 1));
+      console.log(`[Restaurador Firestore] La base de datos local está vacía. Restaurando ${windowStart}..${todayStr} desde Firestore...`);
+      const games = await loadGamesByDateRangeFromFirestore(windowStart, todayStr);
       if (games && games.length > 0) {
-        mergeGamesIntoLocalDB(games);
-        console.log(`[Restaurador Firestore] Fecha más reciente restaurada exitosamente con ${games.length} juegos.`);
+        const { dates } = mergeGamesIntoLocalDB(games);
+        console.log(`[Restaurador Firestore] Ventana ${windowStart}..${todayStr} restaurada: ${games.length} juegos en ${dates} fecha(s).`);
       } else {
-        console.log("[Restaurador Firestore] No se encontraron juegos en Firestore o la colección está vacía.");
+        // Fallback: si la consulta por rango no trajo nada (ej. Firestore sin
+        // datos todavía para estos días concretos), se intenta igual con "la
+        // fecha más reciente" que exista, para no quedar completamente vacíos.
+        console.log("[Restaurador Firestore] Sin resultados para la ventana reciente. Intentando con la fecha más reciente disponible...");
+        const latestGames = await loadLatestGamesFromFirestore();
+        if (latestGames && latestGames.length > 0) {
+          mergeGamesIntoLocalDB(latestGames);
+          console.log(`[Restaurador Firestore] Fecha más reciente restaurada exitosamente con ${latestGames.length} juegos.`);
+        } else {
+          console.log("[Restaurador Firestore] No se encontraron juegos en Firestore o la colección está vacía.");
+        }
       }
     }
   } catch (fsRestoreErr) {

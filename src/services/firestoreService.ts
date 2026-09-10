@@ -3,7 +3,17 @@ import { doc, collection, setDoc, getDoc, getDocs, getCountFromServer, query, wh
 import { getAuth, signInAnonymously } from 'firebase/auth';
 
 let authInitialized = false;
-const FIRESTORE_READ_TIMEOUT_MS = Number(process.env.FIRESTORE_READ_TIMEOUT_MS || 3000);
+// Encontrado (sept. 2026): justo después de un cold-start de Render (el SDK de
+// Firestore recién autenticando/abriendo su canal), una consulta real fácilmente
+// tarda más de 3 segundos. Con el default anterior (3000ms), esa primera lectura
+// del día llegaba tarde, `withFirestoreReadTimeout` devolvía el fallback, y el
+// código de más abajo trataba ese timeout exactamente igual que "Firestore
+// respondió que no hay nada" — cacheando la fecha como vacía. Resultado real:
+// una fecha con 15 juegos guardados en Firestore se mostraba con 1-2 (lo que
+// alcanzó a llegar en la ventana) y quedaba bloqueada así por 5 minutos
+// (EMPTY_CACHE_TTL_MS) hasta que el usuario forzaba una re-extracción completa.
+// 10s le da margen de sobra a una conexión fría sin volverse un timeout inútil.
+const FIRESTORE_READ_TIMEOUT_MS = Number(process.env.FIRESTORE_READ_TIMEOUT_MS || 10000);
 
 export async function ensureAnonymousAuth(): Promise<boolean> {
   if (!app) return false;
@@ -169,6 +179,16 @@ export const loadAllGamesFromFirestore = async (): Promise<any[]> => {
 const emptyCache = new Map<string, number>();
 const EMPTY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
 
+// Sentinel exclusivo para distinguir, en `withFirestoreReadTimeout`, "Firestore
+// respondió y de verdad no hay nada" (fallback legítimo, tiene sentido cachearlo
+// como negativo) de "no llegó respuesta a tiempo" (sobre todo el primer request
+// tras un cold-start, con el SDK todavía autenticando). Antes ambos casos
+// devolvían el mismo `null` y se cacheaban igual — un timeout aislado dejaba una
+// fecha con juegos reales en Firestore marcada como "vacía" por 5 minutos
+// (EMPTY_CACHE_TTL_MS), exactamente el bug reportado el 2026-09-09 (una fecha con
+// 15 juegos guardados se veía con 1-2 hasta forzar una re-extracción completa).
+const FIRESTORE_TIMEOUT = Symbol('firestore-timeout');
+
 export const loadGamesByDateFromFirestore = async (date: string): Promise<any[]> => {
   try {
     // 1. Revisar Caché Negativo Local
@@ -187,8 +207,10 @@ export const loadGamesByDateFromFirestore = async (date: string): Promise<any[]>
 
     // 2. Revisión Rápida de Metadatos (Fast Check)
     const metadataRef = doc(db, 'metadata', 'extracted_dates');
-    const metaSnapshot = await withFirestoreReadTimeout(getDoc(metadataRef), null, 'metadatos de fechas rápidas');
-    if (metaSnapshot && metaSnapshot.exists()) {
+    const metaSnapshot = await withFirestoreReadTimeout<any>(getDoc(metadataRef), FIRESTORE_TIMEOUT, 'metadatos de fechas rápidas');
+    if (metaSnapshot === FIRESTORE_TIMEOUT) {
+      console.warn(`[Firestore] Timeout leyendo metadatos para ${date}; se omite el atajo rápido pero se sigue con la query completa (sin cachear como vacío).`);
+    } else if (metaSnapshot && metaSnapshot.exists()) {
       const dates = metaSnapshot.data()?.dates || [];
       if (!dates.includes(date)) {
         console.log(`[Optimización] La fecha ${date} no está en metadatos. Evitando query completo.`);
@@ -198,12 +220,18 @@ export const loadGamesByDateFromFirestore = async (date: string): Promise<any[]>
     }
 
     const gamesQuery = query(collection(db, 'games'), where('metadata.date', '==', date));
-    const snapshot = await withFirestoreReadTimeout(getDocs(gamesQuery), null, `juegos de ${date}`);
+    const snapshot = await withFirestoreReadTimeout<any>(getDocs(gamesQuery), FIRESTORE_TIMEOUT, `juegos de ${date}`);
+    if (snapshot === FIRESTORE_TIMEOUT) {
+      // No cachear: es un "no sabemos", no un "no hay nada". El próximo request
+      // (con el SDK ya autenticado/con el canal abierto) puede resolver bien.
+      console.warn(`[Firestore] Timeout consultando juegos de ${date}; devolviendo vacío SOLO para este request, sin bloquear reintentos.`);
+      return [];
+    }
     if (!snapshot || snapshot.empty) {
       emptyCache.set(date, now); // Si la query real también vuelve vacía, guardamos en caché negativo
       return [];
     }
-    
+
     const games: any[] = [];
     snapshot.forEach((doc) => {
       games.push(doc.data());
