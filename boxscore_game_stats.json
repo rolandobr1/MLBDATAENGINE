@@ -69933,6 +69933,336 @@
         "homeRunsAllowed": 0,
         "gameScore": 115
       }
+    },
+    "823088": {
+      "home": {
+        "playerId": 669302,
+        "name": "Logan Gilbert",
+        "inningsPitched": "7.0",
+        "battersFaced": 25,
+        "hitsAllowed": 3,
+        "runsAllowed": 3,
+        "earnedRuns": 3,
+        "strikeOuts": 11,
+        "baseOnBalls": 2,
+        "numberOfPitches": 100,
+        "homeRunsAllowed": 1,
+        "gameScore": 101
+      },
+      "away": {
+        "playerId": 594798,
+        "name": "Jacob deGrom",
+        "inningsPitched": "6.0",
+        "battersFaced": 19,
+        "hitsAllowed": 1,
+        "runsAllowed": 0,
+        "earnedRuns": 0,
+        "strikeOuts": 12,
+        "baseOnBalls": 0,
+        "numberOfPitches": 92,
+        "homeRunsAllowed": 0,
+        "gameScore": 114
+      }
+    },
+    "823413": {
+      "home": {
+        "playerId": 554430,
+        "name": "Zack Wheeler",
+        "inningsPitched": "7.0",
+        "battersFaced": 27,
+        "hitsAllowed": 5,
+        "runsAllowed": 1,
+        "earnedRuns": 1,
+        "strikeOuts": 9,
+        "baseOnBalls": 2,
+        "numberOfPitches": 110,
+        "homeRunsAllowed": 0,
+        "gameScore": 104
+      },
+      "away": {
+        "playerId": 664299,
+        "name": "Cristian Javier",
+        "inningsPitched": "6.0",
+        "battersFaced": 20,
+        "hitsAllowed": 3,
+        "runsAllowed": 1,
+        "earnedRuns": 1,
+        "strikeOuts": 5,
+        "baseOnBalls": 1,
+        "numberOfPitches": 79,
+        "homeRunsAllowed": 0,
+        "gameScore": 97
+      }
+    },
+    "823499": {
+      "home": {
+        "playerId": 608331,
+        "name": "Max Fried",
+        "inningsPitched": "3.1",
+        "battersFaced": 14,
+        "hitsAllowed": 1,
+        "runsAllowed": 1,
+        "earnedRuns": 1,
+        "strikeOuts": 7,
+        "baseOnBalls": 2,
+        "numberOfPitches": 80,
+        "homeRunsAllowed": 1,
+        "gameScore": 76
+      },
+      "away": {
+        "playerId": 663372,
+        "name": "Ryan Feltner",
+        "inningsPitched": "5.0",
+        "battersFaced": 22,
+        "hitsAllowed": 6,
+        "runsAllowed": 4,
+        "earnedRuns": 4,
+        "strikeOuts": 2,
+        "baseOnBalls": 1,
+        "numberOfPitches": 83,
+        "homeRunsAllowed": 1,
+        "gameScore": 66
+      }
+    },
+    "824550": {
+      "home": {
+        "playerId": 696146,
+        "name": "Hagen Smith",
+        "inningsPitched": "2.0",
+        "battersFaced": 8,
+        "hitsAllowed": 2,
+        "runsAllowed": 0,
+        "earnedRuns": 0,
+        "strikeOuts": 3,
+        "baseOnBalls": 0,
+        "numberOfPitches": 33,
+        "homeRunsAllowed": 0,
+        "gameScore": 67
+      },
+      "away": {
+        "playerId": 683003,
+        "name": "Jared Jones",
+        "inningsPitched": "7.0",
+        "battersFaced": 24,
+        "hitsAllowed": 1,
+        "runsAllowed": 0,
+        "earnedRuns": 0,
+        "strikeOuts": 8,
+        "baseOnBalls": 2,
+        "numberOfPitches": 90,
+        "homeRunsAllowed": 0,
+        "gameScore": 115
+      }
+    },
+    "824872": {
+      "home": {
+        "playerId": 527048,
+        "name": "Martín Pérez",
+        "inningsPitched": "7.0",
+        "battersFaced": 26,
+        "hitsAllowed": 4,
+        "runsAllowed": 0,
+        "earnedRuns": 0,
+        "strikeOuts": 4,
+        "baseOnBalls": 2,
+        "numberOfPitches": 90,
+        "homeRunsAllowed": 0,
+        "gameScore": 105
+      },
+      "away": {
+        "playerId": 607259,
+        "name": "Nick Martinez",
+        "inningsPitched": "6.1",
+        "battersFaced": 20,
+        "hitsAllowed": 2,
+        "runsAllowed": 0,
+        "earnedRuns": 0,
+        "strikeOuts": 3,
+        "baseOnBalls": 0,
+        "numberOfPitches": 68,
+        "homeRunsAllowed": 0,
+        "gameScore": 106
+      }
+    },
+    "822684": {
+      "home": {
+        "playerId": 676917,
+        "name": "Cade Cavalli",
+        "inningsPitched": "6.0",
+        "battersFaced": 24,
+        "hitsAllowed": 3,
+        "runsAllowed": 2,
+        "earnedRuns": 2,
+        "strikeOuts": 9,
+        "baseOnBalls": 2,
+        "numberOfPitches": 96,
+        "homeRunsAllowed": 1,
+        "gameScore": 94
+      },
+      "away": {
+        "playerId": 579328,
+        "name": "Yusei Kikuchi",
+        "inningsPitched": "4.0",
+        "battersFaced": 20,
+        "hitsAllowed": 3,
+        "runsAllowed": 1,
+        "earnedRuns": 1,
+        "strikeOuts": 5,
+        "baseOnBalls": 4,
+        "numberOfPitches": 88,
+        "homeRunsAllowed": 0,
+        "gameScore": 73
+      }
+    },
+    "822767": {
+      "home": {
+        "playerId": 453286,
+        "name": "Max Scherzer",
+        "inningsPitched": "5.0",
+        "battersFaced": 23,
+        "hitsAllowed": 7,
+        "runsAllowed": 6,
+        "earnedRuns": 6,
+        "strikeOuts": 3,
+        "baseOnBalls": 1,
+        "numberOfPitches": 83,
+        "homeRunsAllowed": 1,
+        "gameScore": 57
+      },
+      "away": {
+        "playerId": 605135,
+        "name": "Chris Bassitt",
+        "inningsPitched": "5.0",
+        "battersFaced": 24,
+        "hitsAllowed": 6,
+        "runsAllowed": 2,
+        "earnedRuns": 2,
+        "strikeOuts": 5,
+        "baseOnBalls": 3,
+        "numberOfPitches": 95,
+        "homeRunsAllowed": 1,
+        "gameScore": 73
+      }
+    },
+    "822930": {
+      "home": {
+        "playerId": 656876,
+        "name": "Drew Rasmussen",
+        "inningsPitched": "7.0",
+        "battersFaced": 27,
+        "hitsAllowed": 8,
+        "runsAllowed": 1,
+        "earnedRuns": 1,
+        "strikeOuts": 4,
+        "baseOnBalls": 0,
+        "numberOfPitches": 92,
+        "homeRunsAllowed": 0,
+        "gameScore": 97
+      },
+      "away": {
+        "playerId": 699044,
+        "name": "Miguel Ullola",
+        "inningsPitched": "1.0",
+        "battersFaced": 3,
+        "hitsAllowed": 0,
+        "runsAllowed": 0,
+        "earnedRuns": 0,
+        "strikeOuts": 0,
+        "baseOnBalls": 0,
+        "numberOfPitches": 13,
+        "homeRunsAllowed": 0,
+        "gameScore": 59
+      }
+    },
+    "823498": {
+      "home": {
+        "playerId": 607074,
+        "name": "Carlos Rodón",
+        "inningsPitched": "6.1",
+        "battersFaced": 23,
+        "hitsAllowed": 3,
+        "runsAllowed": 2,
+        "earnedRuns": 1,
+        "strikeOuts": 8,
+        "baseOnBalls": 1,
+        "numberOfPitches": 93,
+        "homeRunsAllowed": 0,
+        "gameScore": 103
+      },
+      "away": {
+        "playerId": 690997,
+        "name": "Nolan McLean",
+        "inningsPitched": "5.0",
+        "battersFaced": 24,
+        "hitsAllowed": 10,
+        "runsAllowed": 5,
+        "earnedRuns": 5,
+        "strikeOuts": 5,
+        "baseOnBalls": 1,
+        "numberOfPitches": 101,
+        "homeRunsAllowed": 2,
+        "gameScore": 56
+      }
+    },
+    "824227": {
+      "home": {
+        "playerId": 664285,
+        "name": "Framber Valdez",
+        "inningsPitched": "6.0",
+        "battersFaced": 25,
+        "hitsAllowed": 6,
+        "runsAllowed": 1,
+        "earnedRuns": 0,
+        "strikeOuts": 2,
+        "baseOnBalls": 2,
+        "numberOfPitches": 90,
+        "homeRunsAllowed": 0,
+        "gameScore": 90
+      },
+      "away": {
+        "playerId": 690279,
+        "name": "Mason Adams",
+        "inningsPitched": "5.0",
+        "battersFaced": 18,
+        "hitsAllowed": 2,
+        "runsAllowed": 1,
+        "earnedRuns": 1,
+        "strikeOuts": 5,
+        "baseOnBalls": 3,
+        "numberOfPitches": 77,
+        "homeRunsAllowed": 1,
+        "gameScore": 85
+      }
+    },
+    "824631": {
+      "home": {
+        "playerId": 684007,
+        "name": "Shota Imanaga",
+        "inningsPitched": "6.0",
+        "battersFaced": 24,
+        "hitsAllowed": 5,
+        "runsAllowed": 2,
+        "earnedRuns": 2,
+        "strikeOuts": 4,
+        "baseOnBalls": 2,
+        "numberOfPitches": 100,
+        "homeRunsAllowed": 1,
+        "gameScore": 85
+      },
+      "away": {
+        "playerId": 696062,
+        "name": "Wilber Dotel",
+        "inningsPitched": "2.0",
+        "battersFaced": 10,
+        "hitsAllowed": 4,
+        "runsAllowed": 3,
+        "earnedRuns": 3,
+        "strikeOuts": 1,
+        "baseOnBalls": 0,
+        "numberOfPitches": 38,
+        "homeRunsAllowed": 0,
+        "gameScore": 49
+      }
     }
   }
 }
