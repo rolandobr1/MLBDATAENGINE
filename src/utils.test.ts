@@ -82,6 +82,35 @@ describe("generateBattersCSV — bloque de stats de lanzador (pitcherPitStatsBlo
   });
 });
 
+describe("generateBattersCSV — bloque Savant point-in-time (pitcherSavantPitValues)", () => {
+  it("usa spinRate/oSwingPct del backfill PIT y marca savant_pit_source = pit cuando hay cobertura", () => {
+    const game = makeDummyGame("4");
+    const pitLookups: PITLookups = {
+      pitchers: {
+        "4": {
+          home: { spinRate: 2350, oSwingPct: 31.5 },
+          // away sin cobertura de statcast a propósito (backfill no encontró pitcheos previos).
+        },
+      },
+    };
+
+    const csv = generateBattersCSV([game as any], pitLookups);
+    const headers = splitCsvLine(csv.split("\n")[0]);
+    const values = splitCsvLine(csv.split("\n")[1]);
+    const at = (col: string) => values[headers.indexOf(col)];
+
+    expect(at("home_pitcher_spin_rate")).toBe("2350");
+    expect(at("home_pitcher_o_swing_pct")).toBe("31.5");
+    expect(at("home_pitcher_savant_pit_source")).toBe("pit");
+
+    // Sin cobertura PIT para el visitante: vacío, nunca el snapshot de
+    // temporada de SavantCache (esa era la fuga que se corrigió).
+    expect(at("away_pitcher_spin_rate")).toBe("");
+    expect(at("away_pitcher_o_swing_pct")).toBe("");
+    expect(at("away_pitcher_savant_pit_source")).toBe("");
+  });
+});
+
 // generateMLDatasetCSV: mismatch pre-existente headers/fila, fuera de alcance de esta
 // fase — ver comentario del encabezado del archivo. `test.fails` documenta el bug sin
 // romper la corrida de `npm run test`.

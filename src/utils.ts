@@ -223,6 +223,31 @@ function pitcherPitStatsBlockValues(pit: PitStatsEntry | null | undefined): (str
   ];
 }
 
+/**
+ * Sept. 2026 — mismo patrón/motivo que pitcherPitStatsBlockValues de arriba,
+ * aplicado a spin_rate/o_swing_pct: única fuente de verdad para este
+ * sub-bloque, para no repetir en generateMLDatasetCSV y generateBattersCSV
+ * y arreglar un lado sin acordarse del otro (exactamente el bug que motivó
+ * a hacer lo mismo con era/whip). Sin cobertura PIT (`pit` es null, o el
+ * backfill no encontró pitcheos Statcast previos a la fecha), las celdas
+ * quedan vacías — nunca se usa el valor de temporada completa de SavantCache
+ * como fallback, porque ese valor tiene fuga de fechas futuras.
+ *
+ * home/away_pitcher_savant_pit_source documenta la confiabilidad de ESTAS
+ * dos columnas únicamente: "pit" = spin_rate/o_swing_pct calculados
+ * point-in-time por el backfill; vacío = sin cobertura todavía. No dice nada
+ * sobre stuff_plus/xera/hardhit%/etc. de ese mismo bloque del CSV, que siguen
+ * viniendo del snapshot de temporada de SavantCache sin corregir (ver
+ * columna savant_metrics_asof_date para esas).
+ */
+function pitcherSavantPitValues(pit: PitStatsEntry | null | undefined): { spinRate: string | number; oSwingPct: string | number; source: string } {
+  return {
+    spinRate: pit?.spinRate ?? "",
+    oSwingPct: pit?.oSwingPct ?? "",
+    source: (pit?.spinRate != null || pit?.oSwingPct != null) ? "pit" : "",
+  };
+}
+
 // Generate CSV string representing MLB_MASTER_DATA format (Requisito 7)
 
 function getPitcherDerivedMetrics(g: any, side: 'home' | 'away') {
@@ -407,6 +432,18 @@ export interface PitStatsEntry {
   totalStrikeouts?: number | string | null;
   gs?: number | string | null;
   ipAvgPerStart?: number | string | null;
+  /**
+   * Sept. 2026: spin_rate (promedio de release_spin_rate) y o_swing_pct
+   * (chase%) point-in-time, calculados por backfill_pitcher_stats_pit.py vía
+   * pybaseball's statcast_pitcher, filtrado a pitcheos anteriores a la fecha
+   * del juego — mismo patrón que era/whip/etc. de este mismo objeto. Antes
+   * estas dos métricas solo salían de SavantCache (snapshot de temporada
+   * completa, sin recorte de fecha — 100% fuga en filas históricas, ver
+   * auditoría del pipeline). El resto de columnas Savant del CSV (stuff_plus,
+   * xera, hardhit%, etc.) siguen viniendo de ese snapshot sin corregir.
+   */
+  spinRate?: number | string | null;
+  oSwingPct?: number | string | null;
 }
 
 export interface PITLookups {
@@ -479,6 +516,9 @@ export function generateMLDatasetCSV(games: MLBGame[], pitLookups: PITLookups = 
     "home_pitcher_spin_rate", "away_pitcher_spin_rate",
     "home_pitcher_stuff_plus", "away_pitcher_stuff_plus",
     "home_pitcher_o_swing_pct", "away_pitcher_o_swing_pct",
+    // "pit" = spin_rate/o_swing_pct point-in-time confirmados por el backfill;
+    // vacío = sin cobertura todavía (no dice nada de stuff_plus, que sigue null).
+    "home_pitcher_savant_pit_source", "away_pitcher_savant_pit_source",
     "home_pitcher_k_pct_vs_lhb", "away_pitcher_k_pct_vs_lhb",
     "home_pitcher_k_pct_vs_rhb", "away_pitcher_k_pct_vs_rhb",
     "park_factor_k", "park_factor_runs", "park_factor_hr",
@@ -507,6 +547,9 @@ export function generateMLDatasetCSV(games: MLBGame[], pitLookups: PITLookups = 
     // Pitcher PIT helpers (corrected seasonal stats up to game date)
     const hPit = pitPIT?.home ?? null;
     const aPit = pitPIT?.away ?? null;
+    // spin_rate/o_swing_pct point-in-time (ver pitcherSavantPitValues)
+    const homeSavantPit = pitcherSavantPitValues(hPit);
+    const awaySavantPit = pitcherSavantPitValues(aPit);
 
     // Team offense PIT helpers (corrected team stats up to game date)
     const hOff = offPIT?.home ?? null;
@@ -833,12 +876,19 @@ export function generateMLDatasetCSV(games: MLBGame[], pitLookups: PITLookups = 
       (g as any).pitchers?.home_starter?.pitcher_recent_velocity ?? (g as any).pitchers?.home?.pitcher_recent_velocity ?? "",
       (g as any).pitchers?.away_starter?.pitcher_recent_velocity ?? (g as any).pitchers?.away?.pitcher_recent_velocity ?? "",
       // New Advanced Metrics & Park Factors
-      g.advanced_pitching?.home?.pitcher_spin_rate ?? "",
-      g.advanced_pitching?.away?.pitcher_spin_rate ?? "",
+      // spin_rate/o_swing_pct: SOLO point-in-time verificado (backfill PIT vía
+      // pybaseball), igual que el bloque era/whip de arriba — sin cobertura
+      // PIT la celda queda vacía en vez de usar el snapshot de temporada de
+      // SavantCache (con fuga de fechas futuras). stuff_plus no está en este
+      // cambio (sigue viniendo de g.advanced_pitching, siempre null).
+      homeSavantPit.spinRate,
+      awaySavantPit.spinRate,
       g.advanced_pitching?.home?.pitcher_stuff_plus ?? "",
       g.advanced_pitching?.away?.pitcher_stuff_plus ?? "",
-      g.advanced_pitching?.home?.pitcher_o_swing_pct ?? "",
-      g.advanced_pitching?.away?.pitcher_o_swing_pct ?? "",
+      homeSavantPit.oSwingPct,
+      awaySavantPit.oSwingPct,
+      homeSavantPit.source,
+      awaySavantPit.source,
       g.advanced_pitching?.home?.pitcher_k_pct_vs_lhb ?? "",
       g.advanced_pitching?.away?.pitcher_k_pct_vs_lhb ?? "",
       g.advanced_pitching?.home?.pitcher_k_pct_vs_rhb ?? "",
@@ -1093,6 +1143,9 @@ export function generateBattersCSV(games: any[], pitLookups: PITLookups = { pitc
     "home_pitcher_spin_rate", "away_pitcher_spin_rate",
     "home_pitcher_stuff_plus", "away_pitcher_stuff_plus",
     "home_pitcher_o_swing_pct", "away_pitcher_o_swing_pct",
+    // "pit" = spin_rate/o_swing_pct point-in-time confirmados por el backfill;
+    // vacío = sin cobertura todavía (no dice nada de stuff_plus, que sigue null).
+    "home_pitcher_savant_pit_source", "away_pitcher_savant_pit_source",
     "home_pitcher_k_pct_vs_lhb", "away_pitcher_k_pct_vs_lhb",
     "home_pitcher_k_pct_vs_rhb", "away_pitcher_k_pct_vs_rhb",
     "park_factor_k", "park_factor_runs", "park_factor_hr"
@@ -1109,6 +1162,9 @@ export function generateBattersCSV(games: any[], pitLookups: PITLookups = { pitc
     const gameId = String(game.id);
     const hPit = pitLookups.pitchers?.[gameId]?.home;
     const aPit = pitLookups.pitchers?.[gameId]?.away;
+    // spin_rate/o_swing_pct point-in-time (ver pitcherSavantPitValues)
+    const homeSavantPit = pitcherSavantPitValues(hPit);
+    const awaySavantPit = pitcherSavantPitValues(aPit);
 
     const hSplitRhp = game.offensive_splits?.home?.vsRhp;
     const hSplitLhp = game.offensive_splits?.home?.vsLhp;
@@ -1398,12 +1454,17 @@ export function generateBattersCSV(games: any[], pitLookups: PITLookups = { pitc
       (game as any).pitchers?.home_starter?.pitcher_recent_velocity ?? (game as any).pitchers?.home?.pitcher_recent_velocity ?? "",
       (game as any).pitchers?.away_starter?.pitcher_recent_velocity ?? (game as any).pitchers?.away?.pitcher_recent_velocity ?? "",
       // New Advanced Metrics & Park Factors
-      game.advanced_pitching?.home?.pitcher_spin_rate ?? "",
-      game.advanced_pitching?.away?.pitcher_spin_rate ?? "",
+      // spin_rate/o_swing_pct: SOLO point-in-time verificado (backfill PIT vía
+      // pybaseball) — ver pitcherSavantPitValues / comentario gemelo en
+      // generateMLDatasetCSV. stuff_plus no está en este cambio (sigue null).
+      homeSavantPit.spinRate,
+      awaySavantPit.spinRate,
       game.advanced_pitching?.home?.pitcher_stuff_plus ?? "",
       game.advanced_pitching?.away?.pitcher_stuff_plus ?? "",
-      game.advanced_pitching?.home?.pitcher_o_swing_pct ?? "",
-      game.advanced_pitching?.away?.pitcher_o_swing_pct ?? "",
+      homeSavantPit.oSwingPct,
+      awaySavantPit.oSwingPct,
+      homeSavantPit.source,
+      awaySavantPit.source,
       game.advanced_pitching?.home?.pitcher_k_pct_vs_lhb ?? "",
       game.advanced_pitching?.away?.pitcher_k_pct_vs_lhb ?? "",
       game.advanced_pitching?.home?.pitcher_k_pct_vs_rhb ?? "",

@@ -5,7 +5,11 @@ Generates point-in-time (PIT) corrected stats for all historical games
 stored in mlb_database.json.
 
 Produces three output files:
-  - pitcher_stats_pit.json    : PIT pitcher seasonal stats per game
+  - pitcher_stats_pit.json    : PIT pitcher seasonal stats per game (era/whip/
+                                kPct/bbPct/wins/losses/ip/strikeouts/gs/
+                                ipAvgPerStart, y desde sept. 2026 también
+                                spinRate/oSwingPct — ver sección STATCAST más
+                                abajo)
   - offense_stats_pit.json    : PIT team offense stats per game
   - boxscore_game_stats.json  : Real pitcher stats from finished game boxscores
                                 (IP, BF, Hits, ER, K, BB, Pitches, HR)
@@ -15,6 +19,12 @@ Usage:
   python backfill_pitcher_stats_pit.py --sample 20       # test with 20 games
   python backfill_pitcher_stats_pit.py --game_id 823442  # single game
   python backfill_pitcher_stats_pit.py --from_date 2026-05-01  # games from date
+  python backfill_pitcher_stats_pit.py --reverify        # recompute existing
+                                                          # entries too (ver
+                                                          # --help); necesario
+                                                          # para que juegos ya
+                                                          # procesados reciban
+                                                          # spinRate/oSwingPct
 """
 
 import json
@@ -22,6 +32,7 @@ import time
 import argparse
 import sys
 import os
+import math
 from datetime import datetime, timedelta
 from pathlib import Path
 import requests
@@ -150,7 +161,7 @@ def get_pitcher_stats_up_to_date(pitcher_id: int, target_date: str, season: int)
     ]
 
     if not prior:
-        return {"gs": 0, "ip": "0.0", "strikeouts": 0, "wins": 0, "losses": 0,
+        return {"gs": 0, "ip": "0.0", "totalStrikeouts": 0, "wins": 0, "losses": 0,
                 "era": None, "whip": None, "kPct": None, "bbPct": None,
                 "ipAvgPerStart": None, "gameCount": 0}
 
@@ -180,7 +191,14 @@ def get_pitcher_stats_up_to_date(pitcher_id: int, target_date: str, season: int)
     return {
         "gs": total_gs,
         "ip": thirds_to_ip_string(total_ip),
-        "strikeouts": total_k,
+        # Sept. 2026: era "strikeouts" — la clave real que usa el resto del
+        # proyecto (las otras 926 entradas ya guardadas, generate_pit.ts /
+        # mlbGameLogExtractor.ts, y PitStatsEntry en utils.ts) es
+        # "totalStrikeouts". Con la clave equivocada el dato no se perdía,
+        # pero la columna home/away_pitcher_strikeouts del CSV quedaba vacía
+        # para cualquier juego que este script llegara a procesar (detectado
+        # en la prueba con --game_id antes de correr el --reverify completo).
+        "totalStrikeouts": total_k,
         "wins": total_w,
         "losses": total_l,
         "era": era,
@@ -193,8 +211,176 @@ def get_pitcher_stats_up_to_date(pitcher_id: int, target_date: str, season: int)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PITCHER STATCAST POINT-IN-TIME (spin_rate, o_swing_pct / chase%)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Pedido explícito del usuario (sept. 2026): las columnas home/away_pitcher_
+# spin_rate y home/away_pitcher_o_swing_pct del dataset venían vacías porque
+# su única fuente era SavantCache (src/etl/extractors/savantScraper.ts), que
+# descarga los leaderboards de Baseball Savant UNA VEZ POR TEMPORADA sin
+# ningún recorte de fecha — exactamente la misma fuga de "temporada completa
+# hasta hoy" que ya se había corregido para era/whip/kPct/etc. (ver auditoría
+# del pipeline, memoria /areas/pipeline-mlb-auditoria.md).
+#
+# En vez de seguir sirviendo ese valor con fuga, estas dos columnas se
+# calculan acá con el mismo patrón que get_pitcher_stats_up_to_date: se
+# descarga el detalle de pitcheos Statcast del lanzador UNA VEZ por
+# temporada (statcast_pitcher — ya es dependencia del proyecto vía
+# pybaseball, ver requirements.txt), se cachea en memoria, y se filtra a los
+# pitcheos ANTERIORES a la fecha del juego en cada llamada — sin volver a
+# pegarle a la red por cada juego del mismo lanzador.
+#
+# El resto de columnas Savant de ese mismo bloque del CSV (stuff_plus, xera,
+# xwoba, hardhit%, barrel%, etc.) siguen viniendo del snapshot de temporada
+# completa sin corregir — quedó fuera de alcance de este cambio a pedido
+# explícito del usuario (stuff_plus en particular ni siquiera existe todavía
+# como métrica real: siempre es None/null en todo el pipeline).
+
+try:
+    from pybaseball import statcast_pitcher
+    PYBASEBALL_AVAILABLE = True
+except Exception as _pybaseball_import_err:
+    print(f"[WARN] pybaseball no disponible ({_pybaseball_import_err}); "
+          f"spinRate/oSwingPct quedarán vacíos para todos los juegos.")
+    PYBASEBALL_AVAILABLE = False
+
+# Mismas definiciones que src/etl/extractors/pybaseball_scraper.py
+# (get_pitcher_advanced_metrics) — si se actualiza una, actualizar la otra.
+OUT_OF_ZONE = {11, 12, 13, 14}
+SWING_DESCRIPTIONS = {
+    "swinging_strike", "swinging_strike_blocked", "foul",
+    "hit_into_play", "foul_tip", "foul_bunt", "missed_bunt",
+}
+
+pitcher_statcast_cache: dict = {}   # {f"{pitcherId}_{season}": [row, ...]}
+
+
+def _is_nan(val) -> bool:
+    return isinstance(val, float) and math.isnan(val)
+
+
+def fetch_pitcher_statcast_rows(pitcher_id: int, season: int) -> list:
+    """Descarga (una vez por temporada, cacheado en memoria) los pitcheos
+    Statcast del lanzador con las columnas necesarias para spin_rate y
+    o_swing_pct. Devuelve [] si pybaseball no está disponible o la descarga
+    falla — nunca lanza, para no tumbar el resto del backfill."""
+    if not PYBASEBALL_AVAILABLE:
+        return []
+
+    key = f"{pitcher_id}_{season}"
+    if key in pitcher_statcast_cache:
+        return pitcher_statcast_cache[key]
+
+    rows = []
+    try:
+        df = statcast_pitcher(f"{season}-03-01", f"{season}-11-30", pitcher_id)
+        if df is not None and not df.empty:
+            cols = [c for c in ("game_date", "release_spin_rate", "zone", "description")
+                    if c in df.columns]
+            rows = df[cols].to_dict("records")
+    except Exception as e:
+        print(f"  [WARN] pybaseball statcast_pitcher falló para pitcher {pitcher_id}/{season}: {e}")
+        rows = []
+
+    pitcher_statcast_cache[key] = rows
+    time.sleep(RATE_LIMIT_DELAY)
+    return rows
+
+
+def get_pitcher_statcast_up_to_date(pitcher_id: int, target_date: str, season: int) -> dict:
+    """spin_rate promedio y o_swing_pct (chase%) usando solo pitcheos
+    ANTERIORES a target_date — análogo point-in-time de
+    get_pitcher_stats_up_to_date, pero a nivel de pitcheo individual en vez
+    de gamelog por juego."""
+    rows = fetch_pitcher_statcast_rows(pitcher_id, season)
+    prior = [r for r in rows if str(r.get("game_date", ""))[:10] < target_date]
+
+    if not prior:
+        return {"spinRate": None, "oSwingPct": None}
+
+    spins = [
+        r["release_spin_rate"] for r in prior
+        if r.get("release_spin_rate") is not None and not _is_nan(r["release_spin_rate"])
+    ]
+    spin_rate = round(sum(spins) / len(spins), 1) if spins else None
+
+    chase_opps = 0
+    chase_swings = 0
+    for r in prior:
+        zone = r.get("zone")
+        if zone is None or _is_nan(zone):
+            continue
+        if int(zone) not in OUT_OF_ZONE:
+            continue
+        chase_opps += 1
+        if r.get("description") in SWING_DESCRIPTIONS:
+            chase_swings += 1
+    o_swing_pct = round((chase_swings / chase_opps) * 100, 1) if chase_opps > 0 else None
+
+    return {"spinRate": spin_rate, "oSwingPct": o_swing_pct}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # TEAM OFFENSE POINT-IN-TIME
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# Sept. 2026: mlb_database.json no guarda ningún ID de equipo — "teams" y
+# "metadata.homeTeam/awayTeam" solo traen el nombre completo (ej. "Tampa Bay
+# Rays"), pero get_team_offense_up_to_date necesita el ID numérico de la API
+# de MLB para pedir stats=byDateRange. Sin este mapeo, home_team_id/
+# away_team_id siempre daban None y offense_stats_pit.json quedaba vacío.
+#
+# IDs oficiales de la API de MLB (estables — no cambian aunque una franquicia
+# se mude/remarque; ej. Cleveland sigue siendo 114 desde "Indians", Athletics
+# sigue siendo 133 aunque haya dejado de decir "Oakland"). Mismos nombres
+# completos que ya usa el resto del proyecto en
+# src/utils/teamLogos.ts::getTeamAbbr. Match por substring en minúsculas
+# (como getTeamLogo/getTeamColor en ese mismo archivo) en vez de exacto, para
+# no romperse si algún registro guardó "Athletics" en vez de "Oakland
+# Athletics" u otra variante menor del nombre.
+TEAM_NAME_SUBSTR_TO_ID = [
+    ("diamondbacks", 109),
+    ("braves", 144),
+    ("orioles", 110),
+    ("red sox", 111),
+    ("white sox", 145),
+    ("cubs", 112),
+    ("reds", 113),
+    ("guardians", 114),
+    ("rockies", 115),
+    ("tigers", 116),
+    ("astros", 117),
+    ("royals", 118),
+    ("angels", 108),
+    ("dodgers", 119),
+    ("marlins", 146),
+    ("brewers", 158),
+    ("twins", 142),
+    ("mets", 121),
+    ("yankees", 147),
+    ("athletics", 133),
+    ("phillies", 143),
+    ("pirates", 134),
+    ("padres", 135),
+    ("giants", 137),
+    ("mariners", 136),
+    ("cardinals", 138),
+    ("rays", 139),
+    ("rangers", 140),
+    ("blue jays", 141),
+    ("nationals", 120),
+]
+
+
+def get_team_id_by_name(team_name: str | None) -> int | None:
+    if not team_name:
+        return None
+    name = team_name.strip().lower()
+    for substr, team_id in TEAM_NAME_SUBSTR_TO_ID:
+        if substr in name:
+            return team_id
+    return None
+
 
 def get_team_offense_up_to_date(team_id: int, target_date: str, season: int) -> dict | None:
     season_start = f"{season}-03-15"
@@ -339,19 +525,39 @@ def get_nested(d: dict, *keys, default=None):
     return d
 
 
-def load_existing(path: Path) -> dict:
+def load_existing(path: Path, wrap_key: str | None = None) -> dict:
+    """Carga un output existente. `wrap_key` desenvuelve el formato real que
+    usan pitcher_stats_pit.json / offense_stats_pit.json / boxscore_game_stats.json
+    en producción — {"pitchers": {gameId: {...}}} en vez de un dict plano — que
+    es exactamente lo que espera readPitLookups() en server.ts
+    (`parsed.pitchers || parsed`). Sept. 2026: antes esta función devolvía el
+    dict tal cual venía en el archivo SIN desenvolver, así que contra el
+    pitcher_stats_pit.json real (envuelto) esto cargaba un dict de UN solo
+    elemento (la clave "pitchers" completa como si fuera un gameId más) en vez
+    de los 927 juegos reales que había adentro — el bug que hizo que
+    --reverify pareciera "no encontrar nada para diffear" sin tocar los datos
+    reales (que quedaron intactos de pura casualidad)."""
     if path.exists():
         with open(path, "r", encoding="utf-8") as f:
             try:
-                return json.load(f)
+                data = json.load(f)
             except Exception:
                 return {}
+        if wrap_key and isinstance(data, dict) and isinstance(data.get(wrap_key), dict):
+            return data[wrap_key]
+        return data if isinstance(data, dict) else {}
     return {}
 
 
-def save_json(path: Path, data: dict):
+def save_json(path: Path, data: dict, wrap_key: str | None = None):
+    """Guarda `data`. `wrap_key` envuelve la salida bajo esa clave para que
+    coincida con el formato real que ya usan estos tres archivos en
+    producción (ver load_existing) — server.ts los lee con
+    `parsed.<wrap_key> || parsed`, así que escribir envuelto es lo correcto
+    y consistente con lo que ya existe en disco."""
+    payload = {wrap_key: data} if wrap_key else data
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(payload, f, ensure_ascii=False, indent=2)
     print(f"  Saved → {path} ({len(data)} entries)")
 
 
@@ -360,8 +566,29 @@ def run_backfill(args):
     with open(DB_PATH, "r", encoding="utf-8") as f:
         db = json.load(f)
 
-    games: dict = db if isinstance(db, dict) else {}
-    game_list = list(games.items())
+    # Sept. 2026: mlb_database.json es {fecha: [juego, juego, ...]} — NO un
+    # dict plano {gameId: juego}. Esto llevaba tiempo roto sin que nadie lo
+    # notara porque el Cron Job que corre este script nunca se activó en
+    # Render (ver RENDER_CRON_SETUP.md); esta fue la primera corrida real
+    # contra la base de datos actual. Antes `games.items()` iteraba
+    # (fecha, [lista de juegos]) como si fuera (gameId, juego) — cada
+    # "juego" era en realidad una lista, así que get_nested(juego, "metadata",
+    # "date") fallaba siempre y el juego se saltaba silenciosamente. Con la
+    # base de datos real esto hacía que el script no procesara NINGÚN juego
+    # de verdad (ver auditoría de esta sesión — 0 juegos afectados, datos
+    # existentes intactos de pura casualidad).
+    games_by_date: dict = db if isinstance(db, dict) else {}
+    game_list = []
+    for _date_key, _games_for_date in games_by_date.items():
+        if not isinstance(_games_for_date, list):
+            continue
+        for _game in _games_for_date:
+            if not isinstance(_game, dict):
+                continue
+            _gid = _game.get("id")
+            if _gid is None:
+                continue
+            game_list.append((str(_gid), _game))
 
     # Filters
     if args.game_id:
@@ -380,9 +607,9 @@ def run_backfill(args):
     print(f"Processing {total} games...{' (REVERIFY MODE: recomputing + diffing existing entries)' if reverify else ''}\n")
 
     # Load existing outputs so we can resume interrupted runs
-    pitcher_out  = load_existing(OUTPUT_PITCHER)
-    offense_out  = load_existing(OUTPUT_OFFENSE)
-    boxscore_out = load_existing(OUTPUT_BOXSCORE)
+    pitcher_out  = load_existing(OUTPUT_PITCHER, wrap_key="pitchers")
+    offense_out  = load_existing(OUTPUT_OFFENSE, wrap_key="offense")
+    boxscore_out = load_existing(OUTPUT_BOXSCORE, wrap_key="boxscore")
 
     reverify_diffs = []  # (game_id, field, old_value, new_value) — only populated in --reverify mode
 
@@ -397,17 +624,28 @@ def run_backfill(args):
 
         season = int(date[:4])
 
-        # IDs from both possible schema locations
+        # IDs from both possible schema locations. Sept. 2026: el campo real
+        # en pitchers.home/away es "pitcherId" (confirmado contra un juego
+        # real de mlb_database.json), no "id" — ese era el segundo bug que
+        # hacía que el backfill nunca encontrara al lanzador aunque se
+        # arreglara la iteración de arriba. Se dejan los "id"/"home_starter"
+        # como fallback por si algún registro viejo usa esa forma.
         home_pitcher_id = (
+            get_nested(game, "pitchers", "home", "pitcherId") or
             get_nested(game, "pitchers", "home", "id") or
             get_nested(game, "pitchers", "home_starter", "id")
         )
         away_pitcher_id = (
+            get_nested(game, "pitchers", "away", "pitcherId") or
             get_nested(game, "pitchers", "away", "id") or
             get_nested(game, "pitchers", "away_starter", "id")
         )
-        home_team_id = get_nested(game, "metadata", "homeTeamId")
-        away_team_id = get_nested(game, "metadata", "awayTeamId")
+        # home/away_team_id: mlb_database.json no guarda ID de equipo, solo el
+        # nombre — se resuelve vía TEAM_NAME_SUBSTR_TO_ID (ver sección TEAM
+        # OFFENSE POINT-IN-TIME arriba). Se intenta primero un campo *TeamId
+        # explícito por si algún registro sí lo trae, y se cae al nombre si no.
+        home_team_id = get_nested(game, "metadata", "homeTeamId") or get_team_id_by_name(home_team)
+        away_team_id = get_nested(game, "metadata", "awayTeamId") or get_team_id_by_name(away_team)
 
         print(f"[{idx}/{total}] {game_id} | {date} | {home_team} vs {away_team} | {status}")
 
@@ -415,6 +653,12 @@ def run_backfill(args):
         if game_id not in pitcher_out or reverify:
             home_pit = get_pitcher_stats_up_to_date(home_pitcher_id, date, season) if home_pitcher_id else None
             away_pit = get_pitcher_stats_up_to_date(away_pitcher_id, date, season) if away_pitcher_id else None
+            # spinRate/oSwingPct point-in-time (ver sección STATCAST arriba) —
+            # se agregan al mismo dict de PIT del lanzador, junto a era/whip/etc.
+            if home_pit is not None and home_pitcher_id:
+                home_pit.update(get_pitcher_statcast_up_to_date(home_pitcher_id, date, season))
+            if away_pit is not None and away_pitcher_id:
+                away_pit.update(get_pitcher_statcast_up_to_date(away_pitcher_id, date, season))
             new_val = {"home": home_pit, "away": away_pit}
             if reverify and game_id in pitcher_out and pitcher_out[game_id] != new_val:
                 reverify_diffs.append((game_id, "pitcher", pitcher_out[game_id], new_val))
@@ -452,15 +696,15 @@ def run_backfill(args):
 
         # Save every 50 games to avoid data loss on interruption
         if idx % 50 == 0:
-            save_json(OUTPUT_PITCHER, pitcher_out)
-            save_json(OUTPUT_OFFENSE, offense_out)
-            save_json(OUTPUT_BOXSCORE, boxscore_out)
+            save_json(OUTPUT_PITCHER, pitcher_out, wrap_key="pitchers")
+            save_json(OUTPUT_OFFENSE, offense_out, wrap_key="offense")
+            save_json(OUTPUT_BOXSCORE, boxscore_out, wrap_key="boxscore")
             print(f"  --- Checkpoint at game {idx} ---\n")
 
     # Final save
-    save_json(OUTPUT_PITCHER, pitcher_out)
-    save_json(OUTPUT_OFFENSE, offense_out)
-    save_json(OUTPUT_BOXSCORE, boxscore_out)
+    save_json(OUTPUT_PITCHER, pitcher_out, wrap_key="pitchers")
+    save_json(OUTPUT_OFFENSE, offense_out, wrap_key="offense")
+    save_json(OUTPUT_BOXSCORE, boxscore_out, wrap_key="boxscore")
     print(f"\nDone! Processed {total} games.")
 
     if reverify:

@@ -187,7 +187,7 @@ var db = app ? (() => {
 import { doc, collection, setDoc, getDoc, getDocs, getCountFromServer, query, where, orderBy, limit, arrayUnion } from "firebase/firestore";
 import { getAuth, signInAnonymously } from "firebase/auth";
 var authInitialized = false;
-var FIRESTORE_READ_TIMEOUT_MS = Number(process.env.FIRESTORE_READ_TIMEOUT_MS || 3e3);
+var FIRESTORE_READ_TIMEOUT_MS = Number(process.env.FIRESTORE_READ_TIMEOUT_MS || 1e4);
 async function ensureAnonymousAuth() {
   if (!app) return false;
   if (authInitialized) return true;
@@ -332,6 +332,7 @@ var loadAllGamesFromFirestore = async () => {
 };
 var emptyCache = /* @__PURE__ */ new Map();
 var EMPTY_CACHE_TTL_MS = 5 * 60 * 1e3;
+var FIRESTORE_TIMEOUT = Symbol("firestore-timeout");
 var loadGamesByDateFromFirestore = async (date) => {
   try {
     const now = Date.now();
@@ -346,8 +347,10 @@ var loadGamesByDateFromFirestore = async (date) => {
     const isAuthed = await ensureAnonymousAuth();
     if (!isAuthed) return [];
     const metadataRef = doc(db, "metadata", "extracted_dates");
-    const metaSnapshot = await withFirestoreReadTimeout(getDoc(metadataRef), null, "metadatos de fechas r\xE1pidas");
-    if (metaSnapshot && metaSnapshot.exists()) {
+    const metaSnapshot = await withFirestoreReadTimeout(getDoc(metadataRef), FIRESTORE_TIMEOUT, "metadatos de fechas r\xE1pidas");
+    if (metaSnapshot === FIRESTORE_TIMEOUT) {
+      console.warn(`[Firestore] Timeout leyendo metadatos para ${date}; se omite el atajo r\xE1pido pero se sigue con la query completa (sin cachear como vac\xEDo).`);
+    } else if (metaSnapshot && metaSnapshot.exists()) {
       const dates = metaSnapshot.data()?.dates || [];
       if (!dates.includes(date)) {
         console.log(`[Optimizaci\xF3n] La fecha ${date} no est\xE1 en metadatos. Evitando query completo.`);
@@ -356,7 +359,11 @@ var loadGamesByDateFromFirestore = async (date) => {
       }
     }
     const gamesQuery = query(collection(db, "games"), where("metadata.date", "==", date));
-    const snapshot = await withFirestoreReadTimeout(getDocs(gamesQuery), null, `juegos de ${date}`);
+    const snapshot = await withFirestoreReadTimeout(getDocs(gamesQuery), FIRESTORE_TIMEOUT, `juegos de ${date}`);
+    if (snapshot === FIRESTORE_TIMEOUT) {
+      console.warn(`[Firestore] Timeout consultando juegos de ${date}; devolviendo vac\xEDo SOLO para este request, sin bloquear reintentos.`);
+      return [];
+    }
     if (!snapshot || snapshot.empty) {
       emptyCache.set(date, now);
       return [];
@@ -971,6 +978,13 @@ function pitcherPitStatsBlockValues(pit) {
     pit ? "pit" : ""
   ];
 }
+function pitcherSavantPitValues(pit) {
+  return {
+    spinRate: pit?.spinRate ?? "",
+    oSwingPct: pit?.oSwingPct ?? "",
+    source: pit?.spinRate != null || pit?.oSwingPct != null ? "pit" : ""
+  };
+}
 function getPitcherDerivedMetrics(g, side) {
   const p = g.pitchers?.[side + "_starter"] || g.pitchers?.[side] || {};
   const ap = g.advanced_pitching?.[side] || {};
@@ -1310,6 +1324,10 @@ function generateMLDatasetCSV(games, pitLookups = {}) {
     "away_pitcher_stuff_plus",
     "home_pitcher_o_swing_pct",
     "away_pitcher_o_swing_pct",
+    // "pit" = spin_rate/o_swing_pct point-in-time confirmados por el backfill;
+    // vacío = sin cobertura todavía (no dice nada de stuff_plus, que sigue null).
+    "home_pitcher_savant_pit_source",
+    "away_pitcher_savant_pit_source",
     "home_pitcher_k_pct_vs_lhb",
     "away_pitcher_k_pct_vs_lhb",
     "home_pitcher_k_pct_vs_rhb",
@@ -1348,6 +1366,8 @@ function generateMLDatasetCSV(games, pitLookups = {}) {
     const bsPIT = pitLookups.boxscore?.[gameId2];
     const hPit = pitPIT?.home ?? null;
     const aPit = pitPIT?.away ?? null;
+    const homeSavantPit = pitcherSavantPitValues(hPit);
+    const awaySavantPit = pitcherSavantPitValues(aPit);
     const hOff2 = offPIT?.home ?? null;
     const aOff2 = offPIT?.away ?? null;
     const hBs = bsPIT?.home ?? g.boxscore_stats?.home ?? null;
@@ -1671,12 +1691,19 @@ function generateMLDatasetCSV(games, pitLookups = {}) {
       g.pitchers?.home_starter?.pitcher_recent_velocity ?? g.pitchers?.home?.pitcher_recent_velocity ?? "",
       g.pitchers?.away_starter?.pitcher_recent_velocity ?? g.pitchers?.away?.pitcher_recent_velocity ?? "",
       // New Advanced Metrics & Park Factors
-      g.advanced_pitching?.home?.pitcher_spin_rate ?? "",
-      g.advanced_pitching?.away?.pitcher_spin_rate ?? "",
+      // spin_rate/o_swing_pct: SOLO point-in-time verificado (backfill PIT vía
+      // pybaseball), igual que el bloque era/whip de arriba — sin cobertura
+      // PIT la celda queda vacía en vez de usar el snapshot de temporada de
+      // SavantCache (con fuga de fechas futuras). stuff_plus no está en este
+      // cambio (sigue viniendo de g.advanced_pitching, siempre null).
+      homeSavantPit.spinRate,
+      awaySavantPit.spinRate,
       g.advanced_pitching?.home?.pitcher_stuff_plus ?? "",
       g.advanced_pitching?.away?.pitcher_stuff_plus ?? "",
-      g.advanced_pitching?.home?.pitcher_o_swing_pct ?? "",
-      g.advanced_pitching?.away?.pitcher_o_swing_pct ?? "",
+      homeSavantPit.oSwingPct,
+      awaySavantPit.oSwingPct,
+      homeSavantPit.source,
+      awaySavantPit.source,
       g.advanced_pitching?.home?.pitcher_k_pct_vs_lhb ?? "",
       g.advanced_pitching?.away?.pitcher_k_pct_vs_lhb ?? "",
       g.advanced_pitching?.home?.pitcher_k_pct_vs_rhb ?? "",
@@ -2162,6 +2189,10 @@ function generateBattersCSV(games, pitLookups = { pitchers: {} }) {
     "away_pitcher_stuff_plus",
     "home_pitcher_o_swing_pct",
     "away_pitcher_o_swing_pct",
+    // "pit" = spin_rate/o_swing_pct point-in-time confirmados por el backfill;
+    // vacío = sin cobertura todavía (no dice nada de stuff_plus, que sigue null).
+    "home_pitcher_savant_pit_source",
+    "away_pitcher_savant_pit_source",
     "home_pitcher_k_pct_vs_lhb",
     "away_pitcher_k_pct_vs_lhb",
     "home_pitcher_k_pct_vs_rhb",
@@ -2179,6 +2210,8 @@ function generateBattersCSV(games, pitLookups = { pitchers: {} }) {
     const gameId2 = String(game.id);
     const hPit = pitLookups.pitchers?.[gameId2]?.home;
     const aPit = pitLookups.pitchers?.[gameId2]?.away;
+    const homeSavantPit = pitcherSavantPitValues(hPit);
+    const awaySavantPit = pitcherSavantPitValues(aPit);
     const hSplitRhp = game.offensive_splits?.home?.vsRhp;
     const hSplitLhp = game.offensive_splits?.home?.vsLhp;
     const aSplitRhp = game.offensive_splits?.away?.vsRhp;
@@ -2515,12 +2548,17 @@ function generateBattersCSV(games, pitLookups = { pitchers: {} }) {
       game.pitchers?.home_starter?.pitcher_recent_velocity ?? game.pitchers?.home?.pitcher_recent_velocity ?? "",
       game.pitchers?.away_starter?.pitcher_recent_velocity ?? game.pitchers?.away?.pitcher_recent_velocity ?? "",
       // New Advanced Metrics & Park Factors
-      game.advanced_pitching?.home?.pitcher_spin_rate ?? "",
-      game.advanced_pitching?.away?.pitcher_spin_rate ?? "",
+      // spin_rate/o_swing_pct: SOLO point-in-time verificado (backfill PIT vía
+      // pybaseball) — ver pitcherSavantPitValues / comentario gemelo en
+      // generateMLDatasetCSV. stuff_plus no está en este cambio (sigue null).
+      homeSavantPit.spinRate,
+      awaySavantPit.spinRate,
       game.advanced_pitching?.home?.pitcher_stuff_plus ?? "",
       game.advanced_pitching?.away?.pitcher_stuff_plus ?? "",
-      game.advanced_pitching?.home?.pitcher_o_swing_pct ?? "",
-      game.advanced_pitching?.away?.pitcher_o_swing_pct ?? "",
+      homeSavantPit.oSwingPct,
+      awaySavantPit.oSwingPct,
+      homeSavantPit.source,
+      awaySavantPit.source,
       game.advanced_pitching?.home?.pitcher_k_pct_vs_lhb ?? "",
       game.advanced_pitching?.away?.pitcher_k_pct_vs_lhb ?? "",
       game.advanced_pitching?.home?.pitcher_k_pct_vs_rhb ?? "",
@@ -3350,6 +3388,10 @@ function isFinalGameStatus2(status) {
   // misma que este archivo pone de ejemplo más arriba. Encontrado escribiendo
   // pruebas (gameStatus.test.ts) al confirmar el propio ejemplo del comentario.
   normalized.includes("completed early") || normalized === "completed";
+}
+function isNonActionableGameStatus(status) {
+  const normalized = String(status ?? "").trim().toLowerCase();
+  return normalized.includes("postponed") || normalized.includes("cancelled") || normalized.includes("canceled");
 }
 
 // src/datasets/klabTrainingDataset.ts
@@ -4420,6 +4462,36 @@ function mergeGamesIntoLocalDB(games) {
   const dates = Object.keys(mergedDB).filter((date) => Array.isArray(mergedDB[date]) && mergedDB[date].length > 0);
   return { games: games.length, dates: dates.length };
 }
+async function ensureDateLoadedForExport(date) {
+  const db2 = readGamesDB();
+  if ((db2[date] || []).length > 0) return;
+  try {
+    const firestoreGames = await loadGamesByDateFromFirestore(date);
+    if (firestoreGames.length > 0) {
+      mergeGamesIntoLocalDB(firestoreGames);
+      console.log(`[Export] Restaurados ${firestoreGames.length} juego(s) desde Firestore para ${date} antes de generar la descarga.`);
+    }
+  } catch (err) {
+    console.error(`[Export] No se pudo restaurar ${date} desde Firestore para la descarga:`, err);
+  }
+}
+async function ensureDatesLoadedForExport(dates) {
+  for (const date of dates) {
+    await ensureDateLoadedForExport(date);
+  }
+}
+async function ensureDateRangeLoadedForExport(startDate, endDate) {
+  if (typeof startDate !== "string" || typeof endDate !== "string" || !startDate || !endDate) return;
+  try {
+    const firestoreGames = await loadGamesByDateRangeFromFirestore(startDate, endDate);
+    if (firestoreGames.length > 0) {
+      mergeGamesIntoLocalDB(firestoreGames);
+      console.log(`[Export] Restaurados ${firestoreGames.length} juego(s) desde Firestore para el rango ${startDate}..${endDate} antes de generar la descarga.`);
+    }
+  } catch (err) {
+    console.error(`[Export] No se pudo restaurar el rango ${startDate}..${endDate} desde Firestore para la descarga:`, err);
+  }
+}
 function getGameTimestamp(game) {
   const value = game?.timestamp || game?.updatedAt || game?.createdAt;
   const time = value ? new Date(value).getTime() : 0;
@@ -4437,6 +4509,35 @@ function getNewYorkDateString() {
 }
 function isPastGameDate(date) {
   return /^\d{4}-\d{2}-\d{2}$/.test(date) && date < getNewYorkDateString();
+}
+function addDaysToDateString(dateStr, days) {
+  const d = /* @__PURE__ */ new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+async function saveGameDataReliably(gameId2, gameData, errorsCollection, maxAttempts = 3) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await saveGameData(gameId2, gameData);
+      return true;
+    } catch (fsErr) {
+      const isLastAttempt = attempt === maxAttempts;
+      console.error(`[Firestore] Intento ${attempt}/${maxAttempts} fallido guardando juego ${gameId2}:`, fsErr);
+      if (isLastAttempt) {
+        errorsCollection?.push({
+          id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+          gameId: gameId2,
+          source: "Firestore",
+          message: `Fallo al sincronizar con Firestore tras ${maxAttempts} intentos: ${fsErr instanceof Error ? fsErr.message : String(fsErr)}`,
+          severity: "medium"
+        });
+        return false;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  return false;
 }
 var PITCHER_PROP_FIELDS = ["strikeoutProp", "strikeoutPropOverOdds", "strikeoutPropUnderOdds", "strikeoutPropBook", "strikeoutPropSource"];
 var BATTER_PROP_FIELDS = ["totalBasesProp", "totalBasesPropOverOdds", "totalBasesPropUnderOdds", "totalBasesPropBook", "totalBasesPropSource", "totalBasesPropHitRate", "totalBasesPropHitRateDisplay"];
@@ -5189,15 +5290,16 @@ app2.get("/api/ml-dataset", (req, res) => {
     res.status(500).json({ error: "Fallo al generar dataset ML" });
   }
 });
-app2.get("/api/ml-dataset/csv", (req, res) => {
+app2.get("/api/ml-dataset/csv", async (req, res) => {
   try {
     const { dates } = req.query;
-    const db2 = readGamesDB();
-    const allGames = [];
     let filterDates = [];
     if (typeof dates === "string" && dates.trim() !== "") {
       filterDates = dates.split(",").map((d) => d.trim());
     }
+    if (filterDates.length > 0) await ensureDatesLoadedForExport(filterDates);
+    const db2 = readGamesDB();
+    const allGames = [];
     for (const date of Object.keys(db2)) {
       if (filterDates.length > 0 && !filterDates.includes(date)) {
         continue;
@@ -5219,6 +5321,7 @@ app2.get("/api/ml-dataset/csv", (req, res) => {
 app2.get("/api/k-props/csv", async (req, res) => {
   try {
     const { date } = req.query;
+    if (date && typeof date === "string") await ensureDateLoadedForExport(date);
     const db2 = readGamesDB();
     const allGames = [];
     if (date && typeof date === "string") {
@@ -5241,6 +5344,7 @@ app2.get("/api/k-props/csv", async (req, res) => {
 app2.get("/api/batter-total-bases/csv", async (req, res) => {
   try {
     const { date } = req.query;
+    if (date && typeof date === "string") await ensureDateLoadedForExport(date);
     const db2 = readGamesDB();
     const allGames = [];
     if (date && typeof date === "string") {
@@ -5263,13 +5367,14 @@ app2.get("/api/batter-total-bases/csv", async (req, res) => {
 app2.get("/api/batters-dataset/csv", async (req, res) => {
   try {
     const { dates, date } = req.query;
-    const db2 = readGamesDB();
-    const allGames = [];
     let filterDates = [];
     const queryDates = dates || date;
     if (typeof queryDates === "string" && queryDates.trim() !== "") {
       filterDates = queryDates.split(",").map((d) => d.trim());
     }
+    if (filterDates.length > 0) await ensureDatesLoadedForExport(filterDates);
+    const db2 = readGamesDB();
+    const allGames = [];
     for (const dateKey of Object.keys(db2)) {
       if (filterDates.length > 0 && !filterDates.includes(dateKey)) {
         continue;
@@ -5293,49 +5398,54 @@ function getDatasetGamesForDate(db2, date) {
   if (typeof date === "string" && date.trim()) return db2[date] || [];
   return Object.values(db2).flat();
 }
-app2.get("/api/datasets/pitcher-game/csv", (req, res) => {
+app2.get("/api/datasets/pitcher-game/csv", async (req, res) => {
   const { date } = req.query;
+  if (typeof date === "string" && date.trim()) await ensureDateLoadedForExport(date);
   const csv = generatePitcherGameDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", `attachment; filename=MLB_PITCHER_GAME_DATASET_${date || "all"}.csv`);
   res.send(csv);
 });
-app2.get("/api/datasets/game/csv", (req, res) => {
+app2.get("/api/datasets/game/csv", async (req, res) => {
   const { date } = req.query;
+  if (typeof date === "string" && date.trim()) await ensureDateLoadedForExport(date);
   const csv = generateGameDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", `attachment; filename=MLB_GAME_DATASET_${date || "all"}.csv`);
   res.send(csv);
 });
-app2.get("/api/datasets/batter-game/csv", (req, res) => {
+app2.get("/api/datasets/batter-game/csv", async (req, res) => {
   const { date } = req.query;
+  if (typeof date === "string" && date.trim()) await ensureDateLoadedForExport(date);
   const csv = generateBatterGameDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", `attachment; filename=MLB_BATTER_GAME_DATASET_${date || "all"}.csv`);
   res.send(csv);
 });
-app2.get("/api/datasets/pitcher-props/csv", (req, res) => {
+app2.get("/api/datasets/pitcher-props/csv", async (req, res) => {
   const { date } = req.query;
+  if (typeof date === "string" && date.trim()) await ensureDateLoadedForExport(date);
   const csv = generatePitcherPropsDatasetCSV(getDatasetGamesForDate(readGamesDB(), date));
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", `attachment; filename=MLB_PITCHER_PROPS_DATASET_${date || "all"}.csv`);
   res.send(csv);
 });
-function buildRequestedKlabDataset(startDate, endDate) {
+async function buildRequestedKlabDataset(startDate, endDate) {
+  await ensureDateRangeLoadedForExport(startDate, endDate);
   const allGames = Object.values(readGamesDB()).flat();
   return buildKlabTrainingDataset(allGames, startDate, endDate);
 }
-app2.get("/api/datasets/klab-training/preview", (req, res) => {
+app2.get("/api/datasets/klab-training/preview", async (req, res) => {
   try {
-    const result = buildRequestedKlabDataset(req.query.start_date, req.query.end_date);
+    const result = await buildRequestedKlabDataset(req.query.start_date, req.query.end_date);
     res.json({ report: result.report, sample: result.rows.slice(0, 5) });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Rango inv\xE1lido" });
   }
 });
-app2.get("/api/datasets/klab-training/csv", (req, res) => {
+app2.get("/api/datasets/klab-training/csv", async (req, res) => {
   try {
-    const result = buildRequestedKlabDataset(req.query.start_date, req.query.end_date);
+    const result = await buildRequestedKlabDataset(req.query.start_date, req.query.end_date);
     const outputDirectory = path7.join(process.cwd(), "datasets", "ml");
     fs8.mkdirSync(outputDirectory, { recursive: true });
     fs8.writeFileSync(path7.join(outputDirectory, result.report.outputFilename), result.csv, "utf8");
@@ -5418,6 +5528,7 @@ app2.get("/api/game/:gameId/csv", async (req, res) => {
   try {
     const { gameId: gameId2 } = req.params;
     const { date } = req.query;
+    if (date && typeof date === "string") await ensureDateLoadedForExport(date);
     const db2 = readGamesDB();
     const candidateGames = [];
     if (date && db2[String(date)]) {
@@ -5442,9 +5553,10 @@ app2.get("/api/game/:gameId/csv", async (req, res) => {
     res.status(500).send("Error al generar CSV del juego");
   }
 });
-app2.get("/api/daily-results/csv", (req, res) => {
+app2.get("/api/daily-results/csv", async (req, res) => {
   try {
     const { date } = req.query;
+    if (date && typeof date === "string") await ensureDateLoadedForExport(date);
     const db2 = readGamesDB();
     const games = date && db2[String(date)] ? db2[String(date)] : [];
     const csvContent = generateDailyPlayerResultsCSV(games);
@@ -8302,17 +8414,7 @@ app2.post("/api/harvest", async (req, res) => {
             enrichWithVortexMetrics(refreshedGame);
             capturePregameSnapshot(refreshedGame);
             harvestedGames.push(refreshedGame);
-            saveGameData(gameId2, refreshedGame).catch((fsErr) => {
-              console.error(`Error saving to Firestore for game ${gameId2}:`, fsErr);
-              errorsCollection.push({
-                id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-                timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-                gameId: gameId2,
-                source: "Firestore",
-                message: `Fallo al sincronizar con Firestore: ${fsErr instanceof Error ? fsErr.message : String(fsErr)}`,
-                severity: "medium"
-              });
-            });
+            await saveGameDataReliably(gameId2, refreshedGame, errorsCollection);
             const incrementalDB2 = readGamesDB();
             const incrementalDateGames2 = [...incrementalDB2[date] || []];
             const incrementalIndex2 = incrementalDateGames2.findIndex((g) => String(g.id) === String(gameId2));
@@ -8677,17 +8779,7 @@ app2.post("/api/harvest", async (req, res) => {
       gameDataParsed.timestamp = (/* @__PURE__ */ new Date()).toISOString();
       gameDataParsed.lastReverifyAttempt = gameDataParsed.timestamp;
       capturePregameSnapshot(gameDataParsed);
-      saveGameData(gameId2, gameDataParsed).catch((fsErr) => {
-        console.error(`Error saving to Firestore for game ${gameId2}:`, fsErr);
-        errorsCollection.push({
-          id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-          gameId: gameId2,
-          source: "Firestore",
-          message: `Fallo al sincronizar con Firestore: ${fsErr instanceof Error ? fsErr.message : String(fsErr)}`,
-          severity: "medium"
-        });
-      });
+      await saveGameDataReliably(gameId2, gameDataParsed, errorsCollection);
       harvestedGames.push(gameDataParsed);
       const incrementalDB = readGamesDB();
       const incrementalDateGames = [...incrementalDB[date] || []];
@@ -8799,9 +8891,7 @@ async function updateSingleGameData(gameId2, date, forceRefreshOdds = false) {
       };
       enrichWithVortexMetrics(refreshedGameLight);
       capturePregameSnapshot(refreshedGameLight);
-      saveGameData(gameId2, refreshedGameLight).catch((fsErr) => {
-        console.error(`Error saving to Firestore for game ${gameId2}:`, fsErr);
-      });
+      await saveGameDataReliably(gameId2, refreshedGameLight, errorsCollectionLight);
       const updatedGamesLight = gamesForDateLightCheck.map(
         (g) => String(g.id) === String(gameId2) ? refreshedGameLight : g
       );
@@ -9110,9 +9200,7 @@ async function updateSingleGameData(gameId2, date, forceRefreshOdds = false) {
   gameDataParsed.timestamp = (/* @__PURE__ */ new Date()).toISOString();
   gameDataParsed.lastReverifyAttempt = gameDataParsed.timestamp;
   capturePregameSnapshot(gameDataParsed);
-  saveGameData(gameId2, gameDataParsed).catch((fsErr) => {
-    console.error(`Error saving to Firestore for game ${gameId2}:`, fsErr);
-  });
+  await saveGameDataReliably(gameId2, gameDataParsed, errorsCollection);
   const updatedGames = existingGamesForDate.map(
     (g) => String(g.id) === String(gameId2) ? gameDataParsed : g
   );
@@ -9156,7 +9244,6 @@ registerKPropsLineHistoryRoutes(app2, {
   normalizeName,
   getNewYorkDateString
 });
-var NON_ACTIONABLE_STATUSES = ["Postponed", "Cancelled"];
 function startLiveGamesAutoupdater() {
   const INTERVAL_MS = 2 * 60 * 1e3;
   console.log(`[Auto-Updater] Iniciando programador de actualizaci\xF3n cada 2 minutos...`);
@@ -9165,11 +9252,14 @@ function startLiveGamesAutoupdater() {
       console.log(`[Auto-Updater] Ejecutando verificaci\xF3n de juegos pendientes/en progreso para actualizaci\xF3n autom\xE1tica...`);
       const db2 = readGamesDB();
       const liveGamesToUpdate = [];
+      const todayStr = getNewYorkDateString();
+      const yesterdayStr = addDaysToDateString(todayStr, -1);
       for (const date of Object.keys(db2)) {
+        if (date !== todayStr && date !== yesterdayStr) continue;
         const games = db2[date] || [];
         for (const game of games) {
           const status = game.game_result?.gameStatus || "";
-          const isDone = status === "" || isFinalGameStatus2(status) || NON_ACTIONABLE_STATUSES.some((s) => status.includes(s));
+          const isDone = status === "" || isFinalGameStatus2(status) || isNonActionableGameStatus(status);
           const isLiveStatus = status.includes("In Progress") || status.includes("Live") || status.includes("Delayed") || status.includes("Suspended");
           const needsUpdate = !isDone && (isLiveStatus || hasSolidPregameCoverage(game));
           if (needsUpdate) {
@@ -9201,18 +9291,28 @@ function startLiveGamesAutoupdater() {
     }
   }, INTERVAL_MS);
 }
+var STARTUP_RESTORE_WINDOW_DAYS = 4;
 async function runStartupFirestoreSync() {
   try {
     const localDB = readGamesDB();
     const isLocalEmpty = Object.keys(localDB).length === 0;
     if (isLocalEmpty) {
-      console.log("[Restaurador Firestore] La base de datos local est\xE1 vac\xEDa. Restaurando solo la fecha m\xE1s reciente desde Firestore...");
-      const games = await loadLatestGamesFromFirestore();
+      const todayStr = getNewYorkDateString();
+      const windowStart = addDaysToDateString(todayStr, -(STARTUP_RESTORE_WINDOW_DAYS - 1));
+      console.log(`[Restaurador Firestore] La base de datos local est\xE1 vac\xEDa. Restaurando ${windowStart}..${todayStr} desde Firestore...`);
+      const games = await loadGamesByDateRangeFromFirestore(windowStart, todayStr);
       if (games && games.length > 0) {
-        mergeGamesIntoLocalDB(games);
-        console.log(`[Restaurador Firestore] Fecha m\xE1s reciente restaurada exitosamente con ${games.length} juegos.`);
+        const { dates } = mergeGamesIntoLocalDB(games);
+        console.log(`[Restaurador Firestore] Ventana ${windowStart}..${todayStr} restaurada: ${games.length} juegos en ${dates} fecha(s).`);
       } else {
-        console.log("[Restaurador Firestore] No se encontraron juegos en Firestore o la colecci\xF3n est\xE1 vac\xEDa.");
+        console.log("[Restaurador Firestore] Sin resultados para la ventana reciente. Intentando con la fecha m\xE1s reciente disponible...");
+        const latestGames = await loadLatestGamesFromFirestore();
+        if (latestGames && latestGames.length > 0) {
+          mergeGamesIntoLocalDB(latestGames);
+          console.log(`[Restaurador Firestore] Fecha m\xE1s reciente restaurada exitosamente con ${latestGames.length} juegos.`);
+        } else {
+          console.log("[Restaurador Firestore] No se encontraron juegos en Firestore o la colecci\xF3n est\xE1 vac\xEDa.");
+        }
       }
     }
   } catch (fsRestoreErr) {

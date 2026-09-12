@@ -52,6 +52,56 @@ async function withFirestoreReadTimeout<T>(promise: Promise<T>, fallback: T, lab
   }
 }
 
+// Encontrado (sept. 2026): las LECTURAS ya tenían timeout (arriba), pero las
+// ESCRITURAS (setDoc) no tenían ninguno. `saveGameData` hace hasta ~10 `setDoc`
+// seguidos por juego, y si uno solo se cuelga (canal gRPC/WebChannel de Firestore
+// que no responde, blip de red saliente de Render, etc.) el `await` nunca se
+// resuelve NI rechaza — se queda esperando para siempre. Como `saveGameDataReliably`
+// solo reintenta cuando `saveGameData` lanza un error, un `setDoc` colgado nunca
+// dispara el reintento: congela el bucle entero de extracción (SSE) en ese juego
+// exacto, sin ningún error visible en consola. Esto explica un harvest que se
+// queda pegado en un juego para siempre ("no pasa de ahí") sin tirar 503 ni nada.
+//
+// A diferencia de las lecturas, una escritura sin confirmar no tiene un fallback
+// seguro (no sabemos si Firestore la aplicó o no), así que esto RECHAZA en vez de
+// resolver con un valor por defecto — para que el retry de saveGameDataReliably
+// sí se entere y reintente (o falle limpio tras 3 intentos) en vez de colgarse.
+const FIRESTORE_WRITE_TIMEOUT_MS = Number(process.env.FIRESTORE_WRITE_TIMEOUT_MS || 15000);
+
+function withFirestoreWriteTimeout<T>(promise: Promise<T>, label: string, timeoutMs = FIRESTORE_WRITE_TIMEOUT_MS): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      timeout = setTimeout(() => {
+        reject(new Error(`[Firestore] Timeout escribiendo ${label} despues de ${timeoutMs}ms.`));
+      }, timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
+/** setDoc con timeout — usar en vez de setDoc directo para cualquier escritura dentro del harvest. */
+function setDocWithTimeout(ref: any, data: any, options?: any): Promise<void> {
+  const label = `${ref?.parent?.id ?? "doc"}/${ref?.id ?? "?"}`;
+  const p: Promise<void> = options !== undefined ? setDoc(ref, data, options) : setDoc(ref, data);
+  return withFirestoreWriteTimeout(p, label);
+}
+
+// Límite para el historial de `snapshots` (ver saveGameData más abajo): sin esto,
+// cada llamada a saveGameData —incluyendo refrescos livianos y reintentos— creaba
+// un documento nuevo para siempre, siendo la mayor fuente de consumo de cuota.
+// Con esto, un juego que se refresca cada pocos minutos durante horas solo genera
+// un puñado de snapshots reales en vez de decenas.
+//
+// Vive en memoria del proceso (se resetea con cada redeploy de Render) — es
+// intencional: evita una lectura extra a Firestore por juego solo para saber
+// cuándo fue el último snapshot, y el único costo de resetear es, como mucho, un
+// snapshot de más justo después de un deploy.
+const SNAPSHOT_MIN_INTERVAL_MS = Number(process.env.FIRESTORE_SNAPSHOT_MIN_INTERVAL_MS || 15 * 60 * 1000); // 15 min
+const lastSnapshotInfo = new Map<string, { at: number; status: any }>();
+
 export const saveGameData = async (gameId: string, gameData: any) => {
   try {
     if (!db || !app) {
@@ -81,63 +131,42 @@ export const saveGameData = async (gameId: string, gameData: any) => {
 
     // Set with merge: true to avoid overwriting fields not provided in this update
     const gameRef = doc(collection(db, 'games'), gameId);
-    await setDoc(gameRef, dataWithTimestamp, { merge: true });
+    await setDocWithTimeout(gameRef, dataWithTimestamp, { merge: true });
 
-    // Save subcollections
-    if (gameData.weather) {
-      const weatherRef = doc(collection(gameRef, 'weather'), 'current');
-      await setDoc(weatherRef, gameData.weather);
-    }
-    if (gameData.line_movements && gameData.line_movements.length > 0) {
-      const lastLine = gameData.line_movements[gameData.line_movements.length - 1];
-      if (lastLine) {
-        const lineId = lastLine.timestamp ? String(lastLine.timestamp).replace(/[:.]/g, '-') : String(Date.now());
-        const lineRef = doc(collection(gameRef, 'line_movements'), lineId);
-        await setDoc(lineRef, lastLine);
-      }
-    }
-    if (gameData.betting_history && gameData.betting_history.length > 0) {
-      const lastSnapshot = gameData.betting_history[gameData.betting_history.length - 1];
-      if (lastSnapshot?.timestamp) {
-        const snapshotId = String(lastSnapshot.timestamp).replace(/[:.]/g, '-');
-        const bettingRef = doc(collection(gameRef, 'betting_history'), snapshotId);
-        await setDoc(bettingRef, lastSnapshot);
-      }
-    }
-    if (gameData.offensive_splits) {
-      const splitsRef = doc(collection(gameRef, 'offensive_splits'), 'current');
-      await setDoc(splitsRef, gameData.offensive_splits);
-    }
-    if (gameData.fatigue_metrics) {
-      const fatigueRef = doc(collection(gameRef, 'fatigue_metrics'), 'current');
-      await setDoc(fatigueRef, gameData.fatigue_metrics);
-    }
-    if (gameData.advanced_pitching) {
-      const advPitchingRef = doc(collection(gameRef, 'advanced_pitching'), 'current');
-      await setDoc(advPitchingRef, gameData.advanced_pitching);
-    }
-    if (gameData.advanced_offense) {
-      const advOffenseRef = doc(collection(gameRef, 'advanced_offense'), 'current');
-      await setDoc(advOffenseRef, gameData.advanced_offense);
-    }
-    if (gameData.model_features) {
-      const featuresRef = doc(collection(gameRef, 'model_features'), 'current');
-      await setDoc(featuresRef, gameData.model_features);
-    }
-    if (gameData.game_result) {
-      const resultRef = doc(collection(gameRef, 'game_result'), 'current');
-      await setDoc(resultRef, gameData.game_result);
-    }
+    // Encontrado (sept. 2026): las 8 subcolecciones que antes se escribían aquí
+    // (weather, line_movements, betting_history, offensive_splits, fatigue_metrics,
+    // advanced_pitching, advanced_offense, model_features, game_result) nunca se
+    // leen en ningún otro lado del código — todo lo que la app lee viene del
+    // documento principal de arriba, que ya incluye estos mismos campos vía el
+    // spread de `gameData`. Eran ~8 escrituras duplicadas por juego sin ningún
+    // consumidor, quemando cuota de Firestore por nada. Se eliminaron.
+    // (El único subcamino que sí guardaba algo que no estaba ya en el documento
+    // principal era el historial en `snapshots`, que se mantiene abajo con límite.)
 
-    // Save historical snapshot
-    const snapshotRef = doc(collection(gameRef, 'snapshots'), now);
-    await setDoc(snapshotRef, dataWithTimestamp);
+    // Save historical snapshot — con límite para no crecer sin control ni quemar
+    // cuota: solo se guarda un snapshot nuevo si pasó al menos
+    // FIRESTORE_SNAPSHOT_MIN_INTERVAL_MS desde el último para este juego, o si el
+    // estado del juego cambió desde el último snapshot (ej. pasó a "Final") —
+    // eso sí queremos capturarlo siempre, sin esperar al intervalo.
+    const currentStatus = gameData?.game_result?.gameStatus;
+    const prevSnapshotInfo = lastSnapshotInfo.get(gameId);
+    const elapsedSinceLastSnapshot = prevSnapshotInfo ? Date.now() - prevSnapshotInfo.at : Infinity;
+    const statusChangedSinceLastSnapshot = !prevSnapshotInfo || prevSnapshotInfo.status !== currentStatus;
+    const shouldSnapshot = !prevSnapshotInfo
+      || elapsedSinceLastSnapshot >= SNAPSHOT_MIN_INTERVAL_MS
+      || statusChangedSinceLastSnapshot;
+
+    if (shouldSnapshot) {
+      const snapshotRef = doc(collection(gameRef, 'snapshots'), now);
+      await setDocWithTimeout(snapshotRef, dataWithTimestamp);
+      lastSnapshotInfo.set(gameId, { at: Date.now(), status: currentStatus });
+    }
 
     // Registrar la fecha en el documento de metadatos ligero de forma atómica
     const date = gameData?.metadata?.date;
     if (date) {
       const metadataRef = doc(db, 'metadata', 'extracted_dates');
-      await setDoc(metadataRef, {
+      await setDocWithTimeout(metadataRef, {
         dates: arrayUnion(date)
       }, { merge: true });
     }

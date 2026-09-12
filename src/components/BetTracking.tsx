@@ -117,7 +117,9 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
       // Avoid overwriting if db is empty and we have local bets (migration)
       const currentLocal = loadBets(betDate);
       if (dbBets.length === 0 && currentLocal.length > 0) {
-        void saveBetsDb(betDate, currentLocal).catch(error => {
+        // prevBets=[] porque el servidor no tiene nada que borrar: todo lo
+        // que traemos localmente es "alta" para la fusión en saveBetsDb.
+        void saveBetsDb(betDate, [], currentLocal).catch(error => {
           console.error("Error migrando apuestas locales a Firestore:", error);
         });
       } else {
@@ -139,7 +141,11 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
     setBets(prev => {
       const next = updater(prev);
       saveBets(betDate, next); // local
-      void saveBetsDb(betDate, next).catch(error => {
+      // Se manda prev junto con next para que saveBetsDb pueda calcular solo
+      // la diferencia real que esta pestaña quiso guardar (alta/edición/baja
+      // por id) y fusionarla sobre el estado actual del servidor, en vez de
+      // reemplazar el array completo — ver comentario en betService.ts.
+      void saveBetsDb(betDate, prev, next).catch(error => {
         console.error("Error guardando apuestas en Firestore:", error);
       });
       return next;
