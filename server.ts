@@ -5604,7 +5604,13 @@ app.post("/api/harvest", async (req, res) => {
     // se deja constancia del error, igual que hace el pipeline de cron.
     emit({ phase: "backfill_pit", step: "Actualizando estadísticas point-in-time (PIT) de pitcheo/ofensiva...", pct: 96 });
     try {
-      const backfillResult = await runBackfillPitSubprocess(date);
+      // Sept. 2026: para la fecha de hoy se fuerza --reverify (ver comentario en
+      // runBackfillPitSubprocess) — una extracción manual de un juego en curso
+      // puede correr antes de que MLB confirme los pitchers abridores, lo que
+      // dejaba esa entrada "pegada" en null para siempre pese a re-extraer
+      // después. Para fechas pasadas se mantiene el salto incremental normal.
+      const isToday = date === getNewYorkDateString();
+      const backfillResult = await runBackfillPitSubprocess(date, undefined, { reverify: isToday });
       console.log(`[ETL] Backfill PIT para ${date} completado.`);
       emit({ phase: "backfill_pit", step: "Cobertura PIT actualizada.", pct: 99 });
     } catch (backfillErr) {

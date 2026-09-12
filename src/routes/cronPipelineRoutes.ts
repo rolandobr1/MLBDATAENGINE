@@ -118,12 +118,34 @@ async function runHarvestViaLoopback(port: number, date: string, timeoutMs = 15 
  * recién extraído sin cobertura PIT hasta que alguien se acordara de correr
  * este script aparte. Ver conversación con el usuario, sept. 2026.
  */
-export async function runBackfillPitSubprocess(date: string, timeoutMs = 10 * 60 * 1000): Promise<{ exitCode: number; stdoutTail: string }> {
+export async function runBackfillPitSubprocess(
+  date: string,
+  timeoutMs = 10 * 60 * 1000,
+  options: { reverify?: boolean } = {}
+): Promise<{ exitCode: number; stdoutTail: string }> {
   const pythonBin = process.env.PYTHON_BIN || "python3";
+  // Sept. 2026: para la fecha de HOY (juegos en curso todo el día) el backfill
+  // puede correr varias veces mientras el partido avanza — vía el botón manual,
+  // el nuevo botón de "actualización en vivo" (que nunca llama a este script,
+  // pero sí puede correr antes de que MLB confirme los pitchers abridores) o el
+  // auto-updater cada 2 min. Si la PRIMERA corrida del día cae antes de que
+  // pitchers.home/away.pitcherId estén resueltos en mlb_database.json, el script
+  // guarda {home: null, away: null} para ese game_id — y como la lógica normal es
+  // "si el game_id ya existe, saltarlo" (pensada para no re-golpear la API de MLB
+  // en corridas históricas ya cubiertas), ese null queda pegado para siempre,
+  // aunque más tarde el juego ya tenga toda su información. Ver auditoría con el
+  // usuario: columnas PIT vacías para 2026-09-12 pese a que el fix de `requests`
+  // ya estaba desplegado y sin errores en el log. Por eso, solo para la fecha de
+  // hoy, se fuerza --reverify (recalcula y sobreescribe aunque ya exista una
+  // entrada) — para fechas pasadas se mantiene el salto incremental de siempre.
+  const args = ["backfill_pitcher_stats_pit.py", "--from_date", date];
+  if (options.reverify) {
+    args.push("--reverify");
+  }
   try {
     const { stdout } = await execFileAsync(
       pythonBin,
-      ["backfill_pitcher_stats_pit.py", "--from_date", date],
+      args,
       { cwd: process.cwd(), timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 }
     );
     return { exitCode: 0, stdoutTail: stdout.slice(-4000) };
@@ -204,7 +226,8 @@ export function registerCronPipelineRoutes(app: Express, deps: CronPipelineDeps)
       // /api/harvest llegó a fallar silenciosamente.
       const backfillStep = recorder.startStep("backfill_pit");
       try {
-        const backfillResult = await runBackfillPitSubprocess(date);
+        const isToday = date === deps.getNewYorkDateString();
+        const backfillResult = await runBackfillPitSubprocess(date, undefined, { reverify: isToday });
         recorder.finishStep(backfillStep, "ok", backfillResult);
       } catch (err) {
         // No abortamos: se exporta con la cobertura PIT que ya exista y quede constancia del fallo.
