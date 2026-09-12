@@ -621,14 +621,23 @@ export const BetTracking: React.FC<BetTrackingProps> = ({ games, onRefreshGame }
 
     setIsRefreshingAll(true);
     try {
-      await Promise.all(pendingGameIds.map(async (gid) => {
+      // Secuencial a propósito (antes era `Promise.all`, sept. 2026): cada
+      // llamada llega a /api/harvest-game → updateSingleGameData, que si el
+      // juego no tiene cobertura pregame sólida cae en el pipeline completo
+      // (~20 llamadas a APIs externas). Con varios juegos pendientes a la vez,
+      // el paralelismo podía disparar todas esas ráfagas simultáneamente y
+      // arriesgar rate-limiting de la API de MLB/cuotas — el mismo motivo por
+      // el que /api/harvest-live (liveUpdateRoutes.ts) y el auto-updater de
+      // fondo (server.ts, startLiveGamesAutoupdater) ya son secuenciales.
+      for (const gid of pendingGameIds) {
         setRefreshingIds(prev => new Set(prev).add(gid));
         try {
           const updatedGame = await onRefreshGame(gid, betDate);
           replaceDateGame(updatedGame);
+        } finally {
+          setRefreshingIds(prev => { const n = new Set(prev); n.delete(gid); return n; });
         }
-        finally { setRefreshingIds(prev => { const n = new Set(prev); n.delete(gid); return n; }); }
-      }));
+      }
     } finally {
       setIsRefreshingAll(false);
     }

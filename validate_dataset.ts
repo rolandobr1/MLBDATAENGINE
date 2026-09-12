@@ -298,9 +298,28 @@ function findLatestBattersCsv(): string | null {
 // no cuando otro módulo lo importa (server.ts lo hace para el endpoint de cron).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Sept. 2026 — bug encontrado corriendo `npm run dev` localmente: ese script
+// bundlea server.ts (que importa `validateDataset` de este archivo para el
+// endpoint de cron) con esbuild en formato ESM. Al bundlear, este archivo deja
+// de ser su propio módulo — su código queda concatenado dentro de server.mjs —
+// y `import.meta.url` pasa a apuntar al bundle completo (server.mjs), que SÍ
+// coincide con `process.argv[1]` cuando se corre `node server.mjs`. Eso hacía
+// que `isMainModule` diera un falso positivo apenas arrancaba el servidor,
+// disparando el bloque CLI de abajo (con su `process.exit()`) y matando el
+// proceso entero si había cualquier CSV de bateadores en la carpeta — el
+// servidor de desarrollo local nunca llegaba a levantar.
+//
+// En el build de producción (`npm run build`, formato CJS) esto no se notaba
+// por accidente: esbuild deja `import.meta` vacío en CJS, así que la
+// comparación siempre daba `false` ahí — pero no hay que depender de eso.
+// Ahora se exige además que `argv[1]` sea este archivo por nombre (no solo
+// que las URLs coincidan), que es lo único que distingue "me invocaron
+// directo con `tsx validate_dataset.ts`" de "quedé bundleado dentro de otro
+// entrypoint" — así queda seguro sin importar el formato de bundle.
 const isMainModule = (() => {
   try {
-    return import.meta.url === `file://${process.argv[1]}`;
+    const entryPath = process.argv[1] || "";
+    return import.meta.url === `file://${entryPath}` && /validate_dataset(\.[cm]?[tj]s)?$/.test(entryPath);
   } catch {
     return false;
   }

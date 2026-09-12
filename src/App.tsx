@@ -136,6 +136,7 @@ export default function App() {
   const [errors, setErrors] = React.useState<LoggedError[]>([]);
   const [extractedDates, setExtractedDates] = React.useState<string[]>([]);
   const [isLoading, setIsLoading] = React.useState<boolean>(false);
+  const [isLiveUpdating, setIsLiveUpdating] = React.useState<boolean>(false);
   const [isFetchingDB, setIsFetchingDB] = React.useState<boolean>(true);
   const [harvestProgress, setHarvestProgress] = React.useState<{
     pct: number;
@@ -665,6 +666,48 @@ export default function App() {
     }
   }, [fetchErrorsDB]);
 
+  // Botón independiente "Actualizar Juegos en Vivo" (sept. 2026): dispara
+  // /api/harvest-live para la fecha seleccionada — refresca solo marcador,
+  // boxscore y jugada por jugada de los juegos ya en curso, sin repetir el
+  // pregame completo ni el backfill PIT. Ver src/routes/liveUpdateRoutes.ts.
+  const handleLiveUpdate = React.useCallback(async (date: string) => {
+    setIsLiveUpdating(true);
+    try {
+      const res = await fetch("/api/harvest-live", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date }),
+      });
+      if (!res.ok) {
+        alert("Error al actualizar juegos en vivo: " + (await res.text()));
+        return;
+      }
+      const data = await res.json();
+      if (!data.success) {
+        alert("Error al actualizar juegos en vivo: " + (data.error || "Desconocido"));
+        return;
+      }
+      if (data.message) {
+        // Caso sin juegos elegibles (nada en vivo todavía, o falta extracción completa).
+        console.log(`[Actualizar en vivo] ${data.message}`);
+      }
+      const failed = (data.updated || []).filter((r: any) => r.status === "error");
+      if (failed.length > 0) {
+        console.error("[Actualizar en vivo] Fallaron:", failed);
+        alert(`Se actualizaron ${data.updated.length - failed.length} de ${data.updated.length} juego(s) en vivo. Fallaron: ${failed.map((f: any) => f.label).join(", ")}`);
+      }
+      // Los juegos actualizados ya quedaron guardados server-side; se releen
+      // desde la BD local en vez de reconstruir el estado a mano acá.
+      await fetchLocalDB(date, { silent: true });
+      await fetchErrorsDB();
+    } catch (err) {
+      console.error("Error de red actualizando juegos en vivo:", err);
+      alert("Error de red al actualizar juegos en vivo");
+    } finally {
+      setIsLiveUpdating(false);
+    }
+  }, [fetchLocalDB, fetchErrorsDB]);
+
   const scrollToSheets = () => {
     sheetsRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -751,6 +794,8 @@ export default function App() {
                 <HarvesterPanel
                   onHarvest={handleHarvest}
                   onBatchHarvest={handleBatchHarvest}
+                  onLiveUpdate={handleLiveUpdate}
+                  isLiveUpdating={isLiveUpdating}
                   isLoading={isLoading}
                   selectedDate={selectedDate}
                   setSelectedDate={handleSetSelectedDate}

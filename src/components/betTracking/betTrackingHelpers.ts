@@ -7,7 +7,7 @@
 
 import { MLBGame } from "../../types";
 import { Bet, LiveProgress, OddsFormat, BetCategory, BetStatus } from "./betTrackingTypes";
-import { isNonActionableGameStatus } from "../../utils/gameStatus";
+import { isFinalGameStatus, isNonActionableGameStatus } from "../../utils/gameStatus";
 
 // ════════════════════════════════════════════════════════════════════════════
 // STORAGE LAYER  — swap localStorage.getItem/setItem for Firestore calls
@@ -163,8 +163,25 @@ export function exportJSON(bets: Bet[], date: string): void {
 // LIVE PROGRESS RESOLVER
 // ════════════════════════════════════════════════════════════════════════════
 
-export const FINAL_STATUSES = ["Final", "Game Over", "Postponed", "Cancelled"];
-export const LIVE_STATUSES = ["In Progress", "Live", "Delayed"];
+// Sept. 2026: antes `FINAL_STATUSES` era un array local propio de Bet Tracking
+// (["Final", "Game Over", "Postponed", "Cancelled"]) — una tercera copia del
+// mismo criterio de "juego terminado" que ya vive en `isFinalGameStatus`
+// (utils/gameStatus.ts) y que ese archivo documenta que la API de MLB también
+// devuelve como "Completed", "Completed Early: Rain", "Final: Tied", etc. Esas
+// variantes NO coincidían con el array de acá, así que una apuesta de un juego
+// terminado por lluvia o suspendido y resuelto como "Completed Early: ..."
+// se quedaba sin calificar (ni "en vivo" ni "final") indefinidamente. Ver
+// conversación con el usuario, sept. 2026. Los pospuestos/cancelados ya no se
+// tratan como parte de "final" acá — se usa `isNonActionableGameStatus`
+// directamente (ver `isPostponed` abajo), que es lo que en realidad decide el
+// auto-status "void".
+//
+// `LIVE_STATUSES` sí se mantiene como array local propio (no hay un
+// `isLiveGameStatus` compartido todavía — server.ts y App.tsx tienen su propia
+// copia ad hoc de este mismo chequeo) — se le agregó "Suspended", que faltaba
+// acá pero sí está en esas otras copias, para no dejar otro hueco silencioso
+// del mismo tipo.
+export const LIVE_STATUSES = ["In Progress", "Live", "Delayed", "Suspended"];
 
 export function getGameStartLabel(game: MLBGame | undefined): string {
   const time = game?.metadata?.time?.trim();
@@ -200,13 +217,16 @@ export function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LivePr
   if (!game) return NONE;
   const status = game.game_result?.gameStatus ?? "";
   const isLive = LIVE_STATUSES.some(s => status.includes(s));
-  const isFinal = FINAL_STATUSES.some(s => status.includes(s));
   // Antes era un array local `["Postponed", "Cancelled"]` — tercera copia del
   // mismo criterio que ya vivía en server.ts (auto-updater) y en las tarjetas de
   // juego (badge "En Vivo" indebido para juegos pospuestos). Unificado en
   // isNonActionableGameStatus (utils/gameStatus.ts) para que las tres dejen de
   // poder divergir silenciosamente.
   const isPostponed = isNonActionableGameStatus(status);
+  // Un juego pospuesto/cancelado se sigue tratando como "final" a efectos de
+  // esta pantalla (no está "por arrancar"), pero la calificación real
+  // (won/lost/void) la decide `isPostponed` más abajo, no este flag.
+  const isFinal = isFinalGameStatus(status) || isPostponed;
 
   // Si el partido no ha comenzado (no está en vivo ni finalizado), forzar estado de espera a 0%
   if (!isLive && !isFinal) {
@@ -341,7 +361,7 @@ export function resolveLiveProgress(bet: Bet, game: MLBGame | undefined): LivePr
 export function hasResultDataForBet(bet: Bet, game: MLBGame | undefined): boolean {
   if (!game) return false;
   const status = game.game_result?.gameStatus ?? "";
-  const isLiveOrFinal = LIVE_STATUSES.some(s => status.includes(s)) || FINAL_STATUSES.some(s => status.includes(s));
+  const isLiveOrFinal = LIVE_STATUSES.some(s => status.includes(s)) || isFinalGameStatus(status) || isNonActionableGameStatus(status);
   if (!isLiveOrFinal) return false;
 
   if (bet.betTypeKey === "pitcher_k") {

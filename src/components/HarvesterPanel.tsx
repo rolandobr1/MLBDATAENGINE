@@ -4,12 +4,19 @@
  */
 
 import React from "react";
-import { Search, Calendar, CalendarDays, Zap, Play, Loader2, Clock, CheckCircle, Database, Brain, HardDrive, Layers } from "lucide-react";
+import { Search, Calendar, CalendarDays, Zap, Play, Loader2, Clock, CheckCircle, Database, Brain, HardDrive, Layers, RefreshCw } from "lucide-react";
 import { MLBGame } from "../types";
+import { isFinalGameStatus, isNonActionableGameStatus } from "../utils/gameStatus";
 
 interface HarvesterPanelProps {
   onHarvest: (date: string, refreshOdds: boolean) => void;
   onBatchHarvest?: (startDate: string, endDate: string, refreshOdds: boolean) => void;
+  /** Botón independiente de "Actualizar Extracción ETL" (sept. 2026): dispara
+   * /api/harvest-live para la fecha seleccionada — solo refresca marcador,
+   * boxscore y jugada por jugada de los juegos que ya arrancaron, sin rehacer
+   * el pregame ni el backfill PIT. Ver src/routes/liveUpdateRoutes.ts. */
+  onLiveUpdate?: (date: string) => void;
+  isLiveUpdating?: boolean;
   isLoading: boolean;
   selectedDate: string;
   setSelectedDate: (date: string) => void;
@@ -49,6 +56,8 @@ const PHASE_STEPS = [
 export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
   onHarvest,
   onBatchHarvest,
+  onLiveUpdate,
+  isLiveUpdating,
   isLoading,
   selectedDate,
   setSelectedDate,
@@ -72,6 +81,18 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
   };
 
   const hasGames = (games?.length ?? 0) > 0;
+
+  // Habilita "Actualizar Juegos en Vivo" solo cuando al menos un juego de la
+  // fecha seleccionada ya arrancó (mismo criterio que usa GameCard para dejar
+  // de mostrarlo como "Por Jugar") y todavía no terminó ni quedó
+  // Postponed/Cancelled — si ya está Final o nunca se jugó, no hay nada en
+  // vivo que traer.
+  const hasLiveGames = (games ?? []).some((g) => {
+    const status = g.game_result?.gameStatus || "";
+    if (!status || ["Scheduled", "Pre-Game", "Warmup"].includes(status)) return false;
+    if (isFinalGameStatus(status) || isNonActionableGameStatus(status)) return false;
+    return true;
+  });
 
   const handleDownloadDailyResultsCSV = async () => {
     try {
@@ -236,6 +257,31 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
                 <Play size={18} fill="currentColor" />
                 <span className="text-sm">
                   {isBatchMode ? "Ejecutar Lote y Descargar CSV" : "Ejecutar Extracción ETL"}
+                </span>
+              </button>
+            )}
+
+            {/* Botón independiente de refresco en vivo (sept. 2026): a
+                propósito NO se muestra en modo Lote — el refresco en vivo es
+                por fecha puntual, no tiene sentido para un rango. */}
+            {!isBatchMode && onLiveUpdate && (
+              <button
+                onClick={() => onLiveUpdate(selectedDate)}
+                disabled={!hasLiveGames || isLoading || isLiveUpdating}
+                title={hasLiveGames ? "Actualiza marcador, boxscore y jugada por jugada de los juegos en curso, sin rehacer la extracción completa" : "Se habilita cuando algún juego de esta fecha ya haya arrancado"}
+                className={`w-full py-2.5 rounded-xl font-display font-semibold transition flex items-center justify-center gap-2 shadow-sm active:scale-98 cursor-pointer disabled:cursor-not-allowed ${
+                  hasLiveGames && !isLoading && !isLiveUpdating
+                    ? "bg-emerald-600 text-white hover:bg-emerald-700 hover:shadow-md"
+                    : "bg-slate-100 text-slate-400 border border-slate-200"
+                }`}
+              >
+                {isLiveUpdating ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={16} />
+                )}
+                <span className="text-xs">
+                  {isLiveUpdating ? "Actualizando juegos en vivo..." : "Actualizar Juegos en Vivo"}
                 </span>
               </button>
             )}

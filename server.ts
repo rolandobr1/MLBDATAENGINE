@@ -69,6 +69,7 @@ import { isFinalGameStatus, isNonActionableGameStatus } from "./src/utils/gameSt
 import { buildKlabTrainingDataset, validateKlabDateRange } from "./src/datasets/klabTrainingDataset";
 import { registerCronPipelineRoutes, runBackfillPitSubprocess } from "./src/routes/cronPipelineRoutes";
 import { registerKPropsLineHistoryRoutes } from "./src/routes/kPropsLineHistoryRoutes";
+import { registerLiveUpdateRoutes } from "./src/routes/liveUpdateRoutes";
 
 const app = express();
 app.use(express.json());
@@ -6138,6 +6139,16 @@ registerKPropsLineHistoryRoutes(app, {
   findDataStreakPitcherKProp,
   normalizeName,
   getNewYorkDateString,
+});
+
+// POST /api/harvest-live — botón independiente de "Actualizar juegos en vivo"
+// (sept. 2026, ver src/routes/liveUpdateRoutes.ts para el detalle completo).
+// Reutiliza `updateSingleGameData` y `hasSolidPregameCoverage`, que ya viven
+// en este archivo — se inyectan igual que en los registros de arriba.
+registerLiveUpdateRoutes(app, {
+  readGamesDB,
+  hasSolidPregameCoverage,
+  updateSingleGameData,
 });
 
 // Auto-updater para juegos en vivo Y pendientes de arrancar, en background (cada 2 minutos).

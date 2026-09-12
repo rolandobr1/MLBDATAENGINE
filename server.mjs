@@ -222,6 +222,27 @@ async function withFirestoreReadTimeout(promise, fallback, label, timeoutMs = FI
     if (timeout) clearTimeout(timeout);
   }
 }
+var FIRESTORE_WRITE_TIMEOUT_MS = Number(process.env.FIRESTORE_WRITE_TIMEOUT_MS || 15e3);
+function withFirestoreWriteTimeout(promise, label, timeoutMs = FIRESTORE_WRITE_TIMEOUT_MS) {
+  let timeout;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timeout = setTimeout(() => {
+        reject(new Error(`[Firestore] Timeout escribiendo ${label} despues de ${timeoutMs}ms.`));
+      }, timeoutMs);
+    })
+  ]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+function setDocWithTimeout(ref, data, options) {
+  const label = `${ref?.parent?.id ?? "doc"}/${ref?.id ?? "?"}`;
+  const p = options !== void 0 ? setDoc(ref, data, options) : setDoc(ref, data);
+  return withFirestoreWriteTimeout(p, label);
+}
+var SNAPSHOT_MIN_INTERVAL_MS = Number(process.env.FIRESTORE_SNAPSHOT_MIN_INTERVAL_MS || 15 * 60 * 1e3);
+var lastSnapshotInfo = /* @__PURE__ */ new Map();
 var saveGameData = async (gameId2, gameData) => {
   try {
     if (!db || !app) {
@@ -247,57 +268,21 @@ var saveGameData = async (gameId2, gameData) => {
     const now = (/* @__PURE__ */ new Date()).toISOString();
     const dataWithTimestamp = { ...gameData, timestamp: now };
     const gameRef = doc(collection(db, "games"), gameId2);
-    await setDoc(gameRef, dataWithTimestamp, { merge: true });
-    if (gameData.weather) {
-      const weatherRef = doc(collection(gameRef, "weather"), "current");
-      await setDoc(weatherRef, gameData.weather);
+    await setDocWithTimeout(gameRef, dataWithTimestamp, { merge: true });
+    const currentStatus = gameData?.game_result?.gameStatus;
+    const prevSnapshotInfo = lastSnapshotInfo.get(gameId2);
+    const elapsedSinceLastSnapshot = prevSnapshotInfo ? Date.now() - prevSnapshotInfo.at : Infinity;
+    const statusChangedSinceLastSnapshot = !prevSnapshotInfo || prevSnapshotInfo.status !== currentStatus;
+    const shouldSnapshot = !prevSnapshotInfo || elapsedSinceLastSnapshot >= SNAPSHOT_MIN_INTERVAL_MS || statusChangedSinceLastSnapshot;
+    if (shouldSnapshot) {
+      const snapshotRef = doc(collection(gameRef, "snapshots"), now);
+      await setDocWithTimeout(snapshotRef, dataWithTimestamp);
+      lastSnapshotInfo.set(gameId2, { at: Date.now(), status: currentStatus });
     }
-    if (gameData.line_movements && gameData.line_movements.length > 0) {
-      const lastLine = gameData.line_movements[gameData.line_movements.length - 1];
-      if (lastLine) {
-        const lineId = lastLine.timestamp ? String(lastLine.timestamp).replace(/[:.]/g, "-") : String(Date.now());
-        const lineRef = doc(collection(gameRef, "line_movements"), lineId);
-        await setDoc(lineRef, lastLine);
-      }
-    }
-    if (gameData.betting_history && gameData.betting_history.length > 0) {
-      const lastSnapshot = gameData.betting_history[gameData.betting_history.length - 1];
-      if (lastSnapshot?.timestamp) {
-        const snapshotId = String(lastSnapshot.timestamp).replace(/[:.]/g, "-");
-        const bettingRef = doc(collection(gameRef, "betting_history"), snapshotId);
-        await setDoc(bettingRef, lastSnapshot);
-      }
-    }
-    if (gameData.offensive_splits) {
-      const splitsRef = doc(collection(gameRef, "offensive_splits"), "current");
-      await setDoc(splitsRef, gameData.offensive_splits);
-    }
-    if (gameData.fatigue_metrics) {
-      const fatigueRef = doc(collection(gameRef, "fatigue_metrics"), "current");
-      await setDoc(fatigueRef, gameData.fatigue_metrics);
-    }
-    if (gameData.advanced_pitching) {
-      const advPitchingRef = doc(collection(gameRef, "advanced_pitching"), "current");
-      await setDoc(advPitchingRef, gameData.advanced_pitching);
-    }
-    if (gameData.advanced_offense) {
-      const advOffenseRef = doc(collection(gameRef, "advanced_offense"), "current");
-      await setDoc(advOffenseRef, gameData.advanced_offense);
-    }
-    if (gameData.model_features) {
-      const featuresRef = doc(collection(gameRef, "model_features"), "current");
-      await setDoc(featuresRef, gameData.model_features);
-    }
-    if (gameData.game_result) {
-      const resultRef = doc(collection(gameRef, "game_result"), "current");
-      await setDoc(resultRef, gameData.game_result);
-    }
-    const snapshotRef = doc(collection(gameRef, "snapshots"), now);
-    await setDoc(snapshotRef, dataWithTimestamp);
     const date = gameData?.metadata?.date;
     if (date) {
       const metadataRef = doc(db, "metadata", "extracted_dates");
-      await setDoc(metadataRef, {
+      await setDocWithTimeout(metadataRef, {
         dates: arrayUnion(date)
       }, { merge: true });
     }
@@ -4337,6 +4322,74 @@ function registerKPropsLineHistoryRoutes(app3, deps) {
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", `attachment; filename=k_props_line_history_${date || "all"}.csv`);
     res.send(csvContent);
+  });
+}
+
+// src/routes/liveUpdateRoutes.ts
+function registerLiveUpdateRoutes(app3, deps) {
+  const { readGamesDB: readGamesDB2, hasSolidPregameCoverage: hasSolidPregameCoverage2, updateSingleGameData: updateSingleGameData2 } = deps;
+  app3.post("/api/harvest-live", async (req, res) => {
+    const { date } = req.body || {};
+    if (!date || typeof date !== "string") {
+      res.status(400).json({ error: "date es requerido" });
+      return;
+    }
+    const db2 = readGamesDB2();
+    const gamesForDate = db2[date] || [];
+    if (gamesForDate.length === 0) {
+      res.json({ success: true, updated: [], skipped: [], message: `No hay juegos guardados para ${date}. Corr\xE9 la extracci\xF3n completa primero.` });
+      return;
+    }
+    const eligible = [];
+    const skipped = [];
+    for (const game of gamesForDate) {
+      const gameId2 = String(game.id);
+      const label = `${game.metadata?.awayTeam ?? "?"} @ ${game.metadata?.homeTeam ?? "?"}`;
+      const status = game.game_result?.gameStatus || "";
+      if (status === "" ? false : isFinalGameStatus2(status)) {
+        skipped.push({ gameId: gameId2, label, reason: "final" });
+        continue;
+      }
+      if (isNonActionableGameStatus(status)) {
+        skipped.push({ gameId: gameId2, label, reason: "non_actionable" });
+        continue;
+      }
+      const isLiveStatus = status.includes("In Progress") || status.includes("Live") || status.includes("Delayed") || status.includes("Suspended");
+      if (!isLiveStatus && !hasSolidPregameCoverage2(game)) {
+        skipped.push({ gameId: gameId2, label, reason: "sin_cobertura_pregame" });
+        continue;
+      }
+      eligible.push({ gameId: gameId2, label });
+    }
+    if (eligible.length === 0) {
+      res.json({
+        success: true,
+        updated: [],
+        skipped,
+        message: "Ning\xFAn juego de esta fecha est\xE1 en vivo ahora mismo (o los que faltan por terminar todav\xEDa no tienen cobertura pregame \u2014 corr\xE9 la extracci\xF3n completa primero)."
+      });
+      return;
+    }
+    const results = [];
+    for (const item of eligible) {
+      try {
+        await updateSingleGameData2(item.gameId, date, false);
+        results.push({ gameId: item.gameId, label: item.label, status: "updated" });
+      } catch (err) {
+        console.error(`[Live Update] Error al actualizar juego ${item.label} (${item.gameId}):`, err);
+        results.push({
+          gameId: item.gameId,
+          label: item.label,
+          status: "error",
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+    res.json({
+      success: true,
+      updated: results,
+      skipped
+    });
   });
 }
 
@@ -8825,6 +8878,24 @@ app2.post("/api/harvest", async (req, res) => {
     writeGamesDB(db2);
     writeErrorsDB(errorsCollection);
     console.log(`[ETL Timing] Extracci\xF3n ${date}: ${Date.now() - harvestStartedAt}ms para ${harvestedGames.length} juegos.`);
+    emit({ phase: "backfill_pit", step: "Actualizando estad\xEDsticas point-in-time (PIT) de pitcheo/ofensiva...", pct: 96 });
+    try {
+      const backfillResult = await runBackfillPitSubprocess(date);
+      console.log(`[ETL] Backfill PIT para ${date} completado.`);
+      emit({ phase: "backfill_pit", step: "Cobertura PIT actualizada.", pct: 99 });
+    } catch (backfillErr) {
+      console.error(`[ETL] Backfill PIT para ${date} fall\xF3 (la extracci\xF3n ya qued\xF3 guardada):`, backfillErr);
+      errorsCollection.push({
+        id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+        gameId: "N/A",
+        source: "BackfillPIT",
+        message: `No se pudo actualizar la cobertura PIT para ${date}: ${backfillErr instanceof Error ? backfillErr.message : String(backfillErr)}`,
+        severity: "medium"
+      });
+      writeErrorsDB(errorsCollection);
+      emit({ phase: "backfill_pit", step: "No se pudo actualizar la cobertura PIT (ver errores) \u2014 la extracci\xF3n s\xED qued\xF3 guardada.", pct: 99 });
+    }
     emit({
       phase: "done",
       step: `Extracci\xF3n completada \u2014 ${harvestedGames.length} juego(s)`,
@@ -9243,6 +9314,11 @@ registerKPropsLineHistoryRoutes(app2, {
   findDataStreakPitcherKProp,
   normalizeName,
   getNewYorkDateString
+});
+registerLiveUpdateRoutes(app2, {
+  readGamesDB,
+  hasSolidPregameCoverage,
+  updateSingleGameData
 });
 function startLiveGamesAutoupdater() {
   const INTERVAL_MS = 2 * 60 * 1e3;
