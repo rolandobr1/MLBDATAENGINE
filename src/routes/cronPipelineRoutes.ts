@@ -110,8 +110,15 @@ async function runHarvestViaLoopback(port: number, date: string, timeoutMs = 15 
   }
 }
 
-/** Corre el backfill de stats PIT (subproceso Python) para juegos desde `date` en adelante. */
-async function runBackfillPitSubprocess(date: string, timeoutMs = 10 * 60 * 1000): Promise<{ exitCode: number; stdoutTail: string }> {
+/**
+ * Corre el backfill de stats PIT (subproceso Python) para juegos desde `date` en
+ * adelante. Exportado (sept. 2026) para que `/api/harvest` en server.ts también
+ * lo llame al terminar una extracción manual — antes solo lo disparaba el
+ * pipeline de cron, así que un "Ejecutar Extracción ETL" manual dejaba el día
+ * recién extraído sin cobertura PIT hasta que alguien se acordara de correr
+ * este script aparte. Ver conversación con el usuario, sept. 2026.
+ */
+export async function runBackfillPitSubprocess(date: string, timeoutMs = 10 * 60 * 1000): Promise<{ exitCode: number; stdoutTail: string }> {
   const pythonBin = process.env.PYTHON_BIN || "python3";
   try {
     const { stdout } = await execFileAsync(
@@ -189,7 +196,12 @@ export function registerCronPipelineRoutes(app: Express, deps: CronPipelineDeps)
         return;
       }
 
-      // Paso 2: backfill PIT
+      // Paso 2: backfill PIT — sept. 2026: desde que /api/harvest corre este mismo
+      // backfill internamente al final de cada extracción (ver server.ts), este
+      // paso ya suele ser un no-op casi instantáneo (el script salta los juegos
+      // que el paso 1 ya cubrió). Se deja como red de seguridad explícita en el
+      // log del pipeline en vez de quitarlo, por si el backfill interno de
+      // /api/harvest llegó a fallar silenciosamente.
       const backfillStep = recorder.startStep("backfill_pit");
       try {
         const backfillResult = await runBackfillPitSubprocess(date);

@@ -67,7 +67,7 @@ import {
 import { calculateOpponentLineupKPct } from "./src/utils/lineupMetrics";
 import { isFinalGameStatus, isNonActionableGameStatus } from "./src/utils/gameStatus";
 import { buildKlabTrainingDataset, validateKlabDateRange } from "./src/datasets/klabTrainingDataset";
-import { registerCronPipelineRoutes } from "./src/routes/cronPipelineRoutes";
+import { registerCronPipelineRoutes, runBackfillPitSubprocess } from "./src/routes/cronPipelineRoutes";
 import { registerKPropsLineHistoryRoutes } from "./src/routes/kPropsLineHistoryRoutes";
 
 const app = express();
@@ -5589,6 +5589,36 @@ app.post("/api/harvest", async (req, res) => {
     writeGamesDB(db);
     writeErrorsDB(errorsCollection);
     console.log(`[ETL Timing] Extracción ${date}: ${Date.now() - harvestStartedAt}ms para ${harvestedGames.length} juegos.`);
+
+    // Sept. 2026: además de guardar los juegos, aprovechamos que ya sabemos qué
+    // fecha se acaba de extraer para completar de una vez su cobertura PIT
+    // (point-in-time) de pitcheo/ofensiva — antes había que acordarse de correr
+    // backfill_pitcher_stats_pit.py aparte después de cada extracción manual, lo
+    // cual se olvidaba fácil y dejaba las columnas home/away_pitcher_* vacías en
+    // el CSV para los días recién extraídos (ver auditoría con el usuario).
+    // Mismo helper que ya usa el pipeline de cron (/api/cron/run-daily-pipeline),
+    // así que es idempotente: si esos juegos ya tenían cobertura, el script los
+    // salta casi instantáneo. Si este paso falla (p.ej. python3 no disponible en
+    // este entorno), NO se aborta la extracción — ya quedó guardada bien — solo
+    // se deja constancia del error, igual que hace el pipeline de cron.
+    emit({ phase: "backfill_pit", step: "Actualizando estadísticas point-in-time (PIT) de pitcheo/ofensiva...", pct: 96 });
+    try {
+      const backfillResult = await runBackfillPitSubprocess(date);
+      console.log(`[ETL] Backfill PIT para ${date} completado.`);
+      emit({ phase: "backfill_pit", step: "Cobertura PIT actualizada.", pct: 99 });
+    } catch (backfillErr) {
+      console.error(`[ETL] Backfill PIT para ${date} falló (la extracción ya quedó guardada):`, backfillErr);
+      errorsCollection.push({
+        id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        timestamp: new Date().toISOString(),
+        gameId: "N/A",
+        source: "BackfillPIT",
+        message: `No se pudo actualizar la cobertura PIT para ${date}: ${backfillErr instanceof Error ? backfillErr.message : String(backfillErr)}`,
+        severity: "medium",
+      });
+      writeErrorsDB(errorsCollection);
+      emit({ phase: "backfill_pit", step: "No se pudo actualizar la cobertura PIT (ver errores) — la extracción sí quedó guardada.", pct: 99 });
+    }
 
     // Final SSE event with all results
     emit({
