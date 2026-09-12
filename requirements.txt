@@ -1,2 +1,1 @@
-pybaseball
-pandas
+requests
