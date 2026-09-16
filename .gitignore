@@ -7,6 +7,8 @@ coverage/
 .env*
 !.env.example
 mlb_database.json
+mlb_database.json.migrated
+games_db/
 mlb_errors.json
 pbp.json
 

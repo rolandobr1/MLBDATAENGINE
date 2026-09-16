@@ -484,15 +484,43 @@ export default function App() {
     autoHarvestAttemptedRef.current = true;
     let cancelled = false;
 
+    // Sept. 2026 — encontrado probando la app en vivo justo después de un
+    // redeploy: /api/games?date=hoy puede responder dateExtracted:false una sola
+    // vez aunque el día ya esté guardado (el servidor arranca aceptando tráfico
+    // ANTES de que runStartupFirestoreSync/ensureAnonymousAuth terminen en segundo
+    // plano — ver los comentarios en server.ts; ese mismo hueco ya había dado el
+    // bug de caché negativo del 2026-09-09 documentado en firestoreService.ts).
+    // Antes, este chequeo confiaba en esa UNA respuesta y, si venía vacía,
+    // lanzaba de una un harvest completo — redundante y de varios minutos si el
+    // día ya estaba extraído de verdad. Ahora se reintenta un par de veces con
+    // una pausa corta antes de darlo por "nunca extraído": el costo (unos
+    // segundos) es insignificante comparado con repetir un harvest completo por
+    // un hueco transitorio.
+    const checkDateExtracted = async (today: string): Promise<boolean> => {
+      const res = await fetch(`/api/games?date=${today}&_=${Date.now()}`);
+      if (!res.ok) throw new Error(`/api/games respondió ${res.status}`);
+      const data = await res.json();
+      return data.dateExtracted === true || (data.games || []).length > 0;
+    };
+
     const autoHarvestToday = async () => {
       const today = getLocalDateString();
+      const RETRY_DELAYS_MS = [4000, 6000]; // reintentos tras la primera respuesta vacía
       try {
-        const res = await fetch(`/api/games?date=${today}&_=${Date.now()}`);
-        if (!res.ok || cancelled) return;
-        const data = await res.json();
-        if (cancelled || data.dateExtracted === true || (data.games || []).length > 0) return;
+        if (await checkDateExtracted(today)) return;
+        if (cancelled) return;
 
-        console.log(`[Auto-Harvest] No hay extracción para ${today}; iniciando ETL automáticamente.`);
+        for (const delayMs of RETRY_DELAYS_MS) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          if (cancelled) return;
+          if (await checkDateExtracted(today)) {
+            console.log(`[Auto-Harvest] ${today} sí estaba extraído — el primer chequeo fue un falso vacío transitorio, se evitó un harvest redundante.`);
+            return;
+          }
+        }
+        if (cancelled) return;
+
+        console.log(`[Auto-Harvest] No hay extracción para ${today} tras ${RETRY_DELAYS_MS.length + 1} intentos; iniciando ETL automáticamente.`);
         setSelectedDate(today);
         await handleHarvest(today, true);
       } catch (err) {

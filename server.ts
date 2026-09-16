@@ -89,10 +89,37 @@ app.get("/health", (req, res) => {
 });
 
 const PORT = Number(process.env.PORT || 3001);
-const DB_PATH = path.join(process.cwd(), "mlb_database.json");
+// Sept. 2026 — arreglo de fondo tras confirmar por los logs de Render un crash real
+// de Node ("JavaScript heap out of memory", exit 134) a mitad de una extracción de
+// 15 juegos. Causa encontrada: el patrón de "checkpoint" del harvest (una vez POR
+// JUEGO) hacía `readGamesDB()`/`writeGamesDB()` sobre `mlb_database.json` completo
+// (~213MB con el historial local del usuario) — es decir, ~15 lecturas + 15
+// escrituras completas del archivo entero solo para persistir el progreso de UN día.
+// Se reemplaza el archivo único por un directorio `games_db/` con un archivo JSON
+// por fecha (`games_db/<fecha>.json`, solo el array de juegos de esa fecha) más un
+// índice liviano `games_db/_index.json` (por fecha: cuántos juegos y sus IDs, sin el
+// contenido completo) que permite listar/contar fechas sin cargar nada pesado.
+// `readGamesDB()`/`writeGamesDB()` mantienen la misma firma externa que ya usan
+// ~30 sitios de este archivo y varios de src/routes|services (Record<string, any[]>),
+// pero por dentro `readGamesDB()` ahora devuelve un Proxy que carga cada fecha del
+// disco solo la primera vez que se accede a esa clave puntual (`db[fecha]`), y
+// `writeGamesDB()` escribe a disco únicamente las fechas que de verdad se
+// modificaron durante esa llamada (rastreadas vía el trap `set` del Proxy) en vez
+// de reserializar y reescribir el objeto entero. Ver también el comentario en
+// `mergeGamesIntoLocalDB` (más abajo) y en el chequeo de game_id duplicados dentro
+// del harvest — ambos hacían operaciones que habrían forzado al Proxy a cargar todo
+// el historial de todos modos, y se reescribieron para usar el índice liviano.
+const DB_PATH = path.join(process.cwd(), "mlb_database.json"); // archivo legado; solo se lee una vez para migrar a games_db/
+const GAMES_DB_DIR = path.join(process.cwd(), "games_db");
+const GAMES_INDEX_PATH = path.join(GAMES_DB_DIR, "_index.json");
 const ERRORS_PATH = path.join(process.cwd(), "mlb_errors.json");
-let gamesDbCache: Record<string, any[]> | null = null;
-let gamesDbCacheMtime = 0;
+type GamesIndex = Record<string, { count: number; gameIds: string[] }>;
+let gamesIndexCache: GamesIndex | null = null;
+// Por fecha, qué Proxy(es) de `readGamesDB()` tienen esa fecha marcada como
+// "modificada" (vía su trap `set`) desde la última vez que se llamó `writeGamesDB`
+// con ese mismo Proxy — así `writeGamesDB` sabe qué archivos de fecha escribir sin
+// tener que comparar el objeto entero contra el disco.
+const gamesDbDirtyKeys = new WeakMap<object, Set<string>>();
 let latestFirestoreRestoreInFlight: Promise<void> | null = null;
 const oddsApiBackfillsInFlight = new Set<string>();
 const harvestDatesInFlight = new Set<string>();
@@ -105,29 +132,202 @@ let firestoreRangeSyncInFlight = false;
 // tener que recurrir a un forceRebuild manual de toda la fecha.
 const REVERIFY_COOLDOWN_DAYS = 3;
 
-// Ensure files exist
-if (!fs.existsSync(DB_PATH)) {
-  fs.writeFileSync(DB_PATH, JSON.stringify({}, null, 2));
-}
 if (!fs.existsSync(ERRORS_PATH)) {
   fs.writeFileSync(ERRORS_PATH, JSON.stringify([], null, 2));
 }
 
-// DB Helper Functions
-function readGamesDB(): Record<string, any[]> {
+function gamesDateFilePath(date: string): string {
+  return path.join(GAMES_DB_DIR, `${date}.json`);
+}
+
+function loadGamesIndex(): GamesIndex {
+  if (gamesIndexCache) return gamesIndexCache;
   try {
-    const stat = fs.statSync(DB_PATH);
-    if (gamesDbCache && stat.mtimeMs === gamesDbCacheMtime) {
-      return gamesDbCache;
+    if (fs.existsSync(GAMES_INDEX_PATH)) {
+      gamesIndexCache = JSON.parse(fs.readFileSync(GAMES_INDEX_PATH, "utf-8"));
+    } else {
+      gamesIndexCache = {};
     }
-    const raw = fs.readFileSync(DB_PATH, "utf-8");
-    gamesDbCache = JSON.parse(raw);
-    gamesDbCacheMtime = stat.mtimeMs;
-    return gamesDbCache || {};
   } catch (err) {
-    console.error("Error reading database:", err);
-    return {};
+    console.error("[GamesDB] Error leyendo games_db/_index.json, se reconstruye vacío:", err);
+    gamesIndexCache = {};
   }
+  return gamesIndexCache!;
+}
+
+function persistGamesIndex(): void {
+  try {
+    fs.mkdirSync(GAMES_DB_DIR, { recursive: true });
+    fs.writeFileSync(GAMES_INDEX_PATH, JSON.stringify(loadGamesIndex()));
+  } catch (err) {
+    console.error("[GamesDB] Error escribiendo games_db/_index.json:", err);
+  }
+}
+
+function gameIdOf(game: any): string {
+  return String(game?.id ?? game?.metadata?.id ?? "");
+}
+
+// Actualiza SOLO la entrada en memoria del índice (rápido); quien llame decide
+// cuándo persistir a disco con `persistGamesIndex()` (evita reescribir el índice
+// una vez por cada fecha en un loop de migración/merge masivo).
+function updateGamesIndexEntry(date: string, games: any[]): void {
+  const idx = loadGamesIndex();
+  const arr = Array.isArray(games) ? games : [];
+  idx[date] = { count: arr.length, gameIds: arr.map(gameIdOf).filter(Boolean) };
+}
+
+/** Devuelve la(s) fecha(s) del índice cuyo `gameIds` incluye este ID, sin cargar contenido completo. */
+function findDatesForGameId(gameId: string, excludeDate?: string): string[] {
+  const idx = loadGamesIndex();
+  const result: string[] = [];
+  for (const d of Object.keys(idx)) {
+    if (excludeDate && d === excludeDate) continue;
+    if (idx[d]?.gameIds?.includes(gameId)) result.push(d);
+  }
+  return result;
+}
+
+// Lee/escribe el array de juegos de UNA fecha puntual — nunca toca el resto del
+// historial. Un array vacío borra el archivo de esa fecha (no hace falta persistir
+// "[]" en disco), pero la fecha se mantiene en el índice para preservar la semántica
+// original de `hasOwnProperty(db, fecha)` === "esta fecha ya fue extraída" incluso
+// cuando la extracción dio 0 juegos.
+function readGamesForDateRaw(date: string): any[] {
+  try {
+    const p = gamesDateFilePath(date);
+    if (!fs.existsSync(p)) return [];
+    const parsed = JSON.parse(fs.readFileSync(p, "utf-8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.error(`[GamesDB] Error leyendo games_db/${date}.json:`, err);
+    return [];
+  }
+}
+
+function writeGamesForDateRaw(date: string, games: any[]): void {
+  try {
+    fs.mkdirSync(GAMES_DB_DIR, { recursive: true });
+    const arr = Array.isArray(games) ? games : [];
+    const p = gamesDateFilePath(date);
+    if (arr.length === 0) {
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    } else {
+      fs.writeFileSync(p, JSON.stringify(arr));
+    }
+    updateGamesIndexEntry(date, arr);
+  } catch (err) {
+    console.error(`[GamesDB] Error escribiendo games_db/${date}.json:`, err);
+  }
+}
+
+// Migra `mlb_database.json` (formato legado, un solo archivo gigante) a
+// `games_db/` una sola vez. En Render esto normalmente no encuentra nada que
+// migrar (el disco es efímero y se restaura desde Firestore en cada arranque —
+// ver `runStartupFirestoreSync`), pero sí importa para quien corra el server
+// localmente con su copia histórica en `mlb_database.json`.
+function migrateLegacyDatabaseIfNeeded(): void {
+  try {
+    if (fs.existsSync(GAMES_INDEX_PATH)) return; // ya migrado en una corrida anterior
+    if (!fs.existsSync(DB_PATH)) return; // nada que migrar
+    console.log("[GamesDB] Migrando mlb_database.json a games_db/ (una sola vez)...");
+    const legacy = JSON.parse(fs.readFileSync(DB_PATH, "utf-8")) as Record<string, any[]>;
+    fs.mkdirSync(GAMES_DB_DIR, { recursive: true });
+    let totalGames = 0;
+    for (const date of Object.keys(legacy)) {
+      const games = Array.isArray(legacy[date]) ? legacy[date] : [];
+      if (games.length > 0) fs.writeFileSync(gamesDateFilePath(date), JSON.stringify(games));
+      updateGamesIndexEntry(date, games);
+      totalGames += games.length;
+    }
+    persistGamesIndex();
+    const backupPath = `${DB_PATH}.migrated`;
+    try {
+      fs.renameSync(DB_PATH, backupPath);
+    } catch (renameErr) {
+      console.error("[GamesDB] Migración completa, pero no se pudo renombrar mlb_database.json original:", renameErr);
+    }
+    console.log(`[GamesDB] Migración completa: ${Object.keys(legacy).length} fecha(s), ${totalGames} juego(s) movidos a games_db/. Original respaldado como mlb_database.json.migrated.`);
+  } catch (err) {
+    console.error("[GamesDB] Error migrando mlb_database.json a games_db/ — se continúa con games_db/ vacío:", err);
+  }
+}
+migrateLegacyDatabaseIfNeeded();
+
+// DB Helper Functions
+//
+// `readGamesDB()` devuelve un Proxy que se comporta como el viejo
+// `Record<string, any[]>` para todo el código existente (`db[fecha]`,
+// `db[fecha] = x`, `Object.keys(db)`, `for...in db`, `Object.values(db)`,
+// `Object.prototype.hasOwnProperty.call(db, fecha)`), pero por dentro:
+//   - `get`: si la fecha no fue cargada aún en este Proxy, la carga UNA vez desde
+//     `games_db/<fecha>.json` (vía el índice, sin tocar otras fechas) y la cachea
+//     en el propio Proxy para el resto de esta llamada.
+//   - `set`: además de guardar el valor, marca esa fecha como "sucia" para este
+//     Proxy puntual (vía `gamesDbDirtyKeys`) y actualiza el índice en memoria.
+//   - `ownKeys`/`getOwnPropertyDescriptor`/`has`: consultan el índice liviano
+//     (nombres de fecha + conteos), NUNCA el contenido completo — así
+//     `Object.keys(db)`/`for...in db`/`hasOwnProperty` siguen siendo baratos.
+//     Solo `Object.values(db)` o un spread (`{...db}`) fuerzan una carga de TODAS
+//     las fechas, porque ahí sí hace falta el contenido — evitar ese patrón en
+//     código que corre por juego/por request es precisamente lo que arregla este
+//     cambio (ver `mergeGamesIntoLocalDB` más abajo).
+function createGamesDbProxy(): Record<string, any[]> {
+  const target: Record<string, any[]> = {};
+  const dirty = new Set<string>();
+
+  const proxy: Record<string, any[]> = new Proxy(target, {
+    get(t, prop, receiver) {
+      if (typeof prop !== "string") return Reflect.get(t, prop, receiver);
+      if (Object.prototype.hasOwnProperty.call(t, prop)) return (t as any)[prop];
+      if (!Object.prototype.hasOwnProperty.call(loadGamesIndex(), prop)) return undefined;
+      const loaded = readGamesForDateRaw(prop);
+      // Se define directo sobre el target (no vía el Proxy) para que esta carga
+      // perezosa NO se marque como "sucia" — es solo caché de lectura.
+      Object.defineProperty(t, prop, { value: loaded, writable: true, enumerable: true, configurable: true });
+      return loaded;
+    },
+    set(t, prop, value, receiver) {
+      if (typeof prop !== "string") return Reflect.set(t, prop, value, receiver);
+      Reflect.set(t, prop, value, receiver);
+      dirty.add(prop);
+      updateGamesIndexEntry(prop, Array.isArray(value) ? value : []);
+      return true;
+    },
+    has(t, prop) {
+      if (typeof prop !== "string") return Reflect.has(t, prop);
+      return Object.prototype.hasOwnProperty.call(t, prop) || Object.prototype.hasOwnProperty.call(loadGamesIndex(), prop);
+    },
+    deleteProperty(t, prop) {
+      if (typeof prop === "string") {
+        dirty.add(prop);
+        updateGamesIndexEntry(prop, []);
+        delete loadGamesIndex()[prop];
+      }
+      return Reflect.deleteProperty(t, prop);
+    },
+    ownKeys(t) {
+      const keys = new Set<string>([...Object.keys(loadGamesIndex()), ...Object.keys(t)]);
+      return Array.from(keys);
+    },
+    getOwnPropertyDescriptor(t, prop) {
+      if (typeof prop === "string" && (Object.prototype.hasOwnProperty.call(t, prop) || Object.prototype.hasOwnProperty.call(loadGamesIndex(), prop))) {
+        return { enumerable: true, configurable: true, writable: true, value: (t as any)[prop] };
+      }
+      return Reflect.getOwnPropertyDescriptor(t, prop);
+    },
+  });
+  // Se indexa por el Proxy en sí (lo que de verdad recibe `writeGamesDB`), no por
+  // `target` — un error acá (indexar por `target`) haría que `writeGamesDB` nunca
+  // encontrara el set de "sucios" para el objeto que realmente le pasan, cayendo
+  // siempre al camino de respaldo (tratar TODAS las claves como si hubiera que
+  // reescribirlas), que es exactamente lo que este cambio busca evitar.
+  gamesDbDirtyKeys.set(proxy, dirty);
+  return proxy;
+}
+
+function readGamesDB(): Record<string, any[]> {
+  return createGamesDbProxy();
 }
 
 let pitLookupsCache: PITLookups | null = null;
@@ -165,19 +365,33 @@ function readPitLookups(): PITLookups {
   return result;
 }
 
-function writeGamesDB(data: Record<string, any[]>) {
+// Escribe SOLO lo que de verdad cambió. Si `data` es el Proxy que devuelve
+// `readGamesDB()`, se apoya en el set de "fechas sucias" que ese Proxy fue
+// acumulando (vía su trap `set`) para escribir nada más esos archivos de fecha —
+// el resto del historial ni se toca ni se vuelve a serializar. Si `data` es un
+// objeto plano cualquiera (ej. un mock de test, o código nuevo que arme su propio
+// `Record<string, any[]>` a mano), se cae al comportamiento de respaldo de escribir
+// todas sus claves — sigue siendo mucho más barato que antes porque cada clave es
+// un archivo de fecha chico, no el historial completo.
+function writeGamesDB(data: Record<string, any[]>): void {
   try {
-    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-    const stat = fs.statSync(DB_PATH);
-    gamesDbCache = data;
-    gamesDbCacheMtime = stat.mtimeMs;
+    const dirty = gamesDbDirtyKeys.get(data as object);
+    const datesToWrite = dirty ? Array.from(dirty) : Object.keys(data);
+    for (const date of datesToWrite) {
+      writeGamesForDateRaw(date, (data as any)[date] || []);
+    }
+    dirty?.clear();
+    persistGamesIndex();
   } catch (err) {
     console.error("Error writing database:", err);
   }
 }
 
-function countLocalGames(db: Record<string, any[]>): number {
-  return Object.values(db).reduce((total, games) => total + (Array.isArray(games) ? games.length : 0), 0);
+// O(fechas) sobre el índice liviano, nunca sobre el contenido completo de los
+// juegos — seguro de llamar en un hot path como `/api/games`.
+function countLocalGames(_db?: Record<string, any[]>): number {
+  const idx = loadGamesIndex();
+  return Object.values(idx).reduce((total, entry) => total + (entry?.count || 0), 0);
 }
 
 function restoreLatestFromFirestoreInBackground(reason: string) {
@@ -198,31 +412,45 @@ function restoreLatestFromFirestoreInBackground(reason: string) {
   return latestFirestoreRestoreInFlight;
 }
 
+// Sept. 2026 — reescrito como parte del arreglo de memoria (ver comentario junto a
+// `DB_PATH`). Antes hacía `{ ...localDB }`: con `localDB` como Proxy perezoso, ese
+// spread por sí solo habría forzado la carga de TODAS las fechas del historial
+// (el spread lee cada clave propia enumerable), exactamente lo que este cambio
+// busca evitar — y esta función se llama seguido (cada restauración desde
+// Firestore, cada `/api/games` en frío, el sync de rango, etc.). Ahora se agrupan
+// los juegos entrantes por fecha primero, y solo se toca (carga + reescribe) la
+// fecha puntual de cada grupo — el resto del historial nunca se lee.
 function mergeGamesIntoLocalDB(games: any[]): { games: number; dates: number } {
-  const localDB = readGamesDB();
-  const mergedDB: Record<string, any[]> = { ...localDB };
-
+  const db = readGamesDB();
+  const gamesByDate = new Map<string, any[]>();
   for (const game of games) {
     const date = game?.metadata?.date;
-    const id = String(game?.id || game?.metadata?.id || "");
+    const id = gameIdOf(game);
     if (!date || !id) continue;
-
-    const dateGames = Array.isArray(mergedDB[date]) ? [...mergedDB[date]] : [];
-    const existingIndex = dateGames.findIndex((g: any) => String(g?.id || g?.metadata?.id || "") === id);
-
-    if (existingIndex === -1) {
-      dateGames.push(game);
-    } else {
-      const localGame = dateGames[existingIndex];
-      dateGames[existingIndex] = pickSyncedGame(game, localGame);
-    }
-
-    mergedDB[date] = dateGames;
+    if (!gamesByDate.has(date)) gamesByDate.set(date, []);
+    gamesByDate.get(date)!.push(game);
   }
 
-  writeGamesDB(mergedDB);
-  const dates = Object.keys(mergedDB).filter(date => Array.isArray(mergedDB[date]) && mergedDB[date].length > 0);
-  return { games: games.length, dates: dates.length };
+  for (const [date, incomingGames] of gamesByDate) {
+    const dateGames = Array.isArray(db[date]) ? [...db[date]] : [];
+    for (const game of incomingGames) {
+      const id = gameIdOf(game);
+      const existingIndex = dateGames.findIndex((g: any) => gameIdOf(g) === id);
+      if (existingIndex === -1) {
+        dateGames.push(game);
+      } else {
+        dateGames[existingIndex] = pickSyncedGame(game, dateGames[existingIndex]);
+      }
+    }
+    db[date] = dateGames;
+  }
+
+  writeGamesDB(db);
+  // Antes esto era "cuántas fechas en TODO el historial local tienen juegos"
+  // (subproducto accidental del spread de arriba); lo que de verdad describen los
+  // logs que lo usan ("Ventana X..Y restaurada: N juegos en {dates} fecha(s)") es
+  // cuántas fechas distintas trajo ESTA fusión puntual, que es lo que se devuelve ahora.
+  return { games: games.length, dates: gamesByDate.size };
 }
 
 // Encontrado (sept. 2026): a diferencia de `/api/games`, todos los endpoints de
@@ -1409,10 +1637,14 @@ app.post("/api/firestore/sync-local-range", async (req, res) => {
 app.get("/api/game/:gameId", async (req, res) => {
   try {
     const { gameId } = req.params;
-    const db = readGamesDB();
+    // Sept. 2026: antes recorría `for (const date in db)` — con un Proxy perezoso eso
+    // habría forzado a cargar el contenido completo de TODAS las fechas del
+    // historial solo para buscar un juego por ID. El índice liviano ya sabe en qué
+    // fecha(s) aparece cada ID sin necesidad de leer contenido, así que solo se
+    // cargan de disco la(s) fecha(s) candidata(s).
     let gameData = null;
-    for (const date in db) {
-      const found = db[date]?.find((g: any) => String(g.id) === gameId);
+    for (const candidateDate of findDatesForGameId(gameId)) {
+      const found = readGamesForDateRaw(candidateDate).find((g: any) => String(g.id) === gameId);
       if (found) {
         gameData = found;
         break;
@@ -1438,14 +1670,16 @@ app.get("/api/game/:gameId/csv", async (req, res) => {
     const { gameId } = req.params;
     const { date } = req.query;
     if (date && typeof date === "string") await ensureDateLoadedForExport(date);
-    const db = readGamesDB();
     const candidateGames: MLBGame[] = [];
 
-    if (date && db[String(date)]) {
-      candidateGames.push(...db[String(date)]);
+    if (date) {
+      candidateGames.push(...(readGamesDB()[String(date)] || []));
     } else {
-      for (const games of Object.values(db) as MLBGame[][]) {
-        candidateGames.push(...games);
+      // Sept. 2026: sin `date`, antes se hacía `Object.values(db)` — forzaba la
+      // carga de TODO el historial. Igual que en `/api/game/:gameId`, se usa el
+      // índice liviano para encontrar solo la(s) fecha(s) donde de verdad está este ID.
+      for (const candidateDate of findDatesForGameId(String(gameId))) {
+        candidateGames.push(...readGamesForDateRaw(candidateDate));
       }
     }
 
@@ -6056,11 +6290,20 @@ app.post("/api/harvest", async (req, res) => {
     // si MLB pospuso/reprogramó el juego o si es un juego suspendido-y-reanudado que
     // la propia API de MLB lista bajo dos fechas), solo se alerta para revisión manual.
     // Ver auditoría §4.3 / PLAN_DE_MEJORA_MLBDATAENGINE.md Fase 2.2.
+    //
+    // Sept. 2026: antes esto era `for (const otherDate of Object.keys(db))` leyendo
+    // `db[otherDate]` completo para CADA juego recién extraído — con el historial
+    // completo (200+ fechas) eso significaba releer todo el contenido de todas las
+    // fechas, una vez por juego, en cada extracción (el mismo problema de memoria que
+    // el checkpoint de arriba, solo que aquí ni siquiera hacía falta: alcanza con
+    // saber si el ID ya aparece en OTRA fecha, y eso ya lo sabe el índice liviano sin
+    // cargar contenido). Ahora se consulta primero `findDatesForGameId` (índice, sin
+    // contenido) y solo se carga el archivo completo de una fecha puntual cuando de
+    // verdad hay un candidato a duplicado — algo que en la práctica casi nunca pasa.
     for (const newGame of harvestedGames) {
       const newGameId = String(newGame.id);
-      for (const otherDate of Object.keys(db)) {
-        if (otherDate === date) continue;
-        const otherGames: any[] = Array.isArray(db[otherDate]) ? db[otherDate] : [];
+      for (const otherDate of findDatesForGameId(newGameId, date)) {
+        const otherGames = readGamesForDateRaw(otherDate);
         const clash = otherGames.find((g: any) => String(g?.id) === newGameId);
         if (clash) {
           const msg = `[DUPLICADO game_id] ${newGameId} ya existe bajo la fecha ${otherDate} (status=${clash?.game_result?.gameStatus ?? "?"}) y se está guardando también bajo ${date} (status=${newGame?.game_result?.gameStatus ?? "?"}). Revisar manualmente cuál fecha es la vigente.`;
@@ -6907,7 +7150,11 @@ async function startServer() {
         watch: process.env.DISABLE_HMR === 'true' ? null : {
           ignored: [
             '**/mlb_*.json', '**/datastreak_*.json', '**/odds_*.json', '**/savant_*.json',
-            '**/games_db*.json', '**/boxscore_*.json', '**/pitcher_stats_*.json', '**/offense_stats_*.json',
+            // Sept. 2026: `games_db*.json` (el patrón viejo, de antes de este cambio)
+            // no cubre nada dentro de una carpeta — se agrega `games_db/**` para
+            // ignorar de verdad los archivos por fecha + el índice liviano que ahora
+            // reemplazan a `mlb_database.json` (ver comentario junto a `DB_PATH`).
+            '**/games_db*.json', '**/games_db/**', '**/boxscore_*.json', '**/pitcher_stats_*.json', '**/offense_stats_*.json',
             '**/cache/**', '**/datasets/**', '**/*.csv', '**/server.mjs', '**/dev-server.log',
           ],
         }
