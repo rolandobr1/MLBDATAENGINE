@@ -3320,42 +3320,56 @@ async function fetchPitcherHandsBatch(pitcherIds: number[]): Promise<Map<number,
 async function fetchTeamGamesVsHand(
   teamId: number, asOfDate: string, season: string
 ): Promise<{ gamePk: number; date: string; hand: "R" | "L"; myRuns: number | null }[]> {
-  const seasonStart = `${season}-03-01`;
-  const cutoff = (() => {
-    const d = new Date(`${asOfDate}T00:00:00Z`);
-    d.setUTCDate(d.getUTCDate() - 1);
-    return d.toISOString().split("T")[0];
-  })();
-  if (cutoff < seasonStart) return [];
+  // Sept. 2026 — encontrado probando la app en vivo: esta función se llamaba sin
+  // try/catch en dos sitios (el loop principal de /api/harvest y updateSingleGameData).
+  // Si fetchWithTimeout expiraba (10s) o el fetch fallaba por cualquier razón, la
+  // excepción no se atrapaba en ningún lado y subía hasta el catch general de
+  // /api/harvest, que abortaba TODA la extracción del día con "Error general: This
+  // operation was aborted" — visto en vivo deteniendo la extracción de hoy en el
+  // juego 3 de 15. Se envuelve todo el cuerpo aquí para que cualquier llamador quede
+  // protegido automáticamente (falla de un solo equipo = splits vacíos para ese
+  // equipo, no un harvest completo abortado).
+  try {
+    const seasonStart = `${season}-03-01`;
+    const cutoff = (() => {
+      const d = new Date(`${asOfDate}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() - 1);
+      return d.toISOString().split("T")[0];
+    })();
+    if (cutoff < seasonStart) return [];
 
-  const url = `https://statsapi.mlb.com/api/v1/schedule?teamId=${teamId}&startDate=${seasonStart}&endDate=${cutoff}&sportId=1&gameType=R`;
-  const res = await fetchWithTimeout(url, 10000);
-  if (!res.ok) return [];
-  const data = await res.json();
+    const url = `https://statsapi.mlb.com/api/v1/schedule?teamId=${teamId}&startDate=${seasonStart}&endDate=${cutoff}&sportId=1&gameType=R`;
+    const res = await fetchWithTimeout(url, 10000);
+    if (!res.ok) return [];
+    const data = await res.json();
 
-  const rows: { gamePk: number; date: string; opponentPitcherId: number; myRuns: number | null }[] = [];
-  for (const d of data.dates || []) {
-    for (const g of d.games || []) {
-      if (g.status?.abstractGameState !== "Final" || !g.gamePk) continue;
-      const isHome = g.teams?.home?.team?.id === teamId;
-      const mySide = isHome ? g.teams?.home : g.teams?.away;
-      const oppSide = isHome ? g.teams?.away : g.teams?.home;
-      const opponentPitcherId = oppSide?.probablePitcher?.id;
-      if (opponentPitcherId) {
-        rows.push({
-          gamePk: g.gamePk, date: d.date, opponentPitcherId,
-          myRuns: typeof mySide?.score === "number" ? mySide.score : null,
-        });
+    const rows: { gamePk: number; date: string; opponentPitcherId: number; myRuns: number | null }[] = [];
+    for (const d of data.dates || []) {
+      for (const g of d.games || []) {
+        if (g.status?.abstractGameState !== "Final" || !g.gamePk) continue;
+        const isHome = g.teams?.home?.team?.id === teamId;
+        const mySide = isHome ? g.teams?.home : g.teams?.away;
+        const oppSide = isHome ? g.teams?.away : g.teams?.home;
+        const opponentPitcherId = oppSide?.probablePitcher?.id;
+        if (opponentPitcherId) {
+          rows.push({
+            gamePk: g.gamePk, date: d.date, opponentPitcherId,
+            myRuns: typeof mySide?.score === "number" ? mySide.score : null,
+          });
+        }
       }
     }
-  }
-  if (rows.length === 0) return [];
+    if (rows.length === 0) return [];
 
-  const hands = await fetchPitcherHandsBatch(rows.map(r => r.opponentPitcherId));
-  return rows.map(r => ({
-    gamePk: r.gamePk, date: r.date, myRuns: r.myRuns,
-    hand: hands.get(r.opponentPitcherId) || "R",
-  }));
+    const hands = await fetchPitcherHandsBatch(rows.map(r => r.opponentPitcherId));
+    return rows.map(r => ({
+      gamePk: r.gamePk, date: r.date, myRuns: r.myRuns,
+      hand: hands.get(r.opponentPitcherId) || "R",
+    }));
+  } catch (error) {
+    console.warn(`⚠️ fetchTeamGamesVsHand falló para teamId=${teamId} (${asOfDate}): ${error instanceof Error ? error.message : String(error)}`);
+    return [];
+  }
 }
 
 async function fetchTeamRunsPerGameVsHand(teamId: number, asOfDate: string, season: string): Promise<{ vsRhp: number | null; vsLhp: number | null }> {

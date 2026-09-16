@@ -55,6 +55,26 @@ service cloud.firestore {
       allow delete: if isSignedIn() && isValidId(gameId);
     }
 
+    // Sept. 2026 — encontrado probando la app en vivo: saveGameData (firestoreService.ts)
+    // escribe 3 cosas por juego — el doc principal en games/{gameId} (cubierto arriba),
+    // un snapshot histórico en games/{gameId}/snapshots/{timestamp}, y el documento
+    // liviano metadata/extracted_dates (con arrayUnion de fechas) — pero SOLO el
+    // primero tenía una regla. Los otros dos caían en el "Global Safety Net" (niega
+    // todo por default) y fallaban con PERMISSION_DENIED en cada guardado, sin
+    // frenar la extracción (el doc principal sí se guardaba) pero disparando 3
+    // reintentos con backoff por juego en saveGameDataReliably — esto es lo que se
+    // sentía como que la extracción se quedaba "enganchada".
+    match /games/{gameId}/snapshots/{snapshotId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+    match /metadata/{docId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
     // Bet tracking data grouped by date, for example mlb_bets/2026-06-17.
     match /mlb_bets/{dateId} {
       allow read: if isSignedIn() && dateId.matches('^\\d{4}-\\d{2}-\\d{2}$');
