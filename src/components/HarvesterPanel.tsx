@@ -9,8 +9,8 @@ import { MLBGame } from "../types";
 import { isFinalGameStatus, isNonActionableGameStatus } from "../utils/gameStatus";
 
 interface HarvesterPanelProps {
-  onHarvest: (date: string, refreshOdds: boolean) => void;
-  onBatchHarvest?: (startDate: string, endDate: string, refreshOdds: boolean) => void;
+  onHarvest: (date: string, refreshOdds: boolean, forceRebuild?: boolean) => void;
+  onBatchHarvest?: (startDate: string, endDate: string, refreshOdds: boolean, forceRebuild?: boolean) => void;
   /** Botón independiente de "Actualizar Extracción ETL" (sept. 2026): dispara
    * /api/harvest-live para la fecha seleccionada — solo refresca marcador,
    * boxscore y jugada por jugada de los juegos que ya arrancaron, sin rehacer
@@ -71,12 +71,21 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
   const [refreshOdds, setRefreshOdds] = React.useState(false);
   const [isBatchMode, setIsBatchMode] = React.useState(false);
   const [batchEndDate, setBatchEndDate] = React.useState(new Date().toISOString().split("T")[0]);
+  // Sept. 2026 — pedido del usuario: los juegos históricos ya "Final" y con
+  // cobertura PIT se tratan como inmutables en /api/harvest (no se vuelven a
+  // pasar por fetchRealMLBGameData, ver server.ts) para no re-golpear la API
+  // de MLB en cada extracción. Eso es correcto la mayoría del tiempo, pero
+  // significa que un fix de código nuevo (ej. lineup_confirmed) nunca llega
+  // solo a esos días viejos — hace falta poder forzar la reconstrucción. Antes
+  // esto solo existía como flag `force` de /api/harvest, sin ningún control en
+  // la interfaz.
+  const [forceRebuild, setForceRebuild] = React.useState(false);
 
   const runHarvest = () => {
     if (isBatchMode && onBatchHarvest) {
-      onBatchHarvest(selectedDate, batchEndDate, refreshOdds);
+      onBatchHarvest(selectedDate, batchEndDate, refreshOdds, forceRebuild);
     } else {
-      onHarvest(selectedDate, refreshOdds);
+      onHarvest(selectedDate, refreshOdds, forceRebuild);
     }
   };
 
@@ -236,6 +245,21 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
                 </label>
               </div>
             )}
+
+            <div className="flex items-center gap-2 mt-2 p-2 bg-red-50 border border-red-200 rounded-lg">
+              <input
+                type="checkbox"
+                id="forceRebuildCheck"
+                checked={forceRebuild}
+                onChange={(e) => setForceRebuild(e.target.checked)}
+                className="w-4 h-4 text-red-600 rounded border-red-300 focus:ring-red-500"
+              />
+              <label htmlFor="forceRebuildCheck" className="text-xs text-red-800 font-medium cursor-pointer">
+                Forzar reconstrucción {isBatchMode
+                  ? "(vuelve a extraer TODO el rango desde cero, incluso lo ya guardado — más lento y consume más llamadas a la API de MLB)"
+                  : "(vuelve a extraer este día aunque ya esté guardado y finalizado)"}
+              </label>
+            </div>
           </div>
 
           {/* Botón de extracción + progreso: ahora debajo de la configuración

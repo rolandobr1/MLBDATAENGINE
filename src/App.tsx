@@ -400,7 +400,7 @@ export default function App() {
   }, [games, selectedDate, fetchLocalDB, fetchErrorsDB]);
 
   // Handle Extraction Trigger — reads real SSE progress from server
-  const handleHarvest = React.useCallback(async (date: string, refreshOdds: boolean = true) => {
+  const handleHarvest = React.useCallback(async (date: string, refreshOdds: boolean = true, forceRebuild: boolean = false) => {
     // Mark that user has explicitly selected this date — prevent auto-redirect
     userHasSelectedDate.current = true;
     setIsLoading(true);
@@ -411,7 +411,7 @@ export default function App() {
       const res = await fetch("/api/harvest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date, refreshOdds }),
+        body: JSON.stringify({ date, refreshOdds, force: forceRebuild }),
         signal: abortControllerRef.current.signal,
       });
 
@@ -514,7 +514,7 @@ export default function App() {
     }
   };
 
-  const handleBatchHarvest = async (startDate: string, endDate: string, refreshOdds: boolean = true) => {
+  const handleBatchHarvest = async (startDate: string, endDate: string, refreshOdds: boolean = true, forceRebuild: boolean = false) => {
     userHasSelectedDate.current = true;
     setIsLoading(true);
     abortControllerRef.current = new AbortController();
@@ -524,7 +524,7 @@ export default function App() {
       const datesToProcess: string[] = [];
       const start = new Date(startDate + "T12:00:00Z");
       const end = new Date(endDate + "T12:00:00Z");
-      
+
       // Ensure start is before or equal to end
       const actualStart = start <= end ? start : end;
       const actualEnd = start <= end ? end : start;
@@ -535,9 +535,13 @@ export default function App() {
         current.setUTCDate(current.getUTCDate() + 1);
       }
 
-      // 2. Identify missing dates
+      // 2. Identify missing dates — con forceRebuild se procesa el rango
+      // completo (incluso fechas ya extraídas), ya que forzar reconstrucción
+      // no tendría ningún efecto sobre una fecha que este filtro ya descartó.
       const currentExtracted = await fetchExtractedDates(false);
-      const missingDates = datesToProcess.filter(d => !currentExtracted.includes(d));
+      const missingDates = forceRebuild
+        ? datesToProcess
+        : datesToProcess.filter(d => !currentExtracted.includes(d));
 
       // 3. Extract missing dates sequentially
       for (let i = 0; i < missingDates.length; i++) {
@@ -555,7 +559,7 @@ export default function App() {
         const res = await fetch("/api/harvest", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ date, refreshOdds }),
+          body: JSON.stringify({ date, refreshOdds, force: forceRebuild }),
           signal: abortControllerRef.current.signal,
         });
 
