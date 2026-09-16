@@ -36,7 +36,7 @@ for (const key in process.env) {
 
 import express from "express";
 import { createServer as createViteServer } from "vite";
-import { saveGameData, loadAllGamesFromFirestore, loadGamesByDateFromFirestore, loadGamesByDateRangeFromFirestore, loadLatestGamesFromFirestore, loadExtractedDatesFromFirestore, ensureAnonymousAuth } from "./src/services/firestoreService";
+import { saveGameData, loadAllGamesFromFirestore, loadGamesByDateFromFirestore, loadGamesByDateRangeFromFirestore, loadLatestGamesFromFirestore, loadExtractedDatesFromFirestore, ensureAnonymousAuth, loadAllPitLookupEntries } from "./src/services/firestoreService";
 import { scrapeStrikeoutProps } from "./src/etl/extractors/rotowireScraper";
 import {
   WeatherData,
@@ -70,6 +70,7 @@ import { buildKlabTrainingDataset, validateKlabDateRange } from "./src/datasets/
 import { registerCronPipelineRoutes, runBackfillPitSubprocess } from "./src/routes/cronPipelineRoutes";
 import { registerKPropsLineHistoryRoutes } from "./src/routes/kPropsLineHistoryRoutes";
 import { registerLiveUpdateRoutes } from "./src/routes/liveUpdateRoutes";
+import { parse as parseCsvSync } from "csv-parse/sync";
 
 const app = express();
 app.use(express.json());
@@ -1769,6 +1770,11 @@ async function enrichGamesWithSavantBatterContact(games: MLBGame[]): Promise<MLB
       if (!savant) continue;
       player.chase_pct = player.chase_pct ?? savant.chasePct;
       player.whiff_pct = player.whiff_pct ?? savant.whiffPct;
+      // Sept. 2026 — auditoría con el usuario: red de seguridad para partidos ya
+      // guardados ANTES de este fix, que nunca tuvieron hardHitPct copiado al bateador
+      // individual (por eso home/away_lineup_high_hardhit_batters_count salía siempre 0
+      // — ver getLineupMetrics en src/utils.ts). Solo rellena si falta.
+      player.hardHitPct = player.hardHitPct ?? savant.hardHitPct;
       if (savant.whiffPct !== null) {
         const contactPct = roundNumber(100 - savant.whiffPct, 1);
         player.contact_pct_vs_rhp = player.contact_pct_vs_rhp ?? contactPct;
@@ -2988,10 +2994,17 @@ async function fetchRealMLBGameData(
     }
 
     // 4. Team offensive & bullpen stats
+    // Sept. 2026 (ronda 2 de auditoría) — stats=season ignora cualquier corte de fecha
+    // (igual que el bug ya documentado de stats de temporada del lanzador) y devolvía el
+    // acumulado "a hoy", no "a la fecha del partido". stats=byDateRange sí respeta
+    // startDate/endDate (mismo patrón ya usado en backfill_pitcher_stats_pit.py y en
+    // pitStatsCutoffDate arriba), así que basta con acotar el rango a la fecha de corte
+    // point-in-time — no hace falta reconstrucción partido por partido aquí porque este
+    // bloque no está separado por mano del rival (eso sí lo necesita fetchOffensiveSplits).
     const fetchTeamOffense = async (teamId: number) => {
       try {
         const r = await fetchWithTimeout(
-          `https://statsapi.mlb.com/api/v1/teams/${teamId}/stats?stats=season&season=${season}&group=hitting`
+          `https://statsapi.mlb.com/api/v1/teams/${teamId}/stats?stats=byDateRange&group=hitting&season=${season}&startDate=${season}-03-01&endDate=${pitStatsCutoffDate}`
         );
         const d = await r.json();
         const s = d.stats?.[0]?.splits?.[0]?.stat || {};
@@ -3232,7 +3245,352 @@ async function fetchWeatherData(venue: string, date: string, gameDateISO: string
   }
 }
 
-async function fetchOffensiveSplits(teamId: number, season: string): Promise<any> {
+// Sept. 2026 — auditoría con el usuario: home/away_splits_vs_rhp/lhp_rpg salían fijos en
+// 4.5 para los 20 equipos, todos los días. Causa confirmada contra la API real de MLB:
+// el objeto de stats=statSplits (el que sí trae vl/vr) NO incluye un campo "runs" — por
+// eso `s.runs ? calcular : 4.5` caía siempre al default. MLB tampoco expone "runs
+// dividido por mano del pitcher rival" en ningún endpoint directo (confirmado). La única
+// forma de tener un runsPerGame real por mano es reconstruirlo partido por partido:
+// carreras anotadas de cada juego ya jugado + mano del abridor rival de ESE juego.
+// Cachea la mano de cada pitcher (no cambia en la temporada) para no repetir llamadas.
+const pitcherHandCache = new Map<number, "R" | "L">();
+
+async function fetchPitcherHandsBatch(pitcherIds: number[]): Promise<Map<number, "R" | "L">> {
+  const result = new Map<number, "R" | "L">();
+  const uncached = [...new Set(pitcherIds.filter(Boolean))].filter(id => !pitcherHandCache.has(id));
+  if (uncached.length > 0) {
+    try {
+      const url = `https://statsapi.mlb.com/api/v1/people?personIds=${uncached.join(",")}`;
+      const res = await fetchWithTimeout(url, 8000);
+      if (res.ok) {
+        const data = await res.json();
+        for (const person of data.people || []) {
+          pitcherHandCache.set(person.id, person.pitchHand?.code === "L" ? "L" : "R");
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching pitcher hands batch:", err);
+    }
+  }
+  for (const id of pitcherIds) {
+    if (id) result.set(id, pitcherHandCache.get(id) || "R");
+  }
+  return result;
+}
+
+// Reconstruye runs/juego real del equipo `teamId`, separado por mano del abridor rival,
+// usando solo juegos ya terminados ESTRICTAMENTE antes de `asOfDate` (point-in-time —
+// nunca incluye el propio partido ni fechas futuras, mismo criterio que el resto del
+// pipeline). Cachea nada aquí a propósito: el resultado depende de la fecha de corte,
+// que cambia todos los días — cachear por (team, fecha) viviría en memoria del proceso
+// para siempre sin ganancia real, dado que cada equipo juega ~1 vez por día.
+//
+// Sept. 2026 (ronda 2 de auditoría) — este mismo problema (stats=statSplits sin fecha,
+// contaminado con el snapshot "a hoy") también afectaba avg/ops/obp/slg/hr de
+// home/away_splits_vs_rhp/lhp y toda la ofensiva base de equipo (ofensa_*_home/away) y el
+// ERA/uso del bullpen. La reconstrucción real (schedule + mano del abridor rival) es la
+// misma técnica que runsPerGame; en vez de repetirla, se extrajo a
+// fetchTeamGamesVsHand() para no duplicar la lógica de "juegos terminados antes de la
+// fecha + mano del abridor rival" en cada función (ese patrón de duplicar y arreglar un
+// lado sin acordarse del otro es justo lo que ya nos mordió antes en este pipeline).
+async function fetchTeamGamesVsHand(
+  teamId: number, asOfDate: string, season: string
+): Promise<{ gamePk: number; date: string; hand: "R" | "L"; myRuns: number | null }[]> {
+  const seasonStart = `${season}-03-01`;
+  const cutoff = (() => {
+    const d = new Date(`${asOfDate}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - 1);
+    return d.toISOString().split("T")[0];
+  })();
+  if (cutoff < seasonStart) return [];
+
+  const url = `https://statsapi.mlb.com/api/v1/schedule?teamId=${teamId}&startDate=${seasonStart}&endDate=${cutoff}&sportId=1&gameType=R`;
+  const res = await fetchWithTimeout(url, 10000);
+  if (!res.ok) return [];
+  const data = await res.json();
+
+  const rows: { gamePk: number; date: string; opponentPitcherId: number; myRuns: number | null }[] = [];
+  for (const d of data.dates || []) {
+    for (const g of d.games || []) {
+      if (g.status?.abstractGameState !== "Final" || !g.gamePk) continue;
+      const isHome = g.teams?.home?.team?.id === teamId;
+      const mySide = isHome ? g.teams?.home : g.teams?.away;
+      const oppSide = isHome ? g.teams?.away : g.teams?.home;
+      const opponentPitcherId = oppSide?.probablePitcher?.id;
+      if (opponentPitcherId) {
+        rows.push({
+          gamePk: g.gamePk, date: d.date, opponentPitcherId,
+          myRuns: typeof mySide?.score === "number" ? mySide.score : null,
+        });
+      }
+    }
+  }
+  if (rows.length === 0) return [];
+
+  const hands = await fetchPitcherHandsBatch(rows.map(r => r.opponentPitcherId));
+  return rows.map(r => ({
+    gamePk: r.gamePk, date: r.date, myRuns: r.myRuns,
+    hand: hands.get(r.opponentPitcherId) || "R",
+  }));
+}
+
+async function fetchTeamRunsPerGameVsHand(teamId: number, asOfDate: string, season: string): Promise<{ vsRhp: number | null; vsLhp: number | null }> {
+  try {
+    const games = await fetchTeamGamesVsHand(teamId, asOfDate, season);
+    if (games.length === 0) return { vsRhp: null, vsLhp: null };
+
+    let rhpRuns = 0, rhpGames = 0, lhpRuns = 0, lhpGames = 0;
+    for (const game of games) {
+      if (game.myRuns === null) continue;
+      if (game.hand === "L") { lhpRuns += game.myRuns; lhpGames++; }
+      else { rhpRuns += game.myRuns; rhpGames++; }
+    }
+    return {
+      vsRhp: rhpGames > 0 ? Math.round((rhpRuns / rhpGames) * 10) / 10 : null,
+      vsLhp: lhpGames > 0 ? Math.round((lhpRuns / lhpGames) * 10) / 10 : null,
+    };
+  } catch (err) {
+    console.error(`Error reconstructing runs-per-game by hand for team ${teamId}:`, err);
+    return { vsRhp: null, vsLhp: null };
+  }
+}
+
+// Sept. 2026 (ronda 2) — reconstruye avg/ops/obp/slg/hr/kPct reales del equipo `teamId`,
+// separados por mano del abridor rival, con un solo fetch extra de gameLog de equipo
+// (una llamada, trae TODOS los juegos de la temporada con su línea ofensiva completa)
+// cruzado contra fetchTeamGamesVsHand para la mano. Se sacan los totales crudos
+// (turnos al bate, hits, bases totales, etc.) de cada bucket y se derivan las tasas al
+// final — nunca promediando promedios de partidos individuales, que da un número sesgado
+// cuando los partidos tienen distinto número de turnos al bate.
+interface TeamOffenseSplitLine {
+  avg: number;
+  obp: number | null;
+  slg: number;
+  ops: number | null;
+  hr: number;
+  kPct: number | null;
+}
+
+async function fetchTeamOffenseVsHandReal(
+  teamId: number, asOfDate: string, season: string
+): Promise<{ vsRhp: TeamOffenseSplitLine | null; vsLhp: TeamOffenseSplitLine | null }> {
+  try {
+    const games = await fetchTeamGamesVsHand(teamId, asOfDate, season);
+    if (games.length === 0) return { vsRhp: null, vsLhp: null };
+    const handByGamePk = new Map(games.map(g => [g.gamePk, g.hand]));
+
+    const url = `https://statsapi.mlb.com/api/v1/teams/${teamId}/stats?stats=gameLog&group=hitting&season=${season}`;
+    const res = await fetchWithTimeout(url, 10000);
+    if (!res.ok) return { vsRhp: null, vsLhp: null };
+    const data = await res.json();
+    const splits = data.stats?.[0]?.splits || [];
+
+    const empty = () => ({ ab: 0, hits: 0, bb: 0, hbp: 0, sf: 0, tb: 0, hr: 0, so: 0, pa: 0 });
+    const totals: Record<"R" | "L", ReturnType<typeof empty>> = { R: empty(), L: empty() };
+
+    for (const split of splits) {
+      const gamePk = split.game?.gamePk;
+      const hand = gamePk ? handByGamePk.get(gamePk) : undefined;
+      if (!hand) continue; // partido futuro, sin abridor rival resuelto, o fuera de rango
+      const s = split.stat || {};
+      const bucket = totals[hand];
+      bucket.ab += parseInt(s.atBats) || 0;
+      bucket.hits += parseInt(s.hits) || 0;
+      bucket.bb += parseInt(s.baseOnBalls) || 0;
+      bucket.hbp += parseInt(s.hitByPitch) || 0;
+      bucket.sf += parseInt(s.sacFlies) || 0;
+      bucket.tb += parseInt(s.totalBases) || 0;
+      bucket.hr += parseInt(s.homeRuns) || 0;
+      bucket.so += parseInt(s.strikeOuts) || 0;
+      bucket.pa += parseInt(s.plateAppearances) || 0;
+    }
+
+    const deriveLine = (t: ReturnType<typeof empty>): TeamOffenseSplitLine | null => {
+      if (t.ab === 0) return null;
+      const avg = roundNumber(t.hits / t.ab, 3);
+      const obpDenom = t.ab + t.bb + t.hbp + t.sf;
+      const obp = obpDenom > 0 ? roundNumber((t.hits + t.bb + t.hbp) / obpDenom, 3) : null;
+      const slg = roundNumber(t.tb / t.ab, 3);
+      return {
+        avg, obp, slg,
+        ops: obp !== null ? roundNumber(obp + slg, 3) : null,
+        hr: t.hr,
+        kPct: t.pa > 0 ? roundNumber((t.so / t.pa) * 100, 1) : null,
+      };
+    };
+
+    return { vsRhp: deriveLine(totals.R), vsLhp: deriveLine(totals.L) };
+  } catch (err) {
+    console.error(`Error reconstructing offense-vs-hand for team ${teamId}:`, err);
+    return { vsRhp: null, vsLhp: null };
+  }
+}
+
+// Sept. 2026 (ronda 2) — ops_vs_rhp/lhp, slg_vs_rhp/lhp y k_pct_vs_rhp/lhp del bateador
+// (fetchBatterSplits) tenían el mismo problema de fecha que el bloque de equipo de arriba.
+// Se reconstruyen con el gameLog real del bateador cruzado contra `handByGamePk`, el mapa
+// de mano del abridor rival por partido YA calculado una vez para todo el equipo (ver
+// fetchTeamGamesVsHand) — así no se vuelve a pedir el calendario por cada bateador del
+// lineup.
+async function fetchBatterOffenseVsHandReal(
+  batterId: number, handByGamePk: Map<number, "R" | "L">, season: string
+): Promise<{
+  opsVsRhp: number | null; opsVsLhp: number | null;
+  slgVsRhp: number | null; slgVsLhp: number | null;
+  kPctVsRhp: number | null; kPctVsLhp: number | null;
+}> {
+  const empty = () => ({ opsVsRhp: null, opsVsLhp: null, slgVsRhp: null, slgVsLhp: null, kPctVsRhp: null, kPctVsLhp: null });
+  if (!batterId || handByGamePk.size === 0) return empty();
+  try {
+    const url = `https://statsapi.mlb.com/api/v1/people/${batterId}/stats?stats=gameLog&group=hitting&season=${season}`;
+    const res = await fetchWithTimeout(url, 8000);
+    if (!res.ok) return empty();
+    const data = await res.json();
+    const splits = data.stats?.[0]?.splits || [];
+
+    const bucketDefaults = () => ({ ab: 0, hits: 0, tb: 0, bb: 0, hbp: 0, sf: 0, so: 0, pa: 0 });
+    const totals: Record<"R" | "L", ReturnType<typeof bucketDefaults>> = { R: bucketDefaults(), L: bucketDefaults() };
+
+    for (const split of splits) {
+      const gamePk = split.game?.gamePk;
+      const hand = gamePk ? handByGamePk.get(gamePk) : undefined;
+      if (!hand) continue;
+      const s = split.stat || {};
+      const t = totals[hand];
+      t.ab += parseInt(s.atBats) || 0;
+      t.hits += parseInt(s.hits) || 0;
+      t.tb += parseInt(s.totalBases) || 0;
+      t.bb += parseInt(s.baseOnBalls) || 0;
+      t.hbp += parseInt(s.hitByPitch) || 0;
+      t.sf += parseInt(s.sacFlies) || 0;
+      t.so += parseInt(s.strikeOuts) || 0;
+      t.pa += parseInt(s.plateAppearances) || 0;
+    }
+
+    const derive = (t: ReturnType<typeof bucketDefaults>) => {
+      if (t.ab === 0) return { ops: null as number | null, slg: null as number | null, kPct: null as number | null };
+      const obpDenom = t.ab + t.bb + t.hbp + t.sf;
+      const obp = obpDenom > 0 ? (t.hits + t.bb + t.hbp) / obpDenom : null;
+      const slg = t.tb / t.ab;
+      return {
+        ops: obp !== null ? roundNumber(obp + slg, 3) : null,
+        slg: roundNumber(slg, 3),
+        kPct: t.pa > 0 ? roundNumber((t.so / t.pa) * 100, 1) : null,
+      };
+    };
+
+    const r = derive(totals.R);
+    const l = derive(totals.L);
+    return { opsVsRhp: r.ops, opsVsLhp: l.ops, slgVsRhp: r.slg, slgVsLhp: l.slg, kPctVsRhp: r.kPct, kPctVsLhp: l.kPct };
+  } catch (err) {
+    console.error(`Error reconstructing batter offense-vs-hand for ${batterId}:`, err);
+    return empty();
+  }
+}
+
+// Sept. 2026 — auditoría con el usuario: diff_record_last10 salía en 0 para el 100% de
+// las filas porque trends.home/away.recordLast10 estaba escrito literalmente como "N/D"
+// (nunca se conectó a ninguna fuente real) y parseRecordWinPct("N/D") devuelve 0.5 para
+// ambos lados siempre, así que la diferencia daba 0.5 - 0.5 = 0. MLB sí expone el récord
+// real de últimos 10 juegos vía el endpoint de standings, incluso point-in-time con
+// ?date=. Se cachea por (temporada, fecha de corte) porque todos los juegos de un mismo
+// día comparten exactamente la misma consulta.
+const teamLastTenCache = new Map<string, Map<number, string>>();
+
+async function fetchTeamLastTenRecords(season: string, asOfDate: string): Promise<Map<number, string>> {
+  const cutoff = (() => {
+    const d = new Date(`${asOfDate}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - 1);
+    return d.toISOString().split("T")[0];
+  })();
+  const cacheKey = `${season}|${cutoff}`;
+  if (teamLastTenCache.has(cacheKey)) return teamLastTenCache.get(cacheKey)!;
+
+  const result = new Map<number, string>();
+  try {
+    const url = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${season}&standingsTypes=regularSeason&date=${cutoff}`;
+    const res = await fetchWithTimeout(url, 8000);
+    if (res.ok) {
+      const data = await res.json();
+      for (const record of data.records || []) {
+        for (const teamRecord of record.teamRecords || []) {
+          const lastTen = (teamRecord.records?.splitRecords || []).find((r: any) => r.type === "lastTen");
+          if (lastTen && teamRecord.team?.id) {
+            result.set(teamRecord.team.id, `${lastTen.wins}-${lastTen.losses}`);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`Error fetching team lastTen records as of ${cutoff}:`, err);
+  }
+  teamLastTenCache.set(cacheKey, result);
+  return result;
+}
+
+// Sept. 2026 — auditoría con el usuario: contact_pct_vs_rhp y contact_pct_vs_lhp salían
+// idénticos en el 100% de las filas. Dos causas: (1) MLB Stats API (stats=statSplits) no
+// trae ningún campo contactPct/contactPercent (confirmado contra la respuesta real de la
+// API), así que el intento de traer el split real nunca funcionaba; (2) más grave, varios
+// puntos del pipeline sobreescribían ambas columnas sin condición con el mismo valor
+// agregado de Savant (100 - whiff% de toda la temporada, sin dividir por mano). Esta
+// función trae el contact% real separado por mano del pitcher rival desde Baseball
+// Savant (pitch-level, agrupando varios bateadores en una sola consulta), con
+// game_date_lt=asOfDate para que sea estrictamente point-in-time (nunca incluye el
+// propio partido ni fechas futuras). Contact% = 1 - (swings sin contacto / swings totales).
+async function fetchBatterContactPctVsHandBatch(
+  batterIds: number[],
+  pitcherHand: "R" | "L",
+  asOfDate: string,
+  season: string
+): Promise<Map<number, number | null>> {
+  const result = new Map<number, number | null>();
+  const uniqueIds = [...new Set(batterIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return result;
+  try {
+    const params = new URLSearchParams({
+      all: "true",
+      hfSea: `${season}|`,
+      hfGT: "R|",
+      player_type: "batter",
+      pitcher_throws: pitcherHand,
+      game_date_lt: asOfDate,
+      type: "details",
+    });
+    let url = `https://baseballsavant.mlb.com/statcast_search/csv?${params.toString()}`;
+    for (const id of uniqueIds) url += `&batters_lookup%5B%5D=${id}`;
+
+    const res = await fetchWithTimeout(url, 30000);
+    if (!res.ok) return result;
+    const text = await res.text();
+    if (!text || text.trim().length < 20) return result;
+
+    const rows: any[] = parseCsvSync(text, { columns: true, skip_empty_lines: true, cast: false, relax_column_count: true });
+
+    const WHIFF = new Set(["swinging_strike", "swinging_strike_blocked", "missed_bunt"]);
+    const SWING = new Set(["hit_into_play", "foul", "swinging_strike", "swinging_strike_blocked", "foul_tip", "missed_bunt", "foul_bunt"]);
+
+    const totals = new Map<number, { swings: number; whiffs: number }>();
+    for (const row of rows) {
+      const batterId = parseInt(row.batter, 10);
+      const desc: string = row.description;
+      if (!batterId || !SWING.has(desc)) continue;
+      const entry = totals.get(batterId) || { swings: 0, whiffs: 0 };
+      entry.swings++;
+      if (WHIFF.has(desc)) entry.whiffs++;
+      totals.set(batterId, entry);
+    }
+    for (const id of uniqueIds) {
+      const entry = totals.get(id);
+      result.set(id, entry && entry.swings > 0 ? roundNumber((1 - entry.whiffs / entry.swings) * 100, 1) : null);
+    }
+  } catch (err) {
+    console.error(`Error fetching Savant contact% vs ${pitcherHand} for batters [${uniqueIds.join(",")}]:`, err);
+  }
+  return result;
+}
+
+async function fetchOffensiveSplits(teamId: number, season: string, asOfDate?: string): Promise<any> {
   const defaultSplit = { avg: 0.250, ops: 0.720, obp: 0.320, slg: 0.400, runsPerGame: 4.5, hr: 15, kPct: 20.0 };
   try {
     const url = `https://statsapi.mlb.com/api/v1/teams/${teamId}/stats?stats=statSplits&season=${season}&group=hitting&sitCodes=vl,vr`;
@@ -3265,6 +3623,28 @@ async function fetchOffensiveSplits(teamId: number, season: string): Promise<any
         vsLhp = splitData;
       }
     }
+
+    // runsPerGame real reconstruido partido por partido (ver fetchTeamRunsPerGameVsHand) —
+    // reemplaza el 4.5 fijo. Si asOfDate no viene o la reconstrucción no encuentra datos
+    // (ej. muy al inicio de temporada), se conserva el valor anterior (4.5) como último
+    // recurso, igual que antes.
+    //
+    // Sept. 2026 (ronda 2) — avg/ops/obp/slg/hr de este mismo bloque tenían el mismo
+    // problema que runsPerGame (stats=statSplits sin fecha, "a hoy" en vez de "a la fecha
+    // del partido"). Se reemplazan aquí también con la reconstrucción real
+    // (fetchTeamOffenseVsHandReal); si no hay suficientes juegos todavía, se conserva el
+    // valor de statSplits como último recurso, igual que runsPerGame.
+    if (asOfDate) {
+      const [realRpg, realOffense] = await Promise.all([
+        fetchTeamRunsPerGameVsHand(teamId, asOfDate, season),
+        fetchTeamOffenseVsHandReal(teamId, asOfDate, season),
+      ]);
+      if (realRpg.vsRhp !== null) vsRhp.runsPerGame = realRpg.vsRhp;
+      if (realRpg.vsLhp !== null) vsLhp.runsPerGame = realRpg.vsLhp;
+      if (realOffense.vsRhp) Object.assign(vsRhp, realOffense.vsRhp, { runsPerGame: vsRhp.runsPerGame });
+      if (realOffense.vsLhp) Object.assign(vsLhp, realOffense.vsLhp, { runsPerGame: vsLhp.runsPerGame });
+    }
+
     return { vsRhp, vsLhp };
   } catch (err) {
     console.error(`Error fetching splits for team ${teamId}:`, err);
@@ -3925,13 +4305,24 @@ async function fetchStarterFatigue(pitcherId: number, date: string, season: stri
   }
 }
 
+// Sept. 2026 (ronda 2 de auditoría) — bullpen_era_home/away venía de fetchTeamBullpenERA
+// (stats=statSplits&sitCodes=rp&season=X), sin corte de fecha — mismo problema que el
+// resto de los bloques "a hoy" en vez de "a la fecha del partido". Confirmado en vivo que
+// MLB ignora sitCodes cuando se combina con stats=byDateRange (devuelve el staff completo,
+// no solo bullpen), así que no existe un endpoint único con ambos filtros a la vez. En vez
+// de sumar una llamada nueva, se aprovecha que fetchBullpenFatigue YA descarga los
+// boxscores de los últimos 7 días para ipLast3Days/ipLast7Days — de ahí mismo se puede
+// sacar carreras limpias permitidas por el bullpen sin ningún fetch adicional. Es un ERA
+// de ventana móvil de 7 días (más ruidoso que un acumulado de temporada por la muestra
+// chica), pero es real y point-in-time, no una fuga de temporada completa.
 async function fetchBullpenFatigue(teamId: number, date: string, season: string) {
   const defaults = {
     ipLast3Days: "N/A",
     ipLast7Days: "N/A",
     relieversUsedYesterday: "N/A",
     relieversUsedLast2Days: "N/A",
-    availableCount: "N/A"
+    availableCount: "N/A",
+    eraLast7Days: null as number | null
   };
   try {
     const today = new Date(date);
@@ -3984,6 +4375,7 @@ async function fetchBullpenFatigue(teamId: number, date: string, season: string)
 
     let outs3d = 0;
     let outs7d = 0;
+    let earnedRuns7d = 0;
     let usedYesterday = 0;
     let used2Days = 0;
 
@@ -4018,6 +4410,7 @@ async function fetchBullpenFatigue(teamId: number, date: string, season: string)
       const bullpenPitchers = pitchers.slice(1);
 
       let bullpenOuts = 0;
+      let bullpenEarnedRuns = 0;
       let relieversCount = 0;
 
       for (const pid of bullpenPitchers) {
@@ -4033,6 +4426,7 @@ async function fetchBullpenFatigue(teamId: number, date: string, season: string)
           const f = parseInt(parts[1]) || 0;
           bullpenOuts += (w * 3) + f;
         }
+        bullpenEarnedRuns += parseInt(p?.stats?.pitching?.earnedRuns) || 0;
       }
 
       const gameTime = new Date(gameDateStr).getTime();
@@ -4043,6 +4437,7 @@ async function fetchBullpenFatigue(teamId: number, date: string, season: string)
       }
       if (diffDays <= 7) {
         outs7d += bullpenOuts;
+        earnedRuns7d += bullpenEarnedRuns;
       }
 
       if (gameDateStr === yesterdayStr) {
@@ -4064,7 +4459,8 @@ async function fetchBullpenFatigue(teamId: number, date: string, season: string)
       ipLast7Days: formatIP(outs7d),
       relieversUsedYesterday: usedYesterday,
       relieversUsedLast2Days: used2Days,
-      availableCount: Math.max(8 - usedYesterday, 2)
+      availableCount: Math.max(8 - usedYesterday, 2),
+      eraLast7Days: outs7d > 0 ? Math.round((earnedRuns7d * 27 / outs7d) * 100) / 100 : null
     };
   } catch (err) {
     console.error(`Error calculating bullpen fatigue for team ${teamId}:`, err);
@@ -5178,8 +5574,8 @@ app.post("/api/harvest", async (req, res) => {
         fatigue
       ] = await Promise.all([
         fetchWeatherData(venueName, date, match.gameDate || new Date().toISOString()),
-        fetchOffensiveSplits(homeTeamId, season),
-        fetchOffensiveSplits(awayTeamId, season),
+        fetchOffensiveSplits(homeTeamId, season, date),
+        fetchOffensiveSplits(awayTeamId, season, date),
         fetchAdvancedPitching(homePitcherId, season),
         fetchAdvancedPitching(awayPitcherId, season),
         fetchAdvancedPitchingLast7(homePitcherId, season, date),
@@ -5349,31 +5745,75 @@ app.post("/api/harvest", async (req, res) => {
         }
       }
 
-      for (const p of homeLineup) {
-        const savant = savantCache.getBatter(p.id ?? p.mlbId);
-        if (savant) {
-          p.chase_pct = savant.chasePct;
-          p.whiff_pct = savant.whiffPct;
-          if (savant.whiffPct !== null) {
-            const contactPct = roundNumber(100 - savant.whiffPct, 1);
-            p.contact_pct_vs_rhp = contactPct;
-            p.contact_pct_vs_lhp = contactPct;
+      // Sept. 2026 — auditoría con el usuario: contact_pct_vs_rhp/lhp y
+      // home/away_lineup_high_hardhit_batters_count. Antes esto sobreescribía siempre
+      // ambas columnas de contact% con el mismo valor agregado de temporada (100 -
+      // whiff%), y nunca copiaba hardHitPct al bateador individual (por eso el conteo de
+      // hard-hit del lineup salía siempre 0). Ahora se trae el contact% real separado por
+      // mano (Baseball Savant, point-in-time) para todo el lineup en una sola consulta
+      // por mano, y se usa el valor agregado solo como último recurso si Savant no
+      // devuelve nada para ese bateador.
+      const lineupBatterIds = [...homeLineup, ...awayLineup].map((p: any) => p.id ?? p.mlbId).filter(Boolean);
+      const [contactVsRhp, contactVsLhp] = await Promise.all([
+        fetchBatterContactPctVsHandBatch(lineupBatterIds, "R", date, season),
+        fetchBatterContactPctVsHandBatch(lineupBatterIds, "L", date, season),
+      ]);
+      const applyBatterSavantContact = (lineup: any[]) => {
+        for (const p of lineup) {
+          const savant = savantCache.getBatter(p.id ?? p.mlbId);
+          if (savant) {
+            p.chase_pct = savant.chasePct;
+            p.whiff_pct = savant.whiffPct;
+            p.hardHitPct = savant.hardHitPct;
+            const fallbackContact = savant.whiffPct !== null ? roundNumber(100 - savant.whiffPct, 1) : null;
+            const pid = p.id ?? p.mlbId;
+            p.contact_pct_vs_rhp = contactVsRhp.get(pid) ?? fallbackContact;
+            p.contact_pct_vs_lhp = contactVsLhp.get(pid) ?? fallbackContact;
           }
         }
-      }
-      for (const p of awayLineup) {
-        const savant = savantCache.getBatter(p.id ?? p.mlbId);
-        if (savant) {
-          p.chase_pct = savant.chasePct;
-          p.whiff_pct = savant.whiffPct;
-          if (savant.whiffPct !== null) {
-            const contactPct = roundNumber(100 - savant.whiffPct, 1);
-            p.contact_pct_vs_rhp = contactPct;
-            p.contact_pct_vs_lhp = contactPct;
-          }
-        }
-      }
+      };
+      applyBatterSavantContact(homeLineup);
+      applyBatterSavantContact(awayLineup);
 
+      // Sept. 2026 (ronda 2 de auditoría) — ops_vs_rhp/lhp, slg_vs_rhp/lhp y k_pct_vs_rhp/lhp
+      // del bateador tenían el mismo problema que contact_pct antes de arreglarlo:
+      // stats=statSplits sin fecha (fetchBatterSplits). Se reconstruyen con el gameLog real
+      // del bateador cruzado contra la mano del abridor rival de cada juego de SU equipo
+      // (fetchTeamGamesVsHand, una consulta de calendario por equipo, reutilizada para
+      // todos los bateadores de ese lineup en vez de una por bateador).
+      const [homeGamesVsHand, awayGamesVsHand] = await Promise.all([
+        fetchTeamGamesVsHand(homeTeamId, date, season),
+        fetchTeamGamesVsHand(awayTeamId, date, season),
+      ]);
+      const homeHandByGamePk = new Map(homeGamesVsHand.map(g => [g.gamePk, g.hand]));
+      const awayHandByGamePk = new Map(awayGamesVsHand.map(g => [g.gamePk, g.hand]));
+      const applyBatterOffenseVsHand = async (lineup: any[], handByGamePk: Map<number, "R" | "L">) => {
+        await Promise.all(lineup.map(async (p: any) => {
+          const pid = p.id ?? p.mlbId;
+          if (!pid) return;
+          const real = await fetchBatterOffenseVsHandReal(pid, handByGamePk, season);
+          if (real.opsVsRhp !== null) p.ops_vs_rhp = real.opsVsRhp;
+          if (real.opsVsLhp !== null) p.ops_vs_lhp = real.opsVsLhp;
+          if (real.slgVsRhp !== null) p.slg_vs_rhp = real.slgVsRhp;
+          if (real.slgVsLhp !== null) p.slg_vs_lhp = real.slgVsLhp;
+          if (real.kPctVsRhp !== null) p.k_pct_vs_rhp = real.kPctVsRhp;
+          if (real.kPctVsLhp !== null) p.k_pct_vs_lhp = real.kPctVsLhp;
+        }));
+      };
+      await Promise.all([
+        applyBatterOffenseVsHand(homeLineup, homeHandByGamePk),
+        applyBatterOffenseVsHand(awayLineup, awayHandByGamePk),
+      ]);
+
+      // Sept. 2026 — auditoría con el usuario: diff_record_last10 salía en 0 siempre
+      // porque trends.*.recordLast10 nunca se conectó a una fuente real (ver
+      // fetchTeamLastTenRecords). Se sobreescribe aquí en vez de tocar
+      // buildDirectGameData porque homeTeamId/awayTeamId no están disponibles ahí.
+      const lastTenRecords = await fetchTeamLastTenRecords(season, date);
+      gameDataParsed.trends = {
+        home: { ...gameDataParsed.trends?.home, recordLast10: lastTenRecords.get(homeTeamId) || "N/D" },
+        away: { ...gameDataParsed.trends?.away, recordLast10: lastTenRecords.get(awayTeamId) || "N/D" },
+      };
 
       // Inyectar K% proyectado de la alineación y K% del rival vs mano del pitcher
       const homePitcherHand = realMLBData.pitchers?.home?.pitchHand || "R";
@@ -5449,6 +5889,13 @@ app.post("/api/harvest", async (req, res) => {
 
         gameDataParsed.bullpen.home.usageLast3Days = getUsage(fatigue.bullpen.home.ipLast3Days);
         gameDataParsed.bullpen.away.usageLast3Days = getUsage(fatigue.bullpen.away.ipLast3Days);
+
+        // Sept. 2026 (ronda 2) — bullpen_era_home/away point-in-time real (ventana móvil de
+        // 7 días, ver fetchBullpenFatigue). Reemplaza el ERA de temporada completa sin fecha
+        // de fetchTeamBullpenERA; solo se conserva ese valor de temporada como último
+        // recurso si todavía no hay 7 días de juegos del equipo (muy al inicio de temporada).
+        if (fatigue.bullpen.home.eraLast7Days !== null) gameDataParsed.bullpen.home.era = fatigue.bullpen.home.eraLast7Days;
+        if (fatigue.bullpen.away.eraLast7Days !== null) gameDataParsed.bullpen.away.era = fatigue.bullpen.away.eraLast7Days;
       }
 
       // Handle Line Movements timeline (usamos el snapshot pre-leído antes del loop)
@@ -5761,8 +6208,8 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
     fatigue
   ] = await Promise.all([
     fetchWeatherData(venueName, actualDate, match.gameDate || new Date().toISOString()),
-    fetchOffensiveSplits(homeTeamId, season),
-    fetchOffensiveSplits(awayTeamId, season),
+    fetchOffensiveSplits(homeTeamId, season, actualDate),
+    fetchOffensiveSplits(awayTeamId, season, actualDate),
     fetchAdvancedPitching(homePitcherId, season),
     fetchAdvancedPitching(awayPitcherId, season),
     fetchAdvancedPitchingLast7(homePitcherId, season, actualDate),
@@ -5923,30 +6370,66 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
     }
   }
 
-  for (const p of homeLineupU) {
-    const savant = savantCache.getBatter(p.id ?? p.mlbId);
-    if (savant) {
-      p.chase_pct = savant.chasePct;
-      p.whiff_pct = savant.whiffPct;
-      if (savant.whiffPct !== null) {
-        const contactPct = roundNumber(100 - savant.whiffPct, 1);
-        p.contact_pct_vs_rhp = contactPct;
-        p.contact_pct_vs_lhp = contactPct;
+  // Sept. 2026 — auditoría con el usuario: mismo fix que en el loop de /api/harvest (ver
+  // comentario ahí) — contact% real por mano vía Savant point-in-time, con fallback al
+  // valor agregado, y hardHitPct copiado al bateador individual para que el conteo de
+  // hard-hit del lineup deje de salir siempre 0.
+  const lineupBatterIdsU = [...homeLineupU, ...awayLineupU].map((p: any) => p.id ?? p.mlbId).filter(Boolean);
+  const [contactVsRhpU, contactVsLhpU] = await Promise.all([
+    fetchBatterContactPctVsHandBatch(lineupBatterIdsU, "R", actualDate, season),
+    fetchBatterContactPctVsHandBatch(lineupBatterIdsU, "L", actualDate, season),
+  ]);
+  const applyBatterSavantContactU = (lineup: any[]) => {
+    for (const p of lineup) {
+      const savant = savantCache.getBatter(p.id ?? p.mlbId);
+      if (savant) {
+        p.chase_pct = savant.chasePct;
+        p.whiff_pct = savant.whiffPct;
+        p.hardHitPct = savant.hardHitPct;
+        const fallbackContact = savant.whiffPct !== null ? roundNumber(100 - savant.whiffPct, 1) : null;
+        const pid = p.id ?? p.mlbId;
+        p.contact_pct_vs_rhp = contactVsRhpU.get(pid) ?? fallbackContact;
+        p.contact_pct_vs_lhp = contactVsLhpU.get(pid) ?? fallbackContact;
       }
     }
-  }
-  for (const p of awayLineupU) {
-    const savant = savantCache.getBatter(p.id ?? p.mlbId);
-    if (savant) {
-      p.chase_pct = savant.chasePct;
-      p.whiff_pct = savant.whiffPct;
-      if (savant.whiffPct !== null) {
-        const contactPct = roundNumber(100 - savant.whiffPct, 1);
-        p.contact_pct_vs_rhp = contactPct;
-        p.contact_pct_vs_lhp = contactPct;
-      }
-    }
-  }
+  };
+  applyBatterSavantContactU(homeLineupU);
+  applyBatterSavantContactU(awayLineupU);
+
+  // Sept. 2026 (ronda 2) — mismo fix que en el loop de /api/harvest (ver comentario ahí):
+  // ops/slg/k_pct_vs_rhp/lhp del bateador reconstruidos con gameLog real + mano del
+  // abridor rival por partido de su equipo.
+  const [homeGamesVsHandU, awayGamesVsHandU] = await Promise.all([
+    fetchTeamGamesVsHand(homeTeamId, actualDate, season),
+    fetchTeamGamesVsHand(awayTeamId, actualDate, season),
+  ]);
+  const homeHandByGamePkU = new Map(homeGamesVsHandU.map(g => [g.gamePk, g.hand]));
+  const awayHandByGamePkU = new Map(awayGamesVsHandU.map(g => [g.gamePk, g.hand]));
+  const applyBatterOffenseVsHandU = async (lineup: any[], handByGamePk: Map<number, "R" | "L">) => {
+    await Promise.all(lineup.map(async (p: any) => {
+      const pid = p.id ?? p.mlbId;
+      if (!pid) return;
+      const real = await fetchBatterOffenseVsHandReal(pid, handByGamePk, season);
+      if (real.opsVsRhp !== null) p.ops_vs_rhp = real.opsVsRhp;
+      if (real.opsVsLhp !== null) p.ops_vs_lhp = real.opsVsLhp;
+      if (real.slgVsRhp !== null) p.slg_vs_rhp = real.slgVsRhp;
+      if (real.slgVsLhp !== null) p.slg_vs_lhp = real.slgVsLhp;
+      if (real.kPctVsRhp !== null) p.k_pct_vs_rhp = real.kPctVsRhp;
+      if (real.kPctVsLhp !== null) p.k_pct_vs_lhp = real.kPctVsLhp;
+    }));
+  };
+  await Promise.all([
+    applyBatterOffenseVsHandU(homeLineupU, homeHandByGamePkU),
+    applyBatterOffenseVsHandU(awayLineupU, awayHandByGamePkU),
+  ]);
+
+  // Sept. 2026 — auditoría con el usuario: diff_record_last10 (ver comentario en el loop
+  // de /api/harvest).
+  const lastTenRecordsU = await fetchTeamLastTenRecords(season, actualDate);
+  gameDataParsed.trends = {
+    home: { ...gameDataParsed.trends?.home, recordLast10: lastTenRecordsU.get(homeTeamId) || "N/D" },
+    away: { ...gameDataParsed.trends?.away, recordLast10: lastTenRecordsU.get(awayTeamId) || "N/D" },
+  };
 
 
   // Inyectar K% proyectado de la alineación y K% del rival vs mano del pitcher
@@ -6009,6 +6492,10 @@ async function updateSingleGameData(gameId: string, date: string, forceRefreshOd
 
     gameDataParsed.bullpen.home.usageLast3Days = getUsage(fatigue.bullpen.home.ipLast3Days);
     gameDataParsed.bullpen.away.usageLast3Days = getUsage(fatigue.bullpen.away.ipLast3Days);
+
+    // Sept. 2026 (ronda 2) — ver el mismo comentario en el bloque gemelo del harvest loop.
+    if (fatigue.bullpen.home.eraLast7Days !== null) gameDataParsed.bullpen.home.era = fatigue.bullpen.home.eraLast7Days;
+    if (fatigue.bullpen.away.eraLast7Days !== null) gameDataParsed.bullpen.away.era = fatigue.bullpen.away.eraLast7Days;
   }
 
   // Line Movements
@@ -6301,6 +6788,67 @@ async function runStartupFirestoreSync() {
   }
 }
 
+// Sept. 2026 — auditoría con el usuario, punto #1: a diferencia de mlb_database.json
+// (restaurado arriba en cada arranque), pitcher_stats_pit.json / offense_stats_pit.json
+// / boxscore_game_stats.json nunca se restauraban desde Firestore al arrancar — solo
+// vivían en el disco local de Render, que es efímero (se borra en cada redeploy). El
+// backfill automático (runBackfillPitSubprocess, disparado desde /api/harvest en cada
+// extracción) SÍ corría bien y SÍ escribía el archivo local correctamente en cada
+// corrida — el problema era que el próximo redeploy revertía ese progreso a lo último
+// commiteado en git, dejando la cobertura PIT congelada en una fecha vieja sin que
+// apareciera ningún error (el backfill nunca falló; su resultado simplemente no
+// sobrevivía). Este restaurador corre una sola vez por arranque (proceso nuevo tras un
+// redeploy = exactamente cuando el disco se vació) y fusiona lo que haya en disco local
+// (por si sobrevivió, o por si el sync a Firestore de una corrida reciente falló a
+// mitad de camino) con TODO lo que haya en Firestore — Firestore manda en caso de
+// conflicto porque siempre es al menos tan reciente como el último backfill exitoso.
+async function restorePitFilesFromFirestore(reason: string) {
+  const targets: Array<{ kind: "pitchers" | "offense" | "boxscore"; file: string; wrapKey: string }> = [
+    { kind: "pitchers", file: "pitcher_stats_pit.json", wrapKey: "pitchers" },
+    { kind: "offense", file: "offense_stats_pit.json", wrapKey: "offense" },
+    { kind: "boxscore", file: "boxscore_game_stats.json", wrapKey: "boxscore" },
+  ];
+
+  let anyRestored = false;
+  for (const { kind, file, wrapKey } of targets) {
+    try {
+      const remote = await loadAllPitLookupEntries(kind);
+      const remoteCount = Object.keys(remote).length;
+      if (remoteCount === 0) {
+        console.log(`[Firestore PIT Restore] (${reason}) ${kind}: sin datos en Firestore aún, se deja el disco local tal cual.`);
+        continue;
+      }
+
+      const filePath = path.join(process.cwd(), file);
+      let local: Record<string, any> = {};
+      if (fs.existsSync(filePath)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+          local = parsed?.[wrapKey] || {};
+        } catch (parseErr) {
+          console.error(`[Firestore PIT Restore] (${reason}) No se pudo parsear ${file} local, se ignora:`, parseErr);
+        }
+      }
+
+      // Firestore manda en conflicto (ver comentario arriba), pero se preserva
+      // cualquier entrada local que Firestore aún no tenga.
+      const merged = { ...local, ...remote };
+      fs.writeFileSync(filePath, JSON.stringify({ [wrapKey]: merged }, null, 2));
+      anyRestored = true;
+      console.log(`[Firestore PIT Restore] (${reason}) ${kind}: ${Object.keys(merged).length} entrada(s) en disco tras fusionar ${remoteCount} de Firestore + ${Object.keys(local).length} local(es).`);
+    } catch (err) {
+      console.error(`[Firestore PIT Restore] (${reason}) Error restaurando ${kind}:`, err);
+    }
+  }
+
+  // Invalidar el cache en memoria de readPitLookups para que la próxima lectura
+  // (ej. el primer /api/games o la primera exportación de CSV) tome los archivos
+  // recién escritos en vez de una versión vieja cacheada.
+  if (anyRestored) {
+    pitLookupsCache = null;
+  }
+}
+
 // Serve static assets in production or connect Vite in development
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
@@ -6342,6 +6890,9 @@ async function startServer() {
     startLiveGamesAutoupdater();
     runStartupFirestoreSync().catch((err) => {
       console.error("[Firestore Sync] Error en sincronización de arranque en segundo plano:", err);
+    });
+    restorePitFilesFromFirestore("arranque").catch((err) => {
+      console.error("[Firestore PIT Restore] Error en restauración de arranque en segundo plano:", err);
     });
   });
 }

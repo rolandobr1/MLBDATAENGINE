@@ -1,3 +1,11 @@
+import dotenv from "dotenv";
+dotenv.config({ path: ".env.local" });
+for (const key in process.env) {
+  if (typeof process.env[key] === "string") {
+    process.env[key] = process.env[key]!.trim().replace(/[\r\n]/g, "");
+  }
+}
+
 import { loadAllGamesFromFirestore } from "./src/services/firestoreService";
 import fs from "fs";
 

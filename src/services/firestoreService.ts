@@ -1,5 +1,5 @@
 import { db, app } from '../config/firebase';
-import { doc, collection, setDoc, getDoc, getDocs, getCountFromServer, query, where, orderBy, limit, arrayUnion } from 'firebase/firestore';
+import { doc, collection, setDoc, getDoc, getDocs, getCountFromServer, query, where, orderBy, limit, arrayUnion, writeBatch } from 'firebase/firestore';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 
 let authInitialized = false;
@@ -349,6 +349,82 @@ export const loadExtractedDatesFromFirestore = async (): Promise<string[]> => {
   } catch (error) {
     console.error("Error al cargar fechas extraidas desde Firestore:", error);
     return [];
+  }
+};
+
+// Sept. 2026 — auditoría con el usuario, punto #1 ("el backfill no queda resuelto
+// de una vez por todas"): pitcher_stats_pit.json / offense_stats_pit.json /
+// boxscore_game_stats.json (generados por backfill_pitcher_stats_pit.py) NUNCA
+// tuvieron el mismo tratamiento que mlb_database.json. El disco local de Render
+// es efímero (se borra en cada redeploy — ver comentario en server.ts junto a
+// runStartupFirestoreSync); mlb_database.json sobrevive a eso porque cada guardado
+// se replica aquí y se restaura al arrancar, pero estos 3 archivos PIT solo vivían
+// en el disco local, así que cada redeploy los revertía a lo último commiteado en
+// git — sin importar que el backfill automático (ver runBackfillPitSubprocess en
+// cronPipelineRoutes.ts) sí corriera bien en cada extracción. Estas dos funciones
+// replican para PIT el mismo patrón que ya funciona para juegos: cada entrada
+// (keyed por game_id) es su propio documento en una colección `pit_<kind>`, para
+// no chocar con el límite de 1MB por documento de Firestore (los 3 archivos
+// combinados ya pesan >4MB) y para poder subir/bajar solo lo que cambió.
+export const savePitLookupEntries = async (
+  kind: 'pitchers' | 'offense' | 'boxscore',
+  entries: Record<string, any>
+): Promise<{ saved: number; failed: number }> => {
+  const keys = Object.keys(entries || {});
+  if (keys.length === 0) return { saved: 0, failed: 0 };
+  if (!db || !app) {
+    console.warn("Firestore db is not initialized. Skipping PIT save.");
+    return { saved: 0, failed: keys.length };
+  }
+  const isAuthed = await ensureAnonymousAuth();
+  if (!isAuthed) return { saved: 0, failed: keys.length };
+
+  const collName = `pit_${kind}`;
+  let saved = 0;
+  let failed = 0;
+  // writeBatch soporta hasta 500 operaciones — se usan 400 para dejar margen.
+  const BATCH_SIZE = 400;
+  for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+    const chunk = keys.slice(i, i + BATCH_SIZE);
+    try {
+      const batch = writeBatch(db);
+      for (const key of chunk) {
+        const ref = doc(collection(db, collName), key);
+        batch.set(ref, entries[key], { merge: true });
+      }
+      await withFirestoreWriteTimeout(batch.commit(), `${collName} batch@${i}`);
+      saved += chunk.length;
+    } catch (error) {
+      console.error(`[Firestore PIT] Error guardando batch de ${collName} (offset ${i}):`, error);
+      failed += chunk.length;
+    }
+  }
+  return { saved, failed };
+};
+
+export const loadAllPitLookupEntries = async (
+  kind: 'pitchers' | 'offense' | 'boxscore'
+): Promise<Record<string, any>> => {
+  try {
+    if (!db) {
+      console.warn("Firestore db is not initialized. Skipping PIT load.");
+      return {};
+    }
+    const isAuthed = await ensureAnonymousAuth();
+    if (!isAuthed) return {};
+
+    const collName = `pit_${kind}`;
+    const snapshot = await withFirestoreReadTimeout(getDocs(collection(db, collName)), null, collName, 20000);
+    if (!snapshot) return {};
+
+    const result: Record<string, any> = {};
+    snapshot.forEach((docSnap) => {
+      result[docSnap.id] = docSnap.data();
+    });
+    return result;
+  } catch (error) {
+    console.error(`[Firestore PIT] Error cargando pit_${kind}:`, error);
+    return {};
   }
 };
 

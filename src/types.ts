@@ -149,6 +149,10 @@ export interface FatigueMetrics {
       relieversUsedYesterday: number | string;
       relieversUsedLast2Days: number | string;
       availableCount: number | string;
+      // Sept. 2026 (ronda 2 de auditoría) — ERA real del bullpen en ventana móvil de 7
+      // días, point-in-time (ver fetchBullpenFatigue en server.ts). null cuando todavía
+      // no hay 7 días de juegos del equipo para calcularlo.
+      eraLast7Days?: number | null;
     };
     away: {
       ipLast3Days: number | string;
@@ -156,6 +160,7 @@ export interface FatigueMetrics {
       relieversUsedYesterday: number | string;
       relieversUsedLast2Days: number | string;
       availableCount: number | string;
+      eraLast7Days?: number | null;
     };
   };
 }

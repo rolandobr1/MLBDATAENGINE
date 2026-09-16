@@ -86,20 +86,35 @@ const enrichLineupMetrics = (
   for (const batter of batters) {
     // Basic Contact Stress Formula (Mock)
     // Higher contact and lower K means more stress
-    const contactFactor = batter.contact_pct_vs_rhp || 0.8; 
-    const kFactor = batter.kPct || batter.strikeout_pct || 0.2;
-    const batterStress = (contactFactor * 100) - (kFactor * 100);
+    // Sept. 2026 — auditoría con el usuario (ronda 2): contact_pct_vs_rhp, kPct/strikeout_pct
+    // y walk_pct del bateador vienen TODOS en escala 0-100 (ej. contact 78.5, K% 18.5, BB% 8.2)
+    // — son el mismo patrón "Math.round((x/pa)*1000)/10" usado en server.ts. Este bloque los
+    // trataba como fracciones 0-1 y volvía a multiplicar por 100, inflando batter_contact_stress_score
+    // ~100x y lineup_pitch_count_risk_score ~100x cuando había dato real (los fallbacks sí estaban
+    // en escala 0-1, así que sólo fallaba con datos reales, nunca en el caso default). babip
+    // se deja igual: esa sí es una fracción 0-1 real (ver home/away_offense_babip).
+    const contactFactor = batter.contact_pct_vs_rhp ?? 80;
+    const kFactor = batter.kPct ?? batter.strikeout_pct ?? 20;
+    const batterStress = contactFactor - kFactor;
     batter.batter_contact_stress_score = Math.max(0, batterStress);
-    
+
     lineupContactStress += batter.batter_contact_stress_score;
 
-    if (kFactor < 0.18) lowKCount++;
+    // Umbral ajustado a la misma escala 0-100 que kFactor (antes comparaba contra 0.18,
+    // por lo que lineup_low_k_batters_count también daba siempre 0 con datos reales).
+    if (kFactor < 18) lowKCount++;
     if ((batter.babip || 0) > 0.300) highBabipCount++;
-    if ((batter.hardHitPct || 0) > 0.40) highHardhitCount++;
-    
-    // Pitch count risk: higher walk rate = higher risk
-    const bbPct = batter.walk_pct || 0.08;
-    lineupPitchRisk += (bbPct * 100);
+    // Sept. 2026 — auditoría con el usuario: batter.hardHitPct viene de Baseball Savant
+    // en escala 0-100 (ej. 42.3), no 0-1 — el umbral 0.40 nunca se cumplía. Además, hasta
+    // este fix, hardHitPct nunca se copiaba al bateador individual en server.ts (solo
+    // existía a nivel de equipo/pitcher agregado), así que el conteo daba siempre 0 por
+    // partida doble: campo vacío + umbral en escala equivocada. Ver applyBatterSavantContact
+    // en server.ts para el otro lado del fix.
+    if ((batter.hardHitPct || 0) > 40) highHardhitCount++;
+
+    // Pitch count risk: higher walk rate = higher risk (walk_pct ya viene en escala 0-100)
+    const bbPct = batter.walk_pct ?? 8;
+    lineupPitchRisk += bbPct;
   }
 
   if (batters.length > 0) {

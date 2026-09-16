@@ -22,7 +22,8 @@
     "klab:audit-dynamic-rolling-migration": "tsx src/datasets/klabDynamicRollingMigrationAudit.ts",
     "klab:audit-dynamic-rolling": "tsx src/datasets/klabDynamicRollingAudit.ts",
     "klab:compare-dynamic-rolling": "tsx src/datasets/klabDynamicRollingAudit.ts",
-    "klab:compare-dynamic-rolling-models": "tsx src/datasets/klabDynamicRollingModelComparison.ts"
+    "klab:compare-dynamic-rolling-models": "tsx src/datasets/klabDynamicRollingModelComparison.ts",
+    "migrate:pit-to-firestore": "tsx migrate_pit_to_firestore.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

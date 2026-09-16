@@ -29,8 +29,60 @@ import { promisify } from "util";
 import type { PITLookups } from "../utils";
 import { createRunRecorder, getRecentRuns } from "../services/pipelineRunLog";
 import { validateDataset } from "../../validate_dataset";
+import { savePitLookupEntries } from "../services/firestoreService";
 
 const execFileAsync = promisify(execFile);
+
+/** Los 3 archivos que escribe backfill_pitcher_stats_pit.py — ver savePitLookupEntries en firestoreService.ts. */
+const PIT_OUTPUT_FILES: Array<{ kind: "pitchers" | "offense" | "boxscore"; file: string; wrapKey: string }> = [
+  { kind: "pitchers", file: "pitcher_stats_pit.json", wrapKey: "pitchers" },
+  { kind: "offense", file: "offense_stats_pit.json", wrapKey: "offense" },
+  { kind: "boxscore", file: "boxscore_game_stats.json", wrapKey: "boxscore" },
+];
+
+function readPitOutputEntries(file: string, wrapKey: string): Record<string, any> {
+  try {
+    const p = path.join(process.cwd(), file);
+    if (!fs.existsSync(p)) return {};
+    const parsed = JSON.parse(fs.readFileSync(p, "utf-8"));
+    const entries = parsed?.[wrapKey] ?? parsed;
+    return (entries && typeof entries === "object") ? entries : {};
+  } catch (err) {
+    console.error(`[Firestore PIT] No se pudo leer ${file} para sincronizar:`, err);
+    return {};
+  }
+}
+
+/**
+ * Sube a Firestore SOLO las entradas de los 3 archivos PIT que este backfill
+ * agregó o cambió (comparando un snapshot tomado antes de correr el script contra
+ * el archivo ya actualizado) — no las ~2400+ que ya existían, para no repetir
+ * miles de escrituras en cada extracción. Ver comentario largo en
+ * firestoreService.ts (savePitLookupEntries) para el porqué: el disco local de
+ * Render es efímero, así que sin esto el backfill "corre bien" en cada harvest
+ * pero cualquier redeploy posterior revierte el archivo a lo commiteado en git.
+ */
+async function syncPitOutputsToFirestore(beforeSnapshots: Record<string, Record<string, any>>): Promise<void> {
+  for (const { kind, file, wrapKey } of PIT_OUTPUT_FILES) {
+    const after = readPitOutputEntries(file, wrapKey);
+    const before = beforeSnapshots[kind] || {};
+    const changed: Record<string, any> = {};
+    for (const key of Object.keys(after)) {
+      const prev = before[key];
+      if (prev === undefined || JSON.stringify(prev) !== JSON.stringify(after[key])) {
+        changed[key] = after[key];
+      }
+    }
+    const changedCount = Object.keys(changed).length;
+    if (changedCount === 0) continue;
+    try {
+      const result = await savePitLookupEntries(kind, changed);
+      console.log(`[Firestore PIT] ${kind}: ${result.saved} entrada(s) sincronizada(s) a Firestore (${result.failed} fallida(s)) de ${changedCount} nueva(s)/cambiada(s).`);
+    } catch (err) {
+      console.error(`[Firestore PIT] Error sincronizando ${kind} a Firestore:`, err);
+    }
+  }
+}
 
 /** Resultado resumido del último evento SSE "done" del endpoint /api/harvest. */
 export interface HarvestLoopbackResult {
@@ -142,12 +194,25 @@ export async function runBackfillPitSubprocess(
   if (options.reverify) {
     args.push("--reverify");
   }
+  // Snapshot ANTES de correr el script, para poder subir a Firestore solo lo que
+  // este backfill puntual agrega/cambia (ver syncPitOutputsToFirestore arriba).
+  const beforeSnapshots: Record<string, Record<string, any>> = {};
+  for (const { kind, file, wrapKey } of PIT_OUTPUT_FILES) {
+    beforeSnapshots[kind] = readPitOutputEntries(file, wrapKey);
+  }
   try {
     const { stdout } = await execFileAsync(
       pythonBin,
       args,
       { cwd: process.cwd(), timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 }
     );
+    // No debe tumbar el backfill si Firestore falla — el archivo local ya quedó
+    // bien escrito por el script; esto es solo la persistencia extra.
+    try {
+      await syncPitOutputsToFirestore(beforeSnapshots);
+    } catch (syncErr) {
+      console.error("[Firestore PIT] Error inesperado sincronizando salidas del backfill:", syncErr);
+    }
     return { exitCode: 0, stdoutTail: stdout.slice(-4000) };
   } catch (err: any) {
     // execFile lanza en exit code != 0; igual devolvemos la salida para el log estructurado.

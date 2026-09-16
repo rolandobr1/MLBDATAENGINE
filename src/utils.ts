@@ -596,13 +596,24 @@ export function generateMLDatasetCSV(games: MLBGame[], pitLookups: PITLookups = 
           let lineupPitchRisk = 0;
           let highHardhitCount = 0;
           for (const batter of batters) {
-            const contactFactor = batter.contact_pct_vs_rhp || 0.8; 
-            const kFactor = batter.kPct || batter.strikeout_pct || 0.2;
-            const batterStress = (contactFactor * 100) - (kFactor * 100);
+            // Sept. 2026 (ronda 2) — mismo bug de escala ya corregido en
+            // src/etl/transformers/vortexMetrics.ts (esta es la copia gemela de
+            // getLineupMetrics que usa generateMLDatasetCSV, endpoint /api/ml-dataset/csv):
+            // contact_pct_vs_rhp/kPct/strikeout_pct/walk_pct del bateador ya vienen en
+            // escala 0-100, no 0-1 — multiplicar por 100 de nuevo inflaba el resultado
+            // ~100x cuando había dato real (los fallbacks sí estaban en escala 0-1, por
+            // eso solo fallaba con datos reales).
+            const contactFactor = batter.contact_pct_vs_rhp ?? 80;
+            const kFactor = batter.kPct ?? batter.strikeout_pct ?? 20;
+            const batterStress = contactFactor - kFactor;
             lineupContactStress += Math.max(0, batterStress);
-            if ((batter.hardHitPct || 0) > 0.40) highHardhitCount++;
-            const bbPct = batter.walk_pct || 0.08;
-            lineupPitchRisk += (bbPct * 100);
+            // Sept. 2026 — auditoría con el usuario: batter.hardHitPct viene de Savant en
+            // escala 0-100 (ej. 42.3), no 0-1 — el umbral 0.40 nunca se cumplía porque
+            // además el campo nunca se copiaba al bateador individual (fix en server.ts,
+            // ver applyBatterSavantContact). Con ambos arreglados, el umbral real es 40.
+            if ((batter.hardHitPct || 0) > 40) highHardhitCount++;
+            const bbPct = batter.walk_pct ?? 8;
+            lineupPitchRisk += bbPct;
           }
           contactScore = lineupContactStress / batters.length;
           pitchRisk = lineupPitchRisk / batters.length;

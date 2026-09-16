@@ -74,5 +74,28 @@ service cloud.firestore {
         && incoming().list.size() <= 200;
       allow delete: if isSignedIn() && userDoc == 'registered';
     }
+
+    // Sept. 2026 — auditoría con el usuario, punto #1: persistencia de las stats
+    // point-in-time (pitcher_stats_pit.json / offense_stats_pit.json /
+    // boxscore_game_stats.json) para que sobrevivan a un redeploy de Render (disco
+    // efímero) igual que ya sobrevive `games`. Una colección por archivo — cada
+    // documento es una entrada keyed por gameId, igual patrón que `games/{gameId}`
+    // — en vez de un solo documento gigante, porque los 3 archivos combinados ya
+    // pesan más de 4MB (el límite de Firestore es 1MB por documento).
+    match /pit_pitchers/{gameId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(gameId);
+      allow delete: if isSignedIn() && isValidId(gameId);
+    }
+    match /pit_offense/{gameId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(gameId);
+      allow delete: if isSignedIn() && isValidId(gameId);
+    }
+    match /pit_boxscore/{gameId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(gameId);
+      allow delete: if isSignedIn() && isValidId(gameId);
+    }
   }
 }
