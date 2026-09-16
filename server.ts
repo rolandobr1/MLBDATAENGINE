@@ -2984,6 +2984,17 @@ async function fetchRealMLBGameData(
       }
     };
 
+    // Sept. 2026 — nueva feature pedida por el usuario: lineup_confirmed/lineup_source
+    // eran columnas muertas en el CSV (nada las llenaba nunca), pero el código de acá
+    // arriba YA distingue internamente entre las dos fuentes posibles de una alineación:
+    // parseLineupFromBox (real, sale del battingOrder oficial que MLB publica en el
+    // boxscore, normalmente 1-3h antes del primer pitch) y fetchTopBattersFromRoster
+    // (proyección de respaldo, top 9 del roster activo por PA de temporada, usada
+    // mientras MLB todavía no publicó la alineación oficial). Se registra esa
+    // distinción, que ya existía, en vez de inventar una nueva.
+    const homeLineupFromBoxscore = realData.lineups.home.length > 0;
+    const awayLineupFromBoxscore = realData.lineups.away.length > 0;
+
     if (realData.lineups.home.length === 0) {
       const homeTeamName = boxData.teams?.home?.team?.name || gameEntry?.teams?.home?.team?.name || "Home";
       realData.lineups.home = await fetchTopBattersFromRoster(homeTeamId, homeTeamName);
@@ -2992,6 +3003,19 @@ async function fetchRealMLBGameData(
       const awayTeamName = boxData.teams?.away?.team?.name || gameEntry?.teams?.away?.team?.name || "Away";
       realData.lineups.away = await fetchTopBattersFromRoster(awayTeamId, awayTeamName);
     }
+
+    // lineup_confirmed es a nivel de partido (no hay una columna por lado en el CSV):
+    // solo es true cuando AMBAS alineaciones salieron del battingOrder oficial. Si una
+    // de las dos todavía es proyección, el partido como conjunto no está "confirmado".
+    const bothLineupsConfirmed = homeLineupFromBoxscore && awayLineupFromBoxscore;
+    const bothLineupsProjected = !homeLineupFromBoxscore && !awayLineupFromBoxscore;
+    realData.lineups.lineup_confirmed = bothLineupsConfirmed;
+    realData.lineups.lineup_source = bothLineupsConfirmed
+      ? "mlb_boxscore"
+      : bothLineupsProjected
+        ? "roster_top_pa"
+        : "mixed";
+    realData.lineups.lineup_updated_at = new Date().toISOString();
 
     // 4. Team offensive & bullpen stats
     // Sept. 2026 (ronda 2 de auditoría) — stats=season ignora cualquier corte de fecha
@@ -5210,7 +5234,13 @@ function buildDirectGameData(
         totalBasesPropSource: p.totalBasesPropSource ?? null,
         totalBasesPropHitRate: safeFloat(p.totalBasesPropHitRate),
         totalBasesPropHitRateDisplay: p.totalBasesPropHitRateDisplay ?? null
-      }))
+      })),
+      // Sept. 2026 — antes estas 3 propiedades nunca se copiaban acá, así que
+      // lineup_confirmed/lineup_source quedaban siempre vacías en el CSV aunque
+      // fetchRealMLBGameData ya las calculaba (ver realData.lineups.lineup_confirmed).
+      lineup_confirmed: realMLBData?.lineups?.lineup_confirmed ?? false,
+      lineup_source: realMLBData?.lineups?.lineup_source ?? null,
+      lineup_updated_at: realMLBData?.lineups?.lineup_updated_at ?? null
     },
     linescore: realMLBData?.linescore || null,
     liveBoxscore: realMLBData?.liveBoxscore || null,

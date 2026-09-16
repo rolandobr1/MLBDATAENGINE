@@ -50,7 +50,7 @@ Mismo endpoint (`fetchBatterSplits`, `stats=statSplits&season=X` sin fecha), mis
 
 ---
 
-## 3. Columnas nunca implementadas (no son fuga, son funcionalidad muerta)
+## 3. Columnas nunca implementadas (no son fuga, son funcionalidad muerta) — `lineup_confirmed`/`lineup_source` ya implementadas (ver sección 9)
 
 - **`lineup_confirmed`** y **`lineup_source`**: el código de exportación lee `g.lineups?.lineup_confirmed` y `g.lineups?.lineup_source`, pero en ningún lugar de todo `server.ts` se escribe esa propiedad — ni siquiera existe la palabra `lineupConfirmed` en el archivo. El campo se diseñó (hasta tiene un comentario explicando qué debería documentar) pero nunca se conectó al harvest real. Sale siempre `0` / vacío en el 100% de las filas, para siempre, hasta que alguien lo implemente.
 - **`line_source` vacío en el 100% de las filas**: esto **no es un bug** — es consistente con el hallazgo ya conocido de que las cuotas no se capturan automáticamente en ~95% de los casos. El código de `getBettingLineSource` se comporta bien (vacío cuando no hay línea real que reportar).
@@ -138,3 +138,22 @@ Pediste que el backfill corriera desde la primera extracción del día. Investig
 3. **Hacer `git add` / `commit` / `push` como siempre** para que Render redepliegue con el código nuevo. A partir de ahí, cada extracción sincroniza automáticamente lo nuevo a Firestore, y cada redeploy futuro restaura desde ahí antes de servir nada.
 
 Verificado con `tsc --noEmit` (mismo baseline de errores preexistentes, ninguno nuevo de este cambio), 39/39 tests, y build de esbuild limpio. Igual que con los 4 leaks anteriores: **no se ha corrido un ciclo real de redeploy-en-Render con este código todavía** — vale la pena que confirmes en `/api/diagnostics/render` o revisando el CSV después del primer harvest post-deploy que la cobertura PIT ya no se congela.
+
+---
+
+## 9. `lineup_confirmed` / `lineup_source` — implementadas (16 de septiembre, sesión de seguimiento)
+
+Estas dos columnas (sección 3) nunca las llenaba nada — quedaban siempre vacías, no por fuga sino porque nadie las conectó. Revisando el código encontré que **la distinción que necesitan ya existe internamente** en `fetchRealMLBGameData` (`server.ts`), solo que nunca se exponía:
+
+- `parseLineupFromBox`: arma la alineación real desde el `battingOrder` oficial que MLB publica en el boxscore (normalmente 1-3h antes del primer pitch, o ya definitivo si el partido está en curso o terminado).
+- `fetchTopBattersFromRoster`: se usa como respaldo SOLO cuando MLB todavía no publicó esa alineación — arma una proyección con los 9 bateadores de más apariciones al plato del roster activo esa temporada.
+
+**Implementado:** se registra cuál de las dos fuentes se usó para cada lado (local/visitante), y se expone a nivel de partido:
+
+- `lineup_confirmed = true` únicamente si **ambas** alineaciones (local y visitante) vinieron del boxscore oficial. Si cualquiera de las dos sigue siendo la proyección de respaldo, el partido como conjunto no cuenta como confirmado.
+- `lineup_source`: `"mlb_boxscore"` (ambas confirmadas), `"roster_top_pa"` (ambas proyectadas) o `"mixed"` (una confirmada, la otra todavía proyectada — típico de extracciones tempranas del día, cuando un equipo ya publicó su alineación y el otro no).
+- `lineup_updated_at`: timestamp ISO de cuándo se calculó esa clasificación en esta corrida del harvest.
+
+Un detalle a tener en cuenta: esto solo se recalcula cuando el juego pasa por el pipeline completo (`fetchRealMLBGameData`). El "refresco liviano" que usa `updateSingleGameData` para partidos con cobertura pregame ya sólida no vuelve a tocar la alineación — así que un partido extraído ANTES de este fix (con `lineup_confirmed` vacío) no lo va a rellenar solo salvo que se le fuerce una re-extracción completa; los partidos extraídos DESPUÉS del deploy sí lo tendrán desde el primer harvest.
+
+Verificado con `tsc --noEmit` (mismo baseline, sin errores nuevos), 39/39 tests, y build de esbuild limpio. Incluido en `server.ts`, que ya está en tu carpeta.
