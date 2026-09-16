@@ -39,11 +39,26 @@ async function withCache(action: string, extraKey: string, fn: () => Promise<any
 
   const request = (async () => {
     const result = await fn();
-    try {
-      fs.writeFileSync(cacheFile, JSON.stringify(result));
-      console.log(`[PyBaseball Cache] Saved fresh data for ${action} ${extraKey}`);
-    } catch (e) {
-      console.error(`[PyBaseball Cache] Failed to write cache for ${action}`);
+    // Sept. 2026 — encontrado diagnosticando por qué recent_velocity/spin_rate/
+    // o_swing_pct seguían vacíos todo el día incluso reintentando el harvest: este
+    // caché (a diferencia de withPerPitcherCache, que sí expira sus fallos a los 30
+    // min) escribía a disco CUALQUIER respuesta, incluida una falla o un "sin datos"
+    // (get_recent_statcast en Python devuelve {"error": ...} sin "success" cuando
+    // statcast() no trae filas para el rango de fechas). Una vez escrito ese archivo
+    // de caché para el día, todo reintento posterior de la MISMA extracción leía esa
+    // misma falla del disco sin volver a intentar — un solo fallo transitorio (red,
+    // rate-limit de Baseball Savant, lo que sea) dejaba esas 3 columnas vacías el
+    // resto del día. Ahora solo se persiste a disco un resultado que reporta éxito.
+    const isSuccess = !!result && result.success === true;
+    if (isSuccess) {
+      try {
+        fs.writeFileSync(cacheFile, JSON.stringify(result));
+        console.log(`[PyBaseball Cache] Saved fresh data for ${action} ${extraKey}`);
+      } catch (e) {
+        console.error(`[PyBaseball Cache] Failed to write cache for ${action}`);
+      }
+    } else {
+      console.warn(`[PyBaseball Cache] Resultado sin éxito para ${action} ${extraKey} — no se cachea, se reintentará en la próxima llamada.`);
     }
     return result;
   })().finally(() => cacheRequestsInFlight.delete(requestKey));

@@ -10,7 +10,11 @@ def get_recent_statcast(start_date, end_date):
     try:
         data = statcast(start_dt=start_date, end_dt=end_date)
         if data.empty:
-            return {"error": "No data found for given dates."}
+            # Sept. 2026: antes no llevaba "success": False — el lado Node.js (withCache
+            # en pybaseballApi.ts) cacheaba esta respuesta como si fuera válida, dejando
+            # recent_velocity/spin_rate/o_swing_pct vacíos el resto del día tras un solo
+            # fallo transitorio. Ver el comentario en withCache.
+            return {"success": False, "error": "No data found for given dates."}
         
         # Filtramos campos pesados
         cols_to_keep = ['game_date', 'player_name', 'pitcher', 'batter', 'events', 'description',
