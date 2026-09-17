@@ -36,7 +36,7 @@ for (const key in process.env) {
 
 import express from "express";
 import { createServer as createViteServer } from "vite";
-import { saveGameData, loadAllGamesFromFirestore, loadGamesByDateFromFirestore, loadGamesByDateRangeFromFirestore, loadLatestGamesFromFirestore, loadExtractedDatesFromFirestore, ensureAnonymousAuth, loadAllPitLookupEntries } from "./src/services/firestoreService";
+import { saveGameData, loadAllGamesFromFirestore, loadGamesByDateFromFirestore, loadGamesByDateRangeFromFirestore, loadLatestGamesFromFirestore, loadExtractedDatesFromFirestore, ensureAnonymousAuth, loadPitLookupEntriesForIds } from "./src/services/firestoreService";
 import { scrapeStrikeoutProps } from "./src/etl/extractors/rotowireScraper";
 import {
   WeatherData,
@@ -892,6 +892,31 @@ function validateGamePayload(game: any, errorsLog: any[]): any {
 // API Routes
 // --------------------------------------------------------------------
 
+// Sept. 2026 (auditoría de consumo de lecturas) — desde que restorePitFilesFromFirestore
+// dejó de traer el historial PIT COMPLETO en cada arranque (ver comentario junto a esa
+// función: escanear ~7200 documentos en cada reinicio explicaba por sí solo las ~15 mil
+// lecturas de Firestore de una sola mañana), un juego fuera de la ventana reciente puede
+// llegar acá sin cobertura PIT en disco local — algo que antes nunca pasaba porque todo
+// el historial ya estaba precargado. Este helper cubre ese caso puntual bajo demanda: antes
+// de inyectar PIT a un grupo de juegos (una fecha vieja reabierta, una descarga histórica),
+// revisa qué gameIds YA están en el caché local y solo le pide a Firestore los que de
+// verdad faltan — nunca la colección entera — reutilizando la misma función de restauración
+// del arranque, ahora parametrizada por gameIds en vez de "todo".
+async function ensurePitCoverageForGames(games: MLBGame[]): Promise<void> {
+  if (!games || games.length === 0) return;
+  const lookups = readPitLookups();
+  const missingIds = games
+    .map((g: any) => String(g?.id || g?.metadata?.id || ""))
+    .filter(Boolean)
+    .filter((id) => !(lookups.pitchers?.[id] || lookups.offense?.[id] || lookups.boxscore?.[id]));
+  if (missingIds.length === 0) return;
+  try {
+    await restorePitFilesFromFirestore("bajo demanda", missingIds);
+  } catch (err) {
+    console.error(`[Firestore PIT] Error en restauración bajo demanda para ${missingIds.length} juego(s):`, err);
+  }
+}
+
 function injectPitStats(games: MLBGame[]): MLBGame[] {
   const pitLookups = readPitLookups();
   if (!pitLookups || !pitLookups.pitchers) {
@@ -962,6 +987,7 @@ app.get("/api/games", async (req, res) => {
 
   if (dateGames.length > 0) {
     maybeBackfillTheOddsApiForDate(date, dateGames);
+    await ensurePitCoverageForGames(dateGames);
     res.json({ games: injectPitStats(dateGames), totalGames: countLocalGames(db), dateExtracted: true });
     return;
   }
@@ -973,6 +999,7 @@ app.get("/api/games", async (req, res) => {
     dateGames = db[date] || [];
   }
   maybeBackfillTheOddsApiForDate(date, dateGames);
+  await ensurePitCoverageForGames(dateGames);
   res.json({
     games: injectPitStats(dateGames),
     totalGames: countLocalGames(db),
@@ -1414,7 +1441,8 @@ app.get("/api/ml-dataset/csv", async (req, res) => {
       const games = db[date] || [];
       allGames.push(...games);
     }
-    
+
+    await ensurePitCoverageForGames(allGames);
     const pitLookups = readPitLookups();
     const csvContent = generateMLDatasetCSV(allGames, pitLookups);
     res.setHeader("Content-Type", "text/csv");
@@ -1499,7 +1527,8 @@ app.get("/api/batters-dataset/csv", async (req, res) => {
       const games = db[dateKey] || [];
       allGames.push(...games);
     }
-    
+
+    await ensurePitCoverageForGames(allGames);
     const pitLookups = readPitLookups();
     const enrichedGames = await enrichGamesWithSavantBatterContact(await enrichGamesWithTotalBasesProps(allGames));
     const csvContent = generateBattersCSV(enrichedGames, pitLookups);
@@ -1656,6 +1685,7 @@ app.get("/api/game/:gameId", async (req, res) => {
     }
     
     // Inject PIT stats
+    await ensurePitCoverageForGames([gameData]);
     const pitGames = injectPitStats([gameData]);
     res.json(pitGames[0]);
   } catch (err) {
@@ -5552,6 +5582,12 @@ app.post("/api/harvest", async (req, res) => {
   const existingGamesForDate = currentDBSnapshot[date] || [];
   const historicalDate = isPastGameDate(date);
   const existingGamesById = new Map(existingGamesForDate.map((game: any) => [String(game?.id || game?.metadata?.id || ""), game]));
+  // Sept. 2026: si `date` es una fecha vieja fuera de la ventana reciente que
+  // ya restauró el arranque (ver ensurePitCoverageForGames), sin esto
+  // `pitLookupsForReverify` podría venir sin cobertura para juegos que en
+  // realidad SÍ la tienen en Firestore — haciendo que `hasPitCoverage` diera
+  // falso negativo y se disparara una re-extracción/backfill innecesaria.
+  await ensurePitCoverageForGames(existingGamesForDate);
   const pitLookupsForReverify = readPitLookups();
   const hasPitCoverage = (gamePk: string, stored: MLBGame | undefined): boolean => {
     const homeName = stored?.pitchers?.home?.name;
@@ -7089,20 +7125,41 @@ async function runStartupFirestoreSync() {
 // (por si sobrevivió, o por si el sync a Firestore de una corrida reciente falló a
 // mitad de camino) con TODO lo que haya en Firestore — Firestore manda en caso de
 // conflicto porque siempre es al menos tan reciente como el último backfill exitoso.
-async function restorePitFilesFromFirestore(reason: string) {
+//
+// Sept. 2026 (auditoría de consumo de lecturas) — "TODO lo que haya en Firestore"
+// de arriba era literal: usaba loadAllPitLookupEntries, que escanea las 3
+// colecciones COMPLETAS (~2300-2500 documentos cada una) en cada arranque, no
+// solo en deploys — también en cada reinicio por crash. La mañana del
+// 2026-09-17 el proceso se reinició 3 veces por el mismo crash de memoria
+// (exit 134) ya diagnosticado el día anterior, y cada reinicio repitió el
+// escaneo completo de ~7200 documentos — eso solo ya explica (y supera) las
+// ~15 mil lecturas de Firestore que se vieron esa mañana. Ahora solo se
+// restauran los gameIds que quedaron cargados en games_db/ tras
+// runStartupFirestoreSync (la ventana reciente, o el fallback de "fecha más
+// reciente") — se le pasan explícitamente como `gameIds`. Los juegos viejos
+// fuera de esa ventana no necesitan cobertura PIT recién llegado el proceso:
+// ya son inmutables (Final + con cobertura) y, si hiciera falta releerlos para
+// una descarga vieja, es un caso puntual, no algo que valga restaurar entero
+// en cada arranque.
+async function restorePitFilesFromFirestore(reason: string, gameIds: string[]) {
   const targets: Array<{ kind: "pitchers" | "offense" | "boxscore"; file: string; wrapKey: string }> = [
     { kind: "pitchers", file: "pitcher_stats_pit.json", wrapKey: "pitchers" },
     { kind: "offense", file: "offense_stats_pit.json", wrapKey: "offense" },
     { kind: "boxscore", file: "boxscore_game_stats.json", wrapKey: "boxscore" },
   ];
 
+  if (gameIds.length === 0) {
+    console.log(`[Firestore PIT Restore] (${reason}) Ningún juego cargado localmente todavía; se omite la restauración PIT.`);
+    return;
+  }
+
   let anyRestored = false;
   for (const { kind, file, wrapKey } of targets) {
     try {
-      const remote = await loadAllPitLookupEntries(kind);
+      const remote = await loadPitLookupEntriesForIds(kind, gameIds);
       const remoteCount = Object.keys(remote).length;
       if (remoteCount === 0) {
-        console.log(`[Firestore PIT Restore] (${reason}) ${kind}: sin datos en Firestore aún, se deja el disco local tal cual.`);
+        console.log(`[Firestore PIT Restore] (${reason}) ${kind}: sin datos en Firestore para los ${gameIds.length} juego(s) recién restaurados.`);
         continue;
       }
 
@@ -7122,7 +7179,7 @@ async function restorePitFilesFromFirestore(reason: string) {
       const merged = { ...local, ...remote };
       fs.writeFileSync(filePath, JSON.stringify({ [wrapKey]: merged }, null, 2));
       anyRestored = true;
-      console.log(`[Firestore PIT Restore] (${reason}) ${kind}: ${Object.keys(merged).length} entrada(s) en disco tras fusionar ${remoteCount} de Firestore + ${Object.keys(local).length} local(es).`);
+      console.log(`[Firestore PIT Restore] (${reason}) ${kind}: ${Object.keys(merged).length} entrada(s) en disco tras fusionar ${remoteCount} de Firestore (de ${gameIds.length} juego(s) recientes) + ${Object.keys(local).length} local(es).`);
     } catch (err) {
       console.error(`[Firestore PIT Restore] (${reason}) Error restaurando ${kind}:`, err);
     }
@@ -7179,12 +7236,35 @@ async function startServer() {
     }).catch(console.error);
 
     startLiveGamesAutoupdater();
-    runStartupFirestoreSync().catch((err) => {
-      console.error("[Firestore Sync] Error en sincronización de arranque en segundo plano:", err);
-    });
-    restorePitFilesFromFirestore("arranque").catch((err) => {
-      console.error("[Firestore PIT Restore] Error en restauración de arranque en segundo plano:", err);
-    });
+
+    // Sept. 2026 (auditoría de consumo de lecturas): antes estas dos corrían en
+    // paralelo, sin relación entre sí — restorePitFilesFromFirestore escaneaba
+    // sola las 3 colecciones PIT completas. Ahora se encadenan: primero se deja
+    // que runStartupFirestoreSync() restaure en games_db/ la ventana de juegos
+    // reciente (o el fallback de "fecha más reciente"), y recién después se
+    // usan esos gameIds ya en disco para pedirle a Firestore SOLO la cobertura
+    // PIT de esos juegos puntuales — nunca la historia completa. Sigue sin
+    // bloquear el arranque del server (la IIFE no se espera acá).
+    (async () => {
+      try {
+        await runStartupFirestoreSync();
+      } catch (err) {
+        console.error("[Firestore Sync] Error en sincronización de arranque en segundo plano:", err);
+      }
+      try {
+        const dbAfterSync = readGamesDB();
+        const recentGameIds = new Set<string>();
+        for (const date of Object.keys(dbAfterSync)) {
+          for (const game of dbAfterSync[date] || []) {
+            const id = String(game?.id || game?.metadata?.id || "");
+            if (id) recentGameIds.add(id);
+          }
+        }
+        await restorePitFilesFromFirestore("arranque", Array.from(recentGameIds));
+      } catch (err) {
+        console.error("[Firestore PIT Restore] Error en restauración de arranque en segundo plano:", err);
+      }
+    })();
   });
 }
 

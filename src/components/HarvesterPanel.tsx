@@ -310,8 +310,13 @@ export const HarvesterPanel: React.FC<HarvesterPanelProps> = ({
               </button>
             )}
 
-            {/* Progress Bar Block */}
-            {isLoading ? (
+            {/* Progress Bar Block — también se muestra durante
+                isLiveUpdating (sept. 2026): el botón "Actualizar Juegos en
+                Vivo" ahora emite el mismo progreso SSE que la extracción
+                completa (ver liveUpdateRoutes.ts + handleLiveUpdate en
+                App.tsx), así que comparte esta misma barra en vez de solo
+                mostrar el spinner del botón sin avance visible. */}
+            {(isLoading || isLiveUpdating) ? (
               <HarvestProgressBar progress={harvestProgress} />
             ) : (
               <div className="text-slate-400 text-xs flex items-center gap-1.5 font-mono">

@@ -28,6 +28,18 @@
  * completa: un juego sin cobertura pregame sólida se reporta como "necesita
  * extracción completa primero" en vez de disparar ese pipeline caro sin que
  * el usuario lo pida explícitamente con el otro botón.
+ *
+ * Sept. 2026 — pedido del usuario: el botón "Actualizar Juegos en Vivo" solo
+ * mostraba un spinner genérico mientras corría, sin ningún indicio de avance
+ * real (a diferencia de "Ejecutar Extracción ETL", que sí muestra % + paso +
+ * juego actual vía SSE). Como acá también se procesa juego por juego de forma
+ * secuencial, se aplicó la misma lógica: el endpoint pasa a responder como
+ * stream de eventos (`text/event-stream`, igual formato `data: {...}\n\n` que
+ * ya usa /api/harvest) y emite un evento de progreso antes/después de cada
+ * juego, en vez de esperar a que termine todo para responder un JSON único.
+ * El frontend (App.tsx, handleLiveUpdate) reutiliza el mismo parser de SSE
+ * que ya tenía para /api/harvest, así que ambos botones comparten la misma
+ * barra de progreso (HarvesterPanel.tsx).
  */
 
 import type { Express } from "express";
@@ -62,11 +74,33 @@ export function registerLiveUpdateRoutes(app: Express, deps: LiveUpdateDeps): vo
       return;
     }
 
+    // Igual que /api/harvest: se pasa a modo SSE desde el arranque, para que
+    // el frontend pueda leer progreso real en vez de esperar un JSON único al
+    // final. Todas las respuestas de acá en adelante (incluidos los casos
+    // "sin juegos"/"nada elegible") van como eventos `data: {...}\n\n`.
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    const emit = (data: object) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
     const db = readGamesDB();
     const gamesForDate = db[date] || [];
 
     if (gamesForDate.length === 0) {
-      res.json({ success: true, updated: [], skipped: [], message: `No hay juegos guardados para ${date}. Corré la extracción completa primero.` });
+      emit({
+        phase: "done",
+        pct: 100,
+        step: `No hay juegos guardados para ${date}. Corré la extracción completa primero.`,
+        updated: [],
+        skipped: [],
+        message: `No hay juegos guardados para ${date}. Corré la extracción completa primero.`,
+      });
+      res.end();
       return;
     }
 
@@ -106,23 +140,47 @@ export function registerLiveUpdateRoutes(app: Express, deps: LiveUpdateDeps): vo
     }
 
     if (eligible.length === 0) {
-      res.json({
-        success: true,
-        updated: [],
-        skipped,
-        message: "Ningún juego de esta fecha está en vivo ahora mismo (o los que faltan por terminar todavía no tienen cobertura pregame — corré la extracción completa primero).",
-      });
+      const message = "Ningún juego de esta fecha está en vivo ahora mismo (o los que faltan por terminar todavía no tienen cobertura pregame — corré la extracción completa primero).";
+      emit({ phase: "done", pct: 100, step: message, updated: [], skipped, message });
+      res.end();
       return;
     }
+
+    emit({
+      phase: "real_data",
+      step: `${eligible.length} juego(s) en vivo encontrados — actualizando...`,
+      pct: 3,
+      totalGames: eligible.length,
+    });
 
     // Secuencial (no Promise.all) a propósito: mismo criterio que el
     // auto-updater de fondo, para no ráfagas de llamadas simultáneas a la API
     // de MLB que puedan gatillar rate-limiting.
+    const totalGames = eligible.length;
+    const pctPerGame = Math.floor(94 / totalGames);
     const results: LiveUpdateGameResult[] = [];
-    for (const item of eligible) {
+    for (let gi = 0; gi < eligible.length; gi++) {
+      const item = eligible[gi];
+      const basePct = 3 + gi * pctPerGame;
+      emit({
+        phase: "real_data",
+        step: `Actualizando: ${item.label}`,
+        gameLabel: item.label,
+        gameIndex: gi + 1,
+        totalGames,
+        pct: basePct,
+      });
       try {
         await updateSingleGameData(item.gameId, date, false);
         results.push({ gameId: item.gameId, label: item.label, status: "updated" });
+        emit({
+          phase: "real_data",
+          step: `✓ ${item.label}`,
+          gameLabel: item.label,
+          gameIndex: gi + 1,
+          totalGames,
+          pct: basePct + pctPerGame,
+        });
       } catch (err) {
         console.error(`[Live Update] Error al actualizar juego ${item.label} (${item.gameId}):`, err);
         results.push({
@@ -131,13 +189,27 @@ export function registerLiveUpdateRoutes(app: Express, deps: LiveUpdateDeps): vo
           status: "error",
           error: err instanceof Error ? err.message : String(err),
         });
+        emit({
+          phase: "real_data",
+          step: `✗ ${item.label} (falló)`,
+          gameLabel: item.label,
+          gameIndex: gi + 1,
+          totalGames,
+          pct: basePct + pctPerGame,
+        });
       }
     }
 
-    res.json({
-      success: true,
+    const failedCount = results.filter((r) => r.status === "error").length;
+    emit({
+      phase: "done",
+      pct: 100,
+      step: failedCount > 0
+        ? `Actualización en vivo completada — ${totalGames - failedCount} de ${totalGames} juego(s) OK`
+        : `Actualización en vivo completada — ${totalGames} juego(s)`,
       updated: results,
       skipped,
     });
+    res.end();
   });
 }

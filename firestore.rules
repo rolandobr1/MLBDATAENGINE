@@ -40,8 +40,16 @@ service cloud.firestore {
     // Matches for games collection
     match /games/{gameId} {
       allow get: if isSignedIn() && isValidId(gameId);
-      allow list: if isSignedIn() && resource.data.timestamp is string;
-      
+      // Sept. 2026 — antes exigía "&& resource.data.timestamp is string" acá.
+      // Un `list` (consulta con where(), no un get puntual) evalúa esta condición
+      // contra CADA documento que la consulta devolvería — si uno solo de los
+      // documentos existentes (por ejemplo, de fechas históricas) no tiene
+      // `timestamp` guardado como string, Firestore no lo filtra: rechaza la
+      // consulta ENTERA con permission-denied, sin indicar cuál documento falló.
+      // Esto rompía loadGamesByDateFromFirestore y loadGamesByDateRangeFromFirestore
+      // por completo. Se saca esa condición — mismo nivel de exigencia que `get`.
+      allow list: if isSignedIn();
+
       allow create: if isSignedIn() 
         && isValidId(gameId) 
         && isValidGame(incoming())

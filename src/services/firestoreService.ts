@@ -1,5 +1,5 @@
 import { db, app } from '../config/firebase';
-import { doc, collection, setDoc, getDoc, getDocs, getCountFromServer, query, where, orderBy, limit, arrayUnion, writeBatch } from 'firebase/firestore';
+import { doc, collection, setDoc, getDoc, getDocs, getCountFromServer, query, where, orderBy, limit, arrayUnion, writeBatch, documentId } from 'firebase/firestore';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 
 let authInitialized = false;
@@ -424,6 +424,59 @@ export const loadAllPitLookupEntries = async (
     return result;
   } catch (error) {
     console.error(`[Firestore PIT] Error cargando pit_${kind}:`, error);
+    return {};
+  }
+};
+
+// Sept. 2026 — encontrado auditando por qué el consumo de lecturas de Firestore
+// se disparó (~15 mil lecturas en una sola mañana): `loadAllPitLookupEntries`
+// de arriba escanea la colección COMPLETA (`pit_pitchers`/`pit_offense`/
+// `pit_boxscore`, ~2300-2500 documentos cada una) y `restorePitFilesFromFirestore`
+// (server.ts) la llamaba en CADA arranque del proceso — no solo al hacer deploy,
+// sino en cada reinicio, incluidos los que dispara un crash. La mañana del
+// 2026-09-17 el servicio se reinició 3 veces por el mismo crash de memoria
+// (exit 134) que ya se había diagnosticado el día anterior — cada reinicio
+// repitió el escaneo completo de las 3 colecciones (~7200 documentos), lo que
+// por sí solo explica (y supera) las ~15 mil lecturas reportadas, sin contar el
+// resto del tráfico normal. Es exactamente el mismo patrón que `mlb_database.json`
+// (un archivo/colección gigante releído entero en cada operación) que ya se
+// había corregido para `games` — acá quedó pendiente porque esta persistencia
+// PIT se agregó después, en una sesión separada.
+//
+// Esta versión solo trae los gameIds puntuales que hacen falta (la ventana de
+// juegos recién restaurada en el arranque, o un solo juego bajo demanda) en vez
+// de la colección entera — usa el operador `in` de Firestore en tandas de hasta
+// 30 ids (límite actual del SDK).
+const FIRESTORE_IN_CHUNK_SIZE = 30;
+
+export const loadPitLookupEntriesForIds = async (
+  kind: 'pitchers' | 'offense' | 'boxscore',
+  gameIds: string[]
+): Promise<Record<string, any>> => {
+  const ids = Array.from(new Set((gameIds || []).filter(Boolean).map(String)));
+  if (ids.length === 0) return {};
+  try {
+    if (!db) {
+      console.warn("Firestore db is not initialized. Skipping PIT load.");
+      return {};
+    }
+    const isAuthed = await ensureAnonymousAuth();
+    if (!isAuthed) return {};
+
+    const collName = `pit_${kind}`;
+    const result: Record<string, any> = {};
+    for (let i = 0; i < ids.length; i += FIRESTORE_IN_CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + FIRESTORE_IN_CHUNK_SIZE);
+      const idsQuery = query(collection(db, collName), where(documentId(), 'in', chunk));
+      const snapshot = await withFirestoreReadTimeout(getDocs(idsQuery), null, `${collName} (${chunk.length} id(s))`, 15000);
+      if (!snapshot) continue;
+      snapshot.forEach((docSnap: any) => {
+        result[docSnap.id] = docSnap.data();
+      });
+    }
+    return result;
+  } catch (error) {
+    console.error(`[Firestore PIT] Error cargando ${ids.length} id(s) de pit_${kind}:`, error);
     return {};
   }
 };

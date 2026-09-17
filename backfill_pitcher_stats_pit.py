@@ -43,6 +43,8 @@ import requests
 
 MLB_API_BASE = "https://statsapi.mlb.com/api/v1"
 DB_PATH = Path(__file__).parent / "mlb_database.json"
+GAMES_DB_DIR = Path(__file__).parent / "games_db"
+GAMES_INDEX_PATH = GAMES_DB_DIR / "_index.json"
 OUTPUT_PITCHER = Path(__file__).parent / "pitcher_stats_pit.json"
 OUTPUT_OFFENSE = Path(__file__).parent / "offense_stats_pit.json"
 OUTPUT_BOXSCORE = Path(__file__).parent / "boxscore_game_stats.json"
@@ -561,16 +563,61 @@ def save_json(path: Path, data: dict, wrap_key: str | None = None):
     print(f"  Saved → {path} ({len(data)} entries)")
 
 
-def run_backfill(args):
-    print(f"Loading database from {DB_PATH}...")
-    with open(DB_PATH, "r", encoding="utf-8") as f:
-        db = json.load(f)
+def load_games_db() -> dict:
+    """Carga la base de juegos como {fecha: [juego, juego, ...]}, igual que
+    antes devolvía `json.load(open(mlb_database.json))`.
 
-    # Sept. 2026: mlb_database.json es {fecha: [juego, juego, ...]} — NO un
-    # dict plano {gameId: juego}. Esto llevaba tiempo roto sin que nadie lo
-    # notara porque el Cron Job que corre este script nunca se activó en
-    # Render (ver RENDER_CRON_SETUP.md); esta fue la primera corrida real
-    # contra la base de datos actual. Antes `games.items()` iteraba
+    Sept. 2026 — arreglo de fondo de memoria en server.ts (ver comentario junto
+    a DB_PATH ahí): el archivo único `mlb_database.json` (~213MB) se reemplazó
+    por `games_db/` (un JSON chico por fecha + `_index.json` con conteos e
+    IDs). Este script es un proceso Python aparte que nunca pasa por el Proxy
+    de server.ts — leía `mlb_database.json` directo con `open()`, así que tras
+    la migración ese archivo ya no está (queda renombrado a
+    `mlb_database.json.migrated`) y el script fallaba con FileNotFoundError en
+    cada corrida del pipeline diario. Ahora reconstruye el mismo dict
+    {fecha: [juegos]} leyendo `games_db/_index.json` + un archivo por fecha —
+    el resto de run_backfill (que ya viene iterando sobre esa forma) no
+    necesita ningún otro cambio. Se mantiene un fallback al `mlb_database.json`
+    legado por si este script corre suelto (sin haber arrancado nunca el
+    server, que es quien dispara la migración) contra una copia vieja.
+    """
+    if GAMES_INDEX_PATH.exists():
+        with open(GAMES_INDEX_PATH, "r", encoding="utf-8") as f:
+            index = json.load(f)
+        games_by_date: dict = {}
+        for date, entry in (index or {}).items():
+            count = entry.get("count", 0) if isinstance(entry, dict) else 0
+            if not count:
+                games_by_date[date] = []
+                continue
+            date_file = GAMES_DB_DIR / f"{date}.json"
+            if not date_file.exists():
+                games_by_date[date] = []
+                continue
+            with open(date_file, "r", encoding="utf-8") as f:
+                games = json.load(f)
+            games_by_date[date] = games if isinstance(games, list) else []
+        return games_by_date
+
+    if DB_PATH.exists():
+        print(f"[Aviso] games_db/_index.json no existe todavía; usando el formato legado en {DB_PATH}.")
+        with open(DB_PATH, "r", encoding="utf-8") as f:
+            db = json.load(f)
+        return db if isinstance(db, dict) else {}
+
+    print(f"[Aviso] No se encontró ni games_db/_index.json ni {DB_PATH}; se continúa con la base vacía.")
+    return {}
+
+
+def run_backfill(args):
+    print(f"Loading database from {GAMES_INDEX_PATH if GAMES_INDEX_PATH.exists() else DB_PATH}...")
+    db = load_games_db()
+
+    # Sept. 2026: mlb_database.json (y ahora games_db/) es {fecha: [juego,
+    # juego, ...]} — NO un dict plano {gameId: juego}. Esto llevaba tiempo roto
+    # sin que nadie lo notara porque el Cron Job que corre este script nunca se
+    # activó en Render (ver RENDER_CRON_SETUP.md); esta fue la primera corrida
+    # real contra la base de datos actual. Antes `games.items()` iteraba
     # (fecha, [lista de juegos]) como si fuera (gameId, juego) — cada
     # "juego" era en realidad una lista, así que get_nested(juego, "metadata",
     # "date") fallaba siempre y el juego se saltaba silenciosamente. Con la

@@ -702,31 +702,74 @@ export default function App() {
   // /api/harvest-live para la fecha seleccionada — refresca solo marcador,
   // boxscore y jugada por jugada de los juegos ya en curso, sin repetir el
   // pregame completo ni el backfill PIT. Ver src/routes/liveUpdateRoutes.ts.
+  //
+  // Sept. 2026 — antes esperaba un único JSON al final y solo mostraba el
+  // spinner del botón, sin avance visible mientras corría. El endpoint ahora
+  // responde como stream SSE igual que /api/harvest, así que se reutiliza el
+  // mismo parser y el mismo estado `harvestProgress` — la barra de progreso
+  // (HarvesterPanel) queda compartida entre los dos botones.
   const handleLiveUpdate = React.useCallback(async (date: string) => {
     setIsLiveUpdating(true);
+    setHarvestProgress({ pct: 2, step: "Buscando juegos en vivo..." });
     try {
       const res = await fetch("/api/harvest-live", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ date }),
       });
-      if (!res.ok) {
+
+      if (!res.ok || !res.body) {
         alert("Error al actualizar juegos en vivo: " + (await res.text()));
         return;
       }
-      const data = await res.json();
-      if (!data.success) {
-        alert("Error al actualizar juegos en vivo: " + (data.error || "Desconocido"));
-        return;
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finalData: any = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+
+            if (event.phase === "done") {
+              finalData = event;
+              setHarvestProgress({ pct: 100, step: event.step, phase: "done" });
+            } else {
+              setHarvestProgress({
+                pct: event.pct ?? 0,
+                step: event.step ?? "",
+                gameLabel: event.gameLabel,
+                gameIndex: event.gameIndex,
+                totalGames: event.totalGames,
+                phase: event.phase,
+              });
+            }
+          } catch (e) {
+            console.error("Error parsing live-update SSE event:", e);
+          }
+        }
       }
-      if (data.message) {
+
+      if (finalData?.message) {
         // Caso sin juegos elegibles (nada en vivo todavía, o falta extracción completa).
-        console.log(`[Actualizar en vivo] ${data.message}`);
+        console.log(`[Actualizar en vivo] ${finalData.message}`);
       }
-      const failed = (data.updated || []).filter((r: any) => r.status === "error");
+      const failed = (finalData?.updated || []).filter((r: any) => r.status === "error");
       if (failed.length > 0) {
         console.error("[Actualizar en vivo] Fallaron:", failed);
-        alert(`Se actualizaron ${data.updated.length - failed.length} de ${data.updated.length} juego(s) en vivo. Fallaron: ${failed.map((f: any) => f.label).join(", ")}`);
+        alert(`Se actualizaron ${finalData.updated.length - failed.length} de ${finalData.updated.length} juego(s) en vivo. Fallaron: ${failed.map((f: any) => f.label).join(", ")}`);
       }
       // Los juegos actualizados ya quedaron guardados server-side; se releen
       // desde la BD local en vez de reconstruir el estado a mano acá.
@@ -737,6 +780,7 @@ export default function App() {
       alert("Error de red al actualizar juegos en vivo");
     } finally {
       setIsLiveUpdating(false);
+      setHarvestProgress({ pct: 0, step: "" });
     }
   }, [fetchLocalDB, fetchErrorsDB]);
 
